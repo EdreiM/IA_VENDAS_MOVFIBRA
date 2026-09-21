@@ -7,6 +7,24 @@ import re
 from app.config import get_settings
 
 
+def _resolver_modo() -> str:
+    try:
+        from app.chatwoot_config import resolver_inbound_mode
+
+        return resolver_inbound_mode()
+    except Exception:
+        return (get_settings().sofia_inbound_mode or "allowlist").strip().lower()
+
+
+def _resolver_allowlist_raw() -> str:
+    try:
+        from app.chatwoot_config import resolver_allowlist_phones
+
+        return resolver_allowlist_phones()
+    except Exception:
+        return (get_settings().sofia_allowlist_phones or "").strip()
+
+
 def normalizar_telefone(valor: str | None) -> str:
     """Só dígitos; remove 55 do país se sobrar 12–13 dígitos típicos BR."""
     digits = re.sub(r"\D", "", valor or "")
@@ -16,13 +34,12 @@ def normalizar_telefone(valor: str | None) -> str:
 
 
 def lista_permitidos() -> set[str]:
-    settings = get_settings()
-    raw = settings.sofia_allowlist_phones or ""
+    raw = _resolver_allowlist_raw()
     return {normalizar_telefone(p) for p in raw.split(",") if normalizar_telefone(p)}
 
 
 def modo_entrada() -> str:
-    return (get_settings().sofia_inbound_mode or "allowlist").strip().lower()
+    return _resolver_modo()
 
 
 def entrada_permitida(id_cliente: str | None, *, telefone: str | None = None) -> bool:

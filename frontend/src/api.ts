@@ -81,6 +81,77 @@ export type Conversa = {
   updated_at: string | null;
 };
 
+export type Cliente = Conversa & {
+  label?: string;
+  cpf?: string | null;
+  email?: string | null;
+  data_nascimento?: string | null;
+  rg?: string | null;
+  cep?: string | null;
+  rua?: string | null;
+  numero?: string | null;
+  complemento?: string | null;
+  metodo_pagamento?: string | null;
+  plano_apresentado?: string | null;
+  plano_em_negociacao?: string | null;
+  tem_cobertura?: boolean | null;
+  localizacao_fixa?: string | null;
+  caixa_fibra?: string | null;
+  ixc_cliente_id?: string | null;
+  id_contrato_ixc?: string | null;
+  os_id?: string | null;
+  data_agendamento?: string | null;
+  horario_escolhido?: string | null;
+  preferencia_horario?: string | null;
+  termos_enviados?: boolean;
+  ativado_ixc?: boolean;
+  cadastro_completo?: boolean;
+  agendamento_confirmado?: boolean;
+  transferido_humano?: boolean;
+  created_at?: string | null;
+  ultima_mensagem_sofia?: string | null;
+  motivo_transferencia?: string | null;
+  [key: string]: unknown;
+};
+
+export type MensagemHistorico = {
+  id: number;
+  remetente: string;
+  mensagem: string;
+  created_at: string | null;
+};
+
+export const fetchClientes = (params?: {
+  q?: string;
+  fase?: string;
+  status?: string;
+  unidade_id?: number;
+  limite?: number;
+}) => {
+  const sp = new URLSearchParams();
+  if (params?.q) sp.set("q", params.q);
+  if (params?.fase) sp.set("fase", params.fase);
+  if (params?.status) sp.set("status", params.status);
+  if (params?.unidade_id != null) sp.set("unidade_id", String(params.unidade_id));
+  if (params?.limite != null) sp.set("limite", String(params.limite));
+  const q = sp.toString();
+  return api<{ items: Cliente[]; total: number }>(`/admin/clientes${q ? `?${q}` : ""}`);
+};
+
+export const fetchCliente = (id_cliente: string) =>
+  api<Cliente>(`/admin/clientes/${encodeURIComponent(id_cliente)}`);
+
+export const fetchMensagensCliente = (id_cliente: string, limite = 100) =>
+  api<{ id_cliente: string; items: MensagemHistorico[] }>(
+    `/admin/clientes/${encodeURIComponent(id_cliente)}/mensagens?limite=${limite}`,
+  );
+
+export const patchCliente = (id_cliente: string, body: Record<string, string>) =>
+  api<Cliente>(`/admin/clientes/${encodeURIComponent(id_cliente)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+
 export type Plano = {
   id: number;
   nome: string;
@@ -235,6 +306,56 @@ export const saveConfigIa = (body: Record<string, unknown>) =>
     method: "PUT",
     body: JSON.stringify(body),
   });
+
+export type ConfigChatwoot = {
+  inbound_enabled: boolean;
+  inbox_id: string;
+  inbound_mode: string;
+  allowlist_phones: string;
+  buffer_enabled: boolean;
+  public_base_url: string;
+  webhook_url: string;
+  webhook_token_configured: boolean;
+  webhook_token_mask: string;
+  envio_resposta_configurado: boolean;
+  eventos_recomendados: string[];
+  chatwoot_base_url: string;
+  chatwoot_api_configured: boolean;
+};
+
+export type ChatwootParseResult = {
+  processavel: boolean;
+  motivo: string | null;
+  evento: Record<string, unknown> | null;
+  inbox_esperado: string | null;
+  inbox_recebido: string | null;
+  allowlist_ok: boolean | null;
+  allowlist_motivo: string | null;
+  inbound_mode: string;
+};
+
+export const fetchConfigChatwoot = (unidade_id?: number) => {
+  const q = unidade_id ? `?unidade_id=${unidade_id}` : "";
+  return api<ConfigChatwoot>(`/admin/config/chatwoot${q}`);
+};
+
+export const saveConfigChatwoot = (body: Record<string, unknown>) =>
+  api<ConfigChatwoot>("/admin/config/chatwoot", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+
+export const fetchExemploPayloadChatwoot = () =>
+  api<{ payload: Record<string, unknown> }>("/admin/config/chatwoot/exemplo-payload");
+
+export const testParseChatwoot = (payload: Record<string, unknown>) =>
+  api<ChatwootParseResult>("/admin/config/chatwoot/test-parse", {
+    method: "POST",
+    body: JSON.stringify({ payload }),
+  });
+
+export const fetchInboxes = () =>
+  api<{ ok: boolean; data?: unknown; motivo?: string }>("/chatwoot/inboxes");
 
 export const fetchFerramentas = (unidade_id?: number) => {
   const q = unidade_id ? `?unidade_id=${unidade_id}` : "";

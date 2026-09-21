@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from app import admin_store, metrics, planos_admin, unidades as unidades_mod, ferramentas as ferramentas_mod
 from app.allowlist import entrada_permitida, motivo_bloqueio, modo_entrada
-from app.chatwoot_webhook import extrair_evento_chatwoot
+from app.chatwoot_webhook import analisar_evento_chatwoot, extrair_evento_chatwoot
 from app.config import get_settings
 from app.db import init_schema, mensagem_ja_processada, marcar_mensagem_processada, resetar_cliente, turnos_recentes
 from app.integrations import chatwoot as chatwoot_api
@@ -94,6 +94,21 @@ class ConfigIaIn(BaseModel):
     rag_webhook_url: str = ""
     rag_webhook_token: str = ""
     unidade_id: int | None = None
+
+
+class ConfigChatwootIn(BaseModel):
+    inbound_enabled: bool = True
+    inbox_id: str = ""
+    inbound_mode: str = "allowlist"  # closed | allowlist | open
+    allowlist_phones: str = ""
+    buffer_enabled: bool = False
+    public_base_url: str = ""
+    webhook_token: str = ""
+    unidade_id: int | None = None
+
+
+class ChatwootTestParseIn(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class UnidadeIn(BaseModel):
@@ -399,12 +414,23 @@ def chat_endpoint(body: ChatIn):
 
 
 @app.post("/webhooks/chatwoot")
-async def webhook_chatwoot(request: Request):
+async def webhook_chatwoot(
+    request: Request,
+    x_webhook_token: str | None = Header(default=None, alias="X-Webhook-Token"),
+):
     """
     Entrada direta do Chatwoot (ou n8n repassando o evento).
     Em teste: SOFIA_INBOUND_MODE=allowlist + SOFIA_ALLOWLIST_PHONES.
     Meta produção fica fora até mudar para open.
     """
+    from app import chatwoot_config
+
+    if not chatwoot_config.resolver_inbound_enabled():
+        return {"ok": True, "ignored": True, "motivo": "Entrada Chatwoot desligada no painel"}
+
+    if not chatwoot_config.verificar_webhook_token(x_webhook_token):
+        raise HTTPException(status_code=401, detail="Token do webhook inválido")
+
     try:
         raw = await request.json()
     except Exception as exc:  # noqa: BLE001
@@ -413,9 +439,16 @@ async def webhook_chatwoot(request: Request):
     if not isinstance(raw, dict):
         raise HTTPException(status_code=400, detail="Body deve ser objeto JSON")
 
-    evento = extrair_evento_chatwoot(raw)
+    analise = analisar_evento_chatwoot(raw)
+    evento = analise.get("evento")
     if not evento:
-        return {"ok": True, "ignored": True, "motivo": "evento não processável"}
+        return {
+            "ok": True,
+            "ignored": True,
+            "motivo": analise.get("motivo") or "evento não processável",
+            "inbox_esperado": analise.get("inbox_esperado"),
+            "inbox_recebido": analise.get("inbox_recebido"),
+        }
 
     id_cliente = evento["id_cliente"]
     if not entrada_permitida(id_cliente, telefone=evento.get("telefone")):
@@ -437,8 +470,6 @@ async def webhook_chatwoot(request: Request):
             "id_cliente": id_cliente,
         }
 
-    settings = get_settings()
-
     def _process(cid: str, msg: str):
         return process_message(
             cid,
@@ -449,7 +480,7 @@ async def webhook_chatwoot(request: Request):
         )
 
     try:
-        if settings.chatwoot_buffer_enabled:
+        if chatwoot_config.resolver_buffer_enabled():
             result = processar_com_buffer(id_cliente, evento["mensagem"], _process)
         else:
             result = _process(id_cliente, evento["mensagem"])
@@ -546,6 +577,91 @@ def metrics_turnos_cliente(
 ):
     _exigir_admin(authorization, x_admin_token)
     return {"id_cliente": id_cliente, "items": turnos_recentes(id_cliente, limite)}
+
+
+class ClientePatchIn(BaseModel):
+    nome: str | None = None
+    cpf: str | None = None
+    email: str | None = None
+    telefone: str | None = None
+    data_nascimento: str | None = None
+    rg: str | None = None
+    cep: str | None = None
+    rua: str | None = None
+    numero: str | None = None
+    complemento: str | None = None
+    cidade: str | None = None
+    bairro: str | None = None
+    metodo_pagamento: str | None = None
+
+
+@app.get("/admin/clientes")
+def admin_list_clientes(
+    q: str = "",
+    fase: str | None = None,
+    status: str | None = None,
+    unidade_id: int | None = None,
+    limite: int = 80,
+    offset: int = 0,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    _exigir_admin(authorization, x_admin_token)
+    from app import clientes_admin
+
+    return clientes_admin.listar_clientes(
+        q=q,
+        fase=fase,
+        status=status,
+        unidade_id=unidade_id,
+        limite=limite,
+        offset=offset,
+    )
+
+
+@app.get("/admin/clientes/{id_cliente}")
+def admin_get_cliente(
+    id_cliente: str,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    _exigir_admin(authorization, x_admin_token)
+    from app import clientes_admin
+
+    item = clientes_admin.obter_cliente(id_cliente)
+    if not item:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    return item
+
+
+@app.get("/admin/clientes/{id_cliente}/mensagens")
+def admin_mensagens_cliente(
+    id_cliente: str,
+    limite: int = 100,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    _exigir_admin(authorization, x_admin_token)
+    from app import clientes_admin
+
+    return {
+        "id_cliente": id_cliente,
+        "items": clientes_admin.historico_mensagens(id_cliente, limite),
+    }
+
+
+@app.patch("/admin/clientes/{id_cliente}")
+def admin_patch_cliente(
+    id_cliente: str,
+    body: ClientePatchIn,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    _exigir_admin(authorization, x_admin_token)
+    from app import clientes_admin
+
+    dados = {k: v for k, v in body.model_dump().items() if v is not None}
+    return clientes_admin.atualizar_cliente(id_cliente, dados)
 
 
 # ── Admin: unidades / planos / config / promoções / ferramentas ─
@@ -734,6 +850,71 @@ def admin_put_config_ia(
     from app import ia_config
 
     return ia_config.salvar_config_ia(body.model_dump(), unidade_id=body.unidade_id)
+
+
+@app.get("/admin/config/chatwoot")
+def admin_get_config_chatwoot(
+    unidade_id: int | None = None,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    _exigir_admin(authorization, x_admin_token)
+    from app import chatwoot_config
+
+    return chatwoot_config.obter_config_chatwoot(unidade_id=unidade_id)
+
+
+@app.put("/admin/config/chatwoot")
+def admin_put_config_chatwoot(
+    body: ConfigChatwootIn,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    _exigir_admin(authorization, x_admin_token)
+    from app import chatwoot_config
+
+    mode = (body.inbound_mode or "allowlist").strip().lower()
+    if mode not in {"closed", "allowlist", "open"}:
+        raise HTTPException(status_code=400, detail="inbound_mode inválido")
+    return chatwoot_config.salvar_config_chatwoot(body.model_dump(), unidade_id=body.unidade_id)
+
+
+@app.get("/admin/config/chatwoot/exemplo-payload")
+def admin_exemplo_payload_chatwoot(
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    _exigir_admin(authorization, x_admin_token)
+    from app import chatwoot_config
+
+    return {"payload": chatwoot_config.payload_exemplo_message_created()}
+
+
+@app.post("/admin/config/chatwoot/test-parse")
+def admin_test_parse_chatwoot(
+    body: ChatwootTestParseIn,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Simula o parser do webhook sem processar a IA."""
+    _exigir_admin(authorization, x_admin_token)
+    from app.allowlist import entrada_permitida, motivo_bloqueio, modo_entrada
+
+    analise = analisar_evento_chatwoot(body.payload)
+    evento = analise.get("evento")
+    allowlist_ok = None
+    allowlist_motivo = None
+    if evento:
+        allowlist_ok = entrada_permitida(evento.get("id_cliente"), telefone=evento.get("telefone"))
+        if not allowlist_ok:
+            allowlist_motivo = motivo_bloqueio()
+
+    return {
+        **analise,
+        "allowlist_ok": allowlist_ok,
+        "allowlist_motivo": allowlist_motivo,
+        "inbound_mode": modo_entrada(),
+    }
 
 
 @app.get("/admin/promocoes")

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.config import get_settings
+from app.chatwoot_config import resolver_inbox_id
 
 
 def _dig(obj: Any, *keys: str, default: Any = None) -> Any:
@@ -97,70 +97,105 @@ def _sender_name(payload: dict[str, Any]) -> str:
     return str(payload.get("senderName") or name or "").strip()
 
 
+def _normalizar_pre_parseado(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Payload já tratado pelo n8n (Normalizar Entrada / Edit Fields)."""
+    if not (
+        payload.get("mensagem")
+        and (
+            payload.get("id_cliente")
+            or payload.get("telefone")
+            or payload.get("conversation_id")
+            or payload.get("conversationId")
+            or payload.get("contatoJID")
+        )
+    ):
+        return None
+
+    conv = payload.get("conversation_id") or payload.get("conversationId")
+    tel = str(payload.get("telefone") or payload.get("contatoJID") or "").strip()
+    inbox = str(payload.get("inboxId") or payload.get("inbox_id") or "") or None
+    esperado = resolver_inbox_id()
+    if esperado and inbox and inbox != esperado:
+        return None
+
+    return {
+        "mensagem": str(payload.get("mensagem") or "").strip(),
+        "id_cliente": str(payload.get("id_cliente") or tel).strip(),
+        "conversation_id": str(conv).strip() if conv is not None else None,
+        "contact_id": str(payload.get("contact_id") or payload.get("contactId") or "").strip() or None,
+        "telefone": tel or None,
+        "inbox_id": inbox,
+        "event": str(payload.get("event") or "normalized"),
+        "message_id": str(
+            payload.get("message_id") or payload.get("messageId") or payload.get("id") or ""
+        ).strip()
+        or None,
+    }
+
+
 def extrair_evento_chatwoot(payload: dict[str, Any]) -> dict[str, Any] | None:
     """
     Retorna dict normalizado ou None se deve ignorar.
     Filtros leves (inbox / direction) quando configurados — o n8n pode filtrar antes.
     """
-    if not isinstance(payload, dict):
-        return None
+    return analisar_evento_chatwoot(payload).get("evento")
 
-    # Já normalizado pelo n8n (Normalizar Entrada / Edit Fields)
-    if payload.get("mensagem") and (
-        payload.get("id_cliente")
-        or payload.get("telefone")
-        or payload.get("conversation_id")
-        or payload.get("conversationId")
-        or payload.get("contatoJID")
-    ):
-        conv = payload.get("conversation_id") or payload.get("conversationId")
-        tel = str(payload.get("telefone") or payload.get("contatoJID") or "").strip()
-        return {
-            "mensagem": str(payload.get("mensagem") or "").strip(),
-            "id_cliente": str(payload.get("id_cliente") or tel).strip(),
-            "conversation_id": str(conv).strip() if conv is not None else None,
-            "contact_id": str(payload.get("contact_id") or payload.get("contactId") or "").strip()
-            or None,
-            "telefone": tel or None,
-            "inbox_id": str(payload.get("inboxId") or payload.get("inbox_id") or "") or None,
-            "event": str(payload.get("event") or "normalized"),
-            "message_id": str(payload.get("message_id") or payload.get("messageId") or payload.get("id") or "").strip()
-            or None,
-        }
+
+def analisar_evento_chatwoot(payload: dict[str, Any]) -> dict[str, Any]:
+    """Diagnóstico completo — usado no painel para testar payload do Chatwoot."""
+    esperado = resolver_inbox_id()
+    base: dict[str, Any] = {
+        "processavel": False,
+        "motivo": None,
+        "evento": None,
+        "inbox_esperado": esperado or None,
+        "inbox_recebido": None,
+    }
+
+    if not isinstance(payload, dict):
+        base["motivo"] = "Body não é objeto JSON"
+        return base
+
+    pre = _normalizar_pre_parseado(payload)
+    if pre:
+        base.update(processavel=True, evento=pre, motivo=None, inbox_recebido=pre.get("inbox_id"))
+        return base
 
     raw = _unwrap(payload)
-    event = str(raw.get("event") or "").strip()
+    inbox = _inbox_id(raw)
+    base["inbox_recebido"] = inbox
 
     message_type = raw.get("message_type")
-    # Chatwoot webhook: "incoming" | "outgoing"  |  às vezes 0/1
     if message_type in (1, "1", "outgoing", "outgoing_message"):
-        return None
+        base["motivo"] = "Mensagem outgoing (resposta da empresa/IA) — ignorada"
+        return base
     if raw.get("private") is True:
-        return None
+        base["motivo"] = "Nota privada — ignorada"
+        return base
 
-    # Filtro inbox MOV IA (6) — opcional via CHATWOOT_INBOX_ID
-    settings = get_settings()
-    esperado = (settings.chatwoot_inbox_id or "").strip()
-    inbox = _inbox_id(raw)
     if esperado and inbox and inbox != esperado:
-        return None
+        base["motivo"] = f"Inbox {inbox} diferente da caixa da IA ({esperado})"
+        return base
 
-    # Mesma ideia do If do n8n: ignora remetente técnico EvolutionAPI
     if _sender_name(raw).casefold() == "evolutionapi":
-        return None
+        base["motivo"] = "Remetente técnico EvolutionAPI — ignorado"
+        return base
 
-    # Sem time atribuído = IA pode atender (se teamName vier preenchido, humano pegou)
     team = _team_name(raw)
     if team:
-        return None
+        base["motivo"] = f"Conversa com time atribuído ({team}) — humano atende"
+        return base
 
+    event = str(raw.get("event") or "").strip()
     if event and event not in {"message_created", "message_updated", ""}:
         if "conversation" not in raw and "sender" not in raw:
-            return None
+            base["motivo"] = f"Evento {event!r} não é mensagem de cliente"
+            return base
 
     content = _mensagem_de_conteudo(raw)
     if not content:
-        return None
+        base["motivo"] = "Sem conteúdo de texto (content vazio e sem localização/mídia reconhecível)"
+        return base
 
     conversation = raw.get("conversation") if isinstance(raw.get("conversation"), dict) else {}
     sender = raw.get("sender") if isinstance(raw.get("sender"), dict) else {}
@@ -169,15 +204,9 @@ def extrair_evento_chatwoot(payload: dict[str, Any]) -> dict[str, Any] | None:
         meta_sender = {}
 
     contact_inbox = conversation.get("contact_inbox") if isinstance(conversation.get("contact_inbox"), dict) else {}
-    source_id = contact_inbox.get("source_id") or _dig(
-        conversation, "messages", default=[]
-    )
+    source_id = contact_inbox.get("source_id") or _dig(conversation, "messages", default=[])
 
-    conversation_id = (
-        raw.get("conversation_id")
-        or conversation.get("id")
-        or _dig(raw, "conversation", "id")
-    )
+    conversation_id = raw.get("conversation_id") or conversation.get("id") or _dig(raw, "conversation", "id")
     contact_id = sender.get("id") or meta_sender.get("id") or raw.get("contact_id")
     telefone = (
         sender.get("phone_number")
@@ -191,18 +220,14 @@ def extrair_evento_chatwoot(payload: dict[str, Any]) -> dict[str, Any] | None:
         telefone = source_id
 
     identifier = str(
-        sender.get("identifier")
-        or meta_sender.get("identifier")
-        or telefone
-        or contact_id
-        or ""
+        sender.get("identifier") or meta_sender.get("identifier") or telefone or contact_id or ""
     ).strip()
 
     id_cliente = identifier or str(telefone or "").strip()
     if not id_cliente and conversation_id:
         id_cliente = f"cw-{conversation_id}"
 
-    return {
+    evento = {
         "mensagem": content,
         "id_cliente": id_cliente,
         "conversation_id": str(conversation_id) if conversation_id is not None else None,
@@ -212,3 +237,5 @@ def extrair_evento_chatwoot(payload: dict[str, Any]) -> dict[str, Any] | None:
         "event": event or "message_created",
         "message_id": str(raw.get("id") or raw.get("message_id") or "").strip() or None,
     }
+    base.update(processavel=True, evento=evento, motivo=None)
+    return base

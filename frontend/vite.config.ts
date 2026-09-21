@@ -13,6 +13,7 @@ export default defineConfig({
       "/chat": "http://127.0.0.1:8001",
       "/reset": "http://127.0.0.1:8001",
       "/media": "http://127.0.0.1:8001",
+      "/webhooks": "http://127.0.0.1:8001",
     },
   },
 });

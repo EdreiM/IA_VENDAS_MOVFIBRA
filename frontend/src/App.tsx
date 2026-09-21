@@ -16,8 +16,20 @@ import {
   deletePromocao,
   fetchAgents,
   fetchConfigIa,
+  fetchConfigChatwoot,
+  fetchExemploPayloadChatwoot,
+  fetchInboxes,
   saveConfigIa,
+  saveConfigChatwoot,
+  testParseChatwoot,
+  ChatwootParseResult,
+  fetchCliente,
+  fetchClientes,
   fetchConversas,
+  fetchMensagensCliente,
+  patchCliente,
+  Cliente,
+  MensagemHistorico,
   fetchFerramentas,
   syncCatalogoFerramentas,
   fetchFunil,
@@ -45,9 +57,11 @@ type Tab =
   | "chat"
   | "metricas"
   | "conversas"
+  | "clientes"
   | "planos"
   | "promocoes"
   | "config"
+  | "integracao"
   | "ferramentas"
   | "unidades";
 
@@ -127,6 +141,19 @@ function mapTeams(raw: unknown): Option[] {
     .filter(Boolean) as Option[];
 }
 
+function mapInboxes(raw: unknown): Option[] {
+  return asList(raw)
+    .map((item) => {
+      const box = item as Record<string, unknown>;
+      const id = Number(box.id);
+      if (!Number.isFinite(id)) return null;
+      const channel = String(box.channel_type || box.provider || "").trim();
+      const suffix = channel ? ` (${channel})` : "";
+      return { id, label: `${String(box.name || `Inbox ${id}`)}${suffix}` };
+    })
+    .filter(Boolean) as Option[];
+}
+
 function mapLabelTitles(raw: unknown): string[] {
   return asList(raw)
     .map((item) => {
@@ -144,13 +171,25 @@ function statusBadge(status?: string) {
   return <span className={`badge badge-${s}`}>{label}</span>;
 }
 
+function fmtCampo(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "boolean") return v ? "Sim" : "Não";
+  return String(v);
+}
+
+function rotuloCliente(c: { nome?: string | null; telefone?: string | null; id_cliente: string }) {
+  return (c.nome || "").trim() || (c.telefone || "").trim() || c.id_cliente;
+}
+
 const TABS: { id: Tab; label: string }[] = [
   { id: "chat", label: "Chat teste" },
   { id: "metricas", label: "Métricas" },
   { id: "conversas", label: "Conversas" },
+  { id: "clientes", label: "Clientes" },
   { id: "planos", label: "Planos" },
   { id: "promocoes", label: "Promoções" },
   { id: "config", label: "Config IA" },
+  { id: "integracao", label: "Chatwoot" },
   { id: "ferramentas", label: "Ferramentas" },
   { id: "unidades", label: "Unidades" },
 ];
@@ -195,6 +234,11 @@ export default function App() {
   const [statusFiltro, setStatusFiltro] = useState("");
   const [sel, setSel] = useState<Conversa | null>(null);
   const [turnos, setTurnos] = useState<unknown[]>([]);
+  const [mensagensConv, setMensagensConv] = useState<MensagemHistorico[]>([]);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [clienteBusca, setClienteBusca] = useState("");
+  const [selCliente, setSelCliente] = useState<Cliente | null>(null);
+  const [clienteForm, setClienteForm] = useState<Record<string, string>>({});
   const [agents, setAgents] = useState<Option[]>([]);
   const [teams, setTeams] = useState<Option[]>([]);
   const [labelOptions, setLabelOptions] = useState<string[]>([]);
@@ -242,6 +286,25 @@ export default function App() {
     rag_token: "",
   });
 
+  const [cwForm, setCwForm] = useState({
+    inbound_enabled: true,
+    inbox_id: "",
+    inbound_mode: "allowlist",
+    allowlist_phones: "",
+    buffer_enabled: false,
+    public_base_url: "",
+    webhook_token: "",
+  });
+  const [cwMeta, setCwMeta] = useState({
+    webhook_url: "",
+    envio_ok: false,
+    token_mask: "",
+    token_configured: false,
+  });
+  const [inboxes, setInboxes] = useState<Option[]>([]);
+  const [cwTestPayload, setCwTestPayload] = useState("");
+  const [cwTestResult, setCwTestResult] = useState<ChatwootParseResult | null>(null);
+
   const [tools, setTools] = useState<Ferramenta[]>([]);
   const [toolForm, setToolForm] = useState(emptyTool());
   const [editToolId, setEditToolId] = useState<number | null>(null);
@@ -275,6 +338,15 @@ export default function App() {
     });
     setConversas(c.items || []);
   }, [uid, statusFiltro]);
+
+  const refreshClientes = useCallback(async () => {
+    const c = await fetchClientes({
+      q: clienteBusca.trim() || undefined,
+      unidade_id: uid,
+      limite: 100,
+    });
+    setClientes(c.items || []);
+  }, [uid, clienteBusca]);
 
   const refreshPlanos = useCallback(async () => {
     const p = await fetchPlanos(uid);
@@ -318,6 +390,37 @@ export default function App() {
     }
   }, [uid]);
 
+  const refreshIntegracao = useCallback(async () => {
+    const cfg = await fetchConfigChatwoot(uid);
+    setCwForm({
+      inbound_enabled: !!cfg.inbound_enabled,
+      inbox_id: cfg.inbox_id || "",
+      inbound_mode: cfg.inbound_mode || "allowlist",
+      allowlist_phones: cfg.allowlist_phones || "",
+      buffer_enabled: !!cfg.buffer_enabled,
+      public_base_url: cfg.public_base_url || "",
+      webhook_token: "",
+    });
+    setCwMeta({
+      webhook_url: cfg.webhook_url || "",
+      envio_ok: !!cfg.envio_resposta_configurado,
+      token_mask: cfg.webhook_token_mask || "",
+      token_configured: !!cfg.webhook_token_configured,
+    });
+    try {
+      const inb = await fetchInboxes();
+      if (inb.ok) setInboxes(mapInboxes(inb.data));
+    } catch {
+      /* lista de inboxes opcional — depende do token Chatwoot no .env */
+    }
+    try {
+      const ex = await fetchExemploPayloadChatwoot();
+      setCwTestPayload(JSON.stringify(ex.payload, null, 2));
+    } catch {
+      /* opcional */
+    }
+  }, [uid]);
+
   const refreshAll = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -336,9 +439,11 @@ export default function App() {
         setTeams(mapTeams(t.data));
         setLabelOptions(mapLabelTitles(l.data));
       }
+      if (tab === "clientes") await refreshClientes();
       if (tab === "planos") await refreshPlanos();
       if (tab === "promocoes") await refreshPromos();
       if (tab === "config") await refreshConfig();
+      if (tab === "integracao") await refreshIntegracao();
       if (tab === "ferramentas") await refreshTools();
     } catch (err) {
       setApiOk(false);
@@ -351,9 +456,11 @@ export default function App() {
     refreshUnidades,
     refreshMetrics,
     refreshConversas,
+    refreshClientes,
     refreshPlanos,
     refreshPromos,
     refreshConfig,
+    refreshIntegracao,
     refreshTools,
   ]);
 
@@ -368,12 +475,67 @@ export default function App() {
 
   async function onSelectConversa(c: Conversa) {
     setSel(c);
+    setMensagensConv([]);
     try {
-      const t = await fetchTurnos(c.id_cliente);
+      const [t, m] = await Promise.all([
+        fetchTurnos(c.id_cliente),
+        fetchMensagensCliente(c.id_cliente, 80),
+      ]);
       setTurnos(t.items || []);
+      setMensagensConv(m.items || []);
     } catch {
       setTurnos([]);
+      setMensagensConv([]);
     }
+  }
+
+  function clienteFormFromDetail(c: Cliente) {
+    return {
+      nome: c.nome || "",
+      cpf: c.cpf || "",
+      email: c.email || "",
+      telefone: c.telefone || "",
+      data_nascimento: c.data_nascimento || "",
+      rg: c.rg || "",
+      cep: c.cep || "",
+      rua: c.rua || "",
+      numero: c.numero || "",
+      complemento: c.complemento || "",
+      cidade: c.cidade || "",
+      bairro: c.bairro || "",
+      metodo_pagamento: c.metodo_pagamento || "",
+    };
+  }
+
+  async function onSelectCliente(c: Cliente) {
+    setSelCliente(null);
+    try {
+      const full = await fetchCliente(c.id_cliente);
+      setSelCliente(full);
+      setClienteForm(clienteFormFromDetail(full));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function saveCliente(e: FormEvent) {
+    e.preventDefault();
+    if (!selCliente) return;
+    setError("");
+    try {
+      const saved = await patchCliente(selCliente.id_cliente, clienteForm);
+      setSelCliente(saved);
+      setClienteForm(clienteFormFromDetail(saved));
+      setOkMsg("Cliente salvo");
+      await refreshClientes();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function buscarClientes(e: FormEvent) {
+    e.preventDefault();
+    await refreshClientes();
   }
 
   async function doHandoff() {
@@ -473,6 +635,45 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  async function saveIntegracao(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    try {
+      const saved = await saveConfigChatwoot({
+        ...cwForm,
+        unidade_id: uid ?? null,
+      });
+      setCwMeta({
+        webhook_url: saved.webhook_url || "",
+        envio_ok: !!saved.envio_resposta_configurado,
+        token_mask: saved.webhook_token_mask || "",
+        token_configured: !!saved.webhook_token_configured,
+      });
+      setCwForm((f) => ({ ...f, webhook_token: "" }));
+      setOkMsg("Integração Chatwoot salva");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function runTestParse() {
+    setError("");
+    setCwTestResult(null);
+    try {
+      const payload = JSON.parse(cwTestPayload) as Record<string, unknown>;
+      const r = await testParseChatwoot(payload);
+      setCwTestResult(r);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function copyWebhookUrl() {
+    if (!cwMeta.webhook_url) return;
+    void navigator.clipboard.writeText(cwMeta.webhook_url);
+    setOkMsg("URL copiada");
   }
 
   function addParam() {
@@ -963,6 +1164,27 @@ export default function App() {
                   <button type="button" onClick={() => void doHandoff()}>
                     Transferir agora
                   </button>
+                  <h3>Histórico de mensagens</h3>
+                  <ul className="msg-timeline">
+                    {mensagensConv.length === 0 ? (
+                      <li className="muted">Nenhuma mensagem registrada ainda.</li>
+                    ) : (
+                      mensagensConv.slice(-30).map((m) => (
+                        <li
+                          key={m.id}
+                          className={m.remetente === "cliente" ? "msg-cliente" : "msg-eva"}
+                        >
+                          <small>
+                            {m.remetente === "cliente" ? "Cliente" : "Eva"}
+                            {m.created_at
+                              ? ` · ${new Date(m.created_at).toLocaleString()}`
+                              : ""}
+                          </small>
+                          <div>{m.mensagem}</div>
+                        </li>
+                      ))
+                    )}
+                  </ul>
                   <h3>Turnos recentes</h3>
                   <ul className="turnos">
                     {turnos.slice(0, 8).map((t, i) => {
@@ -980,6 +1202,253 @@ export default function App() {
                 </>
               )}
             </aside>
+          </section>
+        )}
+
+        {tab === "clientes" && (
+          <section className="panel clientes-panel">
+            <h1>Clientes</h1>
+            <p className="muted">
+              Cadastro estruturado de cada cliente — a IA grava aqui o que aprende na conversa
+              (nome, CPF, endereço, plano, etc.).
+            </p>
+            <div className="clientes-layout">
+              <aside className="clientes-list">
+                <form className="clientes-search" onSubmit={(e) => void buscarClientes(e)}>
+                  <input
+                    value={clienteBusca}
+                    onChange={(e) => setClienteBusca(e.target.value)}
+                    placeholder="Buscar nome, telefone, CPF ou e-mail"
+                  />
+                  <button type="submit">Buscar</button>
+                </form>
+                <ul>
+                  {clientes.map((c) => (
+                    <li
+                      key={c.id_cliente}
+                      className={
+                        selCliente?.id_cliente === c.id_cliente ? "client-item active" : "client-item"
+                      }
+                      onClick={() => void onSelectCliente(c)}
+                    >
+                      <strong>{rotuloCliente(c)}</strong>
+                      <small>
+                        {c.telefone || c.id_cliente}
+                        {c.status ? ` · ${c.status}` : ""}
+                      </small>
+                    </li>
+                  ))}
+                  {clientes.length === 0 && (
+                    <li className="muted" style={{ padding: "12px" }}>
+                      Nenhum cliente encontrado.
+                    </li>
+                  )}
+                </ul>
+              </aside>
+
+              <div className="clientes-detail">
+                {!selCliente ? (
+                  <p className="muted">Selecione um cliente na lista.</p>
+                ) : (
+                  <>
+                    <div className="row-head">
+                      <div>
+                        <h2>{rotuloCliente(selCliente)}</h2>
+                        <p className="muted">
+                          ID: {selCliente.id_cliente} · {statusBadge(selCliente.status)} · fase{" "}
+                          {selCliente.fase}
+                          {selCliente.aguardando ? ` · aguardando ${selCliente.aguardando}` : ""}
+                        </p>
+                      </div>
+                    </div>
+
+                    <form className="form-grid client-form" onSubmit={(e) => void saveCliente(e)}>
+                      <h3 className="span2">Identificação</h3>
+                      <label>
+                        Nome
+                        <input
+                          value={clienteForm.nome}
+                          onChange={(e) => setClienteForm({ ...clienteForm, nome: e.target.value })}
+                          placeholder="Preenchido pela IA na conversa"
+                        />
+                      </label>
+                      <label>
+                        CPF
+                        <input
+                          value={clienteForm.cpf}
+                          onChange={(e) => setClienteForm({ ...clienteForm, cpf: e.target.value })}
+                        />
+                      </label>
+                      <label>
+                        E-mail
+                        <input
+                          value={clienteForm.email}
+                          onChange={(e) => setClienteForm({ ...clienteForm, email: e.target.value })}
+                        />
+                      </label>
+                      <label>
+                        Telefone
+                        <input
+                          value={clienteForm.telefone}
+                          onChange={(e) =>
+                            setClienteForm({ ...clienteForm, telefone: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label>
+                        Data de nascimento
+                        <input
+                          value={clienteForm.data_nascimento}
+                          onChange={(e) =>
+                            setClienteForm({ ...clienteForm, data_nascimento: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label>
+                        RG
+                        <input
+                          value={clienteForm.rg}
+                          onChange={(e) => setClienteForm({ ...clienteForm, rg: e.target.value })}
+                        />
+                      </label>
+
+                      <h3 className="span2">Endereço</h3>
+                      <label>
+                        CEP
+                        <input
+                          value={clienteForm.cep}
+                          onChange={(e) => setClienteForm({ ...clienteForm, cep: e.target.value })}
+                        />
+                      </label>
+                      <label>
+                        Rua
+                        <input
+                          value={clienteForm.rua}
+                          onChange={(e) => setClienteForm({ ...clienteForm, rua: e.target.value })}
+                        />
+                      </label>
+                      <label>
+                        Número
+                        <input
+                          value={clienteForm.numero}
+                          onChange={(e) =>
+                            setClienteForm({ ...clienteForm, numero: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label>
+                        Complemento
+                        <input
+                          value={clienteForm.complemento}
+                          onChange={(e) =>
+                            setClienteForm({ ...clienteForm, complemento: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label>
+                        Cidade
+                        <input
+                          value={clienteForm.cidade}
+                          onChange={(e) =>
+                            setClienteForm({ ...clienteForm, cidade: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label>
+                        Bairro
+                        <input
+                          value={clienteForm.bairro}
+                          onChange={(e) =>
+                            setClienteForm({ ...clienteForm, bairro: e.target.value })
+                          }
+                        />
+                      </label>
+
+                      <h3 className="span2">Plano e operação</h3>
+                      <label>
+                        Plano confirmado
+                        <input readOnly value={fmtCampo(selCliente.plano_confirmado)} />
+                      </label>
+                      <label>
+                        Plano apresentado
+                        <input readOnly value={fmtCampo(selCliente.plano_apresentado)} />
+                      </label>
+                      <label>
+                        Método pagamento
+                        <input
+                          value={clienteForm.metodo_pagamento}
+                          onChange={(e) =>
+                            setClienteForm({ ...clienteForm, metodo_pagamento: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label>
+                        Cobertura
+                        <input readOnly value={fmtCampo(selCliente.tem_cobertura)} />
+                      </label>
+                      <label>
+                        Cadastro completo
+                        <input readOnly value={fmtCampo(selCliente.cadastro_completo)} />
+                      </label>
+                      <label>
+                        Termos enviados
+                        <input readOnly value={fmtCampo(selCliente.termos_enviados)} />
+                      </label>
+                      <label>
+                        Agendamento
+                        <input
+                          readOnly
+                          value={fmtCampo(
+                            selCliente.data_agendamento
+                              ? `${selCliente.data_agendamento} ${selCliente.horario_escolhido || ""}`.trim()
+                              : selCliente.agendamento_confirmado,
+                          )}
+                        />
+                      </label>
+
+                      <h3 className="span2">Chatwoot / IXC</h3>
+                      <label>
+                        Conversation ID
+                        <input readOnly value={fmtCampo(selCliente.conversation_id)} />
+                      </label>
+                      <label>
+                        Contact ID
+                        <input readOnly value={fmtCampo(selCliente.contact_id)} />
+                      </label>
+                      <label>
+                        Cliente IXC
+                        <input readOnly value={fmtCampo(selCliente.ixc_cliente_id)} />
+                      </label>
+                      <label>
+                        Contrato / OS
+                        <input
+                          readOnly
+                          value={fmtCampo(
+                            [selCliente.id_contrato_ixc, selCliente.os_id].filter(Boolean).join(" / ") ||
+                              null,
+                          )}
+                        />
+                      </label>
+
+                      <div className="actions span2">
+                        <button type="submit">Salvar cadastro</button>
+                      </div>
+                    </form>
+
+                    <p className="muted">
+                      Início:{" "}
+                      {selCliente.created_at
+                        ? new Date(selCliente.created_at).toLocaleString()
+                        : "—"}{" "}
+                      · Atualizado:{" "}
+                      {selCliente.updated_at
+                        ? new Date(selCliente.updated_at).toLocaleString()
+                        : "—"}
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
           </section>
         )}
 
@@ -1460,6 +1929,176 @@ export default function App() {
                 <button type="submit">Salvar</button>
               </div>
             </form>
+          </section>
+        )}
+
+        {tab === "integracao" && (
+          <section className="panel">
+            <h1>Integração Chatwoot</h1>
+            <p className="muted">
+              Receba mensagens do WhatsApp (Meta) direto do Chatwoot, filtre pela caixa de entrada da
+              IA e responda pela ferramenta <code>enviar_mensagem</code>.
+            </p>
+
+            <div className="config-box" style={{ marginBottom: "1rem" }}>
+              <strong>Status</strong>
+              <ul className="muted" style={{ margin: "0.5rem 0 0", paddingLeft: "1.2rem" }}>
+                <li>
+                  Entrada:{" "}
+                  {cwForm.inbound_enabled ? (
+                    <span className="badge badge-com_ia">Ativa</span>
+                  ) : (
+                    <span className="badge badge-finalizado">Desligada</span>
+                  )}
+                </li>
+                <li>
+                  Envio de respostas:{" "}
+                  {cwMeta.envio_ok ? (
+                    <span>OK (ferramenta ou .env)</span>
+                  ) : (
+                    <span className="muted-inline">
+                      Configure a ferramenta <em>enviar_mensagem</em> na aba Ferramentas
+                    </span>
+                  )}
+                </li>
+              </ul>
+            </div>
+
+            <form className="form-grid config-ia" onSubmit={saveIntegracao}>
+              <label className="check span2">
+                <input
+                  type="checkbox"
+                  checked={cwForm.inbound_enabled}
+                  onChange={(e) => setCwForm({ ...cwForm, inbound_enabled: e.target.checked })}
+                />
+                Receber mensagens do Chatwoot (webhook inbound)
+              </label>
+
+              <label className="span2">
+                URL do webhook (cole no Chatwoot → Configurações → Webhooks)
+                <div className="row-head" style={{ gap: "0.5rem", marginTop: "0.35rem" }}>
+                  <input readOnly value={cwMeta.webhook_url} />
+                  <button type="button" className="secondary" onClick={copyWebhookUrl}>
+                    Copiar
+                  </button>
+                </div>
+                <small className="field-hint">
+                  Evento recomendado: <strong>message_created</strong> apenas. A Eva ignora outgoing,
+                  notas privadas, inbox errado e conversas com time humano.
+                </small>
+              </label>
+
+              <label>
+                Caixa de entrada (inbox)
+                <select
+                  value={cwForm.inbox_id}
+                  onChange={(e) => setCwForm({ ...cwForm, inbox_id: e.target.value })}
+                >
+                  <option value="">— selecione —</option>
+                  {inboxes.map((box) => (
+                    <option key={box.id} value={String(box.id)}>
+                      {box.label}
+                    </option>
+                  ))}
+                </select>
+                <small className="field-hint">
+                  Só mensagens desta inbox chegam na IA. Lista vem da API Chatwoot (.env token).
+                </small>
+              </label>
+
+              <label>
+                Modo de entrada
+                <select
+                  value={cwForm.inbound_mode}
+                  onChange={(e) => setCwForm({ ...cwForm, inbound_mode: e.target.value })}
+                >
+                  <option value="allowlist">Allowlist (teste)</option>
+                  <option value="open">Aberto (produção)</option>
+                  <option value="closed">Fechado</option>
+                </select>
+              </label>
+
+              <label className="span2">
+                Allowlist (telefones de teste, CSV)
+                <input
+                  value={cwForm.allowlist_phones}
+                  onChange={(e) => setCwForm({ ...cwForm, allowlist_phones: e.target.value })}
+                  placeholder="93992219098, 93991234567"
+                  disabled={cwForm.inbound_mode !== "allowlist"}
+                />
+              </label>
+
+              <label>
+                URL pública da API
+                <input
+                  value={cwForm.public_base_url}
+                  onChange={(e) => setCwForm({ ...cwForm, public_base_url: e.target.value })}
+                  placeholder="https://api.seudominio.com"
+                />
+                <small className="field-hint">
+                  Usada para montar a URL do webhook. Em local: http://127.0.0.1:8001
+                </small>
+              </label>
+
+              <label>
+                Token do webhook (opcional)
+                {cwMeta.token_configured ? (
+                  <span className="key-mask"> (atual: {cwMeta.token_mask})</span>
+                ) : null}
+                <input
+                  type="password"
+                  value={cwForm.webhook_token}
+                  onChange={(e) => setCwForm({ ...cwForm, webhook_token: e.target.value })}
+                  placeholder="Header X-Webhook-Token"
+                  autoComplete="off"
+                />
+              </label>
+
+              <label className="check span2">
+                <input
+                  type="checkbox"
+                  checked={cwForm.buffer_enabled}
+                  onChange={(e) => setCwForm({ ...cwForm, buffer_enabled: e.target.checked })}
+                />
+                Agrupar mensagens rápidas (debounce ~3,5s antes de responder)
+              </label>
+
+              <div className="actions span2">
+                <button type="submit">Salvar integração</button>
+              </div>
+            </form>
+
+            <div className="config-box span2" style={{ marginTop: "1.5rem" }}>
+              <strong>Testar payload do Chatwoot</strong>
+              <small className="field-hint">
+                Cole o JSON que o Chatwoot envia (ou use o exemplo) e veja como a Eva interpreta.
+              </small>
+              <textarea
+                value={cwTestPayload}
+                onChange={(e) => setCwTestPayload(e.target.value)}
+                rows={14}
+                style={{ width: "100%", marginTop: "0.5rem", fontFamily: "monospace", fontSize: "0.85rem" }}
+              />
+              <div className="actions" style={{ marginTop: "0.5rem" }}>
+                <button type="button" onClick={() => void runTestParse()}>
+                  Testar parse
+                </button>
+              </div>
+              {cwTestResult && (
+                <pre
+                  style={{
+                    marginTop: "0.75rem",
+                    padding: "0.75rem",
+                    background: "var(--surface-2, #1a1a1a)",
+                    borderRadius: "6px",
+                    overflow: "auto",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  {JSON.stringify(cwTestResult, null, 2)}
+                </pre>
+              )}
+            </div>
           </section>
         )}
 

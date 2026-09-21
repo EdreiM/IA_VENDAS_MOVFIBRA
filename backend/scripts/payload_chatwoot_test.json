@@ -1,1 +1,23 @@
-{"content":"teste sofia termos","message_type":"outgoing"}
+{
+  "event": "message_created",
+  "message_type": "incoming",
+  "private": false,
+  "id": 99901,
+  "content": "Oi, quero internet",
+  "inbox": { "id": 6 },
+  "conversation": {
+    "id": 2762,
+    "inbox_id": 6,
+    "meta": {
+      "team": {},
+      "sender": { "phone_number": "+5593992219098" }
+    },
+    "contact_inbox": { "source_id": "93992219098" }
+  },
+  "sender": {
+    "id": 1227,
+    "name": "Cliente Teste",
+    "phone_number": "+5593992219098",
+    "identifier": "93992219098"
+  }
+}

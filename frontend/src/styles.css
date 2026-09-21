@@ -375,6 +375,108 @@ button.danger,
   gap: 16px;
 }
 
+.clientes-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: 16px;
+  min-height: 520px;
+}
+
+.clientes-list {
+  border: 1px solid var(--line);
+  background: rgba(12, 8, 28, 0.35);
+  display: flex;
+  flex-direction: column;
+  max-height: 72vh;
+}
+
+.clientes-search {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.clientes-search input {
+  flex: 1;
+  min-width: 0;
+}
+
+.clientes-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+}
+
+.client-item {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.client-item:hover {
+  background: rgba(122, 60, 255, 0.12);
+}
+
+.client-item.active {
+  background: rgba(51, 204, 255, 0.12);
+  border-left: 3px solid var(--cyan);
+}
+
+.client-item strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.client-item small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.clientes-detail {
+  border: 1px solid var(--line);
+  background: rgba(12, 8, 28, 0.35);
+  padding: 16px;
+  overflow: auto;
+  max-height: 72vh;
+}
+
+.client-form h3 {
+  margin: 12px 0 4px;
+  font-size: 0.95rem;
+  color: var(--cyan);
+}
+
+.msg-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--line);
+}
+
+.msg-timeline li {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.msg-timeline .msg-cliente {
+  background: rgba(51, 204, 255, 0.06);
+}
+
+.msg-timeline .msg-eva {
+  background: rgba(122, 60, 255, 0.08);
+}
+
+.msg-timeline small {
+  color: var(--muted);
+  display: block;
+  margin-bottom: 4px;
+}
+
 .detail {
   background: #000000;
   border: 1px solid var(--line);
