@@ -1,12 +1,14 @@
-# Eva MOV FIBRA — stack Docker / Portainer
+# Eva MOV FIBRA — stack Portainer usando imagens do Docker Hub
 #
-# Portas HOST (padrão, sem conflitar com 8000/5173 de outros projetos):
-#   API (FastAPI)  → 8001  → container :8000
-#   Painel (nginx) → 5180  → container :80
-#   PostgreSQL     → 5433  → container :5432  (opcional expor; só rede interna também funciona)
+# Pré-requisito: publicar imagens (ver DEPLOY_PORTAINER.md):
+#   docker build -t SEU_USUARIO/iavendas-api:latest ./backend
+#   docker build -t SEU_USUARIO/iavendas-frontend:latest ./frontend
+#   docker push SEU_USUARIO/iavendas-api:latest
+#   docker push SEU_USUARIO/iavendas-frontend:latest
 #
-# Sem domínio: PUBLIC_BASE_URL=http://IP-DO-SERVIDOR:8001
-# Com domínio:  PUBLIC_BASE_URL=https://api.seudominio.com.br
+# No Portainer, defina:
+#   DOCKERHUB_USER=seu_usuario
+#   IMAGE_TAG=latest
 
 name: iavendas
 
@@ -17,7 +19,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-sofia}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-sofia}
     volumes:
       - iavendas_pg_data:/var/lib/postgresql/data
@@ -32,10 +34,7 @@ services:
       retries: 10
 
   api:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    image: iavendas-api:local
+    image: ${DOCKERHUB_USER:?Defina DOCKERHUB_USER}/iavendas-api:${IMAGE_TAG:-latest}
     container_name: iavendas-api
     restart: unless-stopped
     depends_on:
@@ -70,12 +69,7 @@ services:
       start_period: 20s
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_API_BASE: ""
-    image: iavendas-frontend:local
+    image: ${DOCKERHUB_USER}/iavendas-frontend:${IMAGE_TAG:-latest}
     container_name: iavendas-frontend
     restart: unless-stopped
     depends_on:

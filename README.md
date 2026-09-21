@@ -1,100 +1,106 @@
 # Eva — IA de vendas MOV FIBRA
 
-Monorepo pronto para **GitHub + Portainer**.
+Monorepo oficial da **Eva**: API FastAPI, painel operacional, integrações n8n/Chatwoot/IXC.
+
+**GitHub:** [EdreiM/IA_VENDAS_MOVFIBRA](https://github.com/EdreiM/IA_VENDAS_MOVFIBRA)
 
 ```
 IA VENDAS/
-  backend/           API FastAPI + PostgreSQL
-  frontend/          Painel operacional (Vite/React)
-  n8n/               Workflows auxiliares
-  docker-compose.yml Stack produção/homolog
-  REGRAS_NEGOCIO.md  Regras comerciais
-  FLUXO_SOFIA.md     Funil técnico
+├── backend/              API FastAPI (Eva)
+├── frontend/             Painel React + nginx
+├── n8n/                  Workflows e documentação
+├── portainer/            Template de env para Portainer
+├── docker-compose.yml    Stack padrão (build local/Git)
+├── docker-compose.hub.yml Stack com imagens Docker Hub
+├── DEPLOY_PORTAINER.md   Guia de deploy
+├── REGRAS_NEGOCIO.md     Regras comerciais
+└── FLUXO_SOFIA.md        Funil técnico
 ```
 
-## Pré-requisitos
+---
 
-- Docker / Portainer **ou** Python 3.12 + PostgreSQL 16
-- Node 20+ (só para desenvolver o painel)
+## Stack Docker / Portainer
 
-## Subir com Docker (recomendado / Portainer)
+| Serviço | Container | Porta HOST |
+|---------|-----------|------------|
+| API Eva | `iavendas-api` | **8001** |
+| Painel | `iavendas-frontend` | **5180** |
+| PostgreSQL | `iavendas-postgres` | **5433** |
 
-Portas padrão **diferentes** de outros projetos (evita conflito com 8000/5173):
+Portas escolhidas para **não conflitar** com 8000/5173/5432 de outros projetos.
 
-| Serviço | Porta host |
-|---------|------------|
-| API Eva | **8001** |
-| Painel | **5180** |
-| PostgreSQL | **5433** |
+### Deploy rápido
 
-1. Copie `.env.example` → `.env` e preencha segredos.  
-2. No Portainer: **Stacks → Add stack** → cole o `docker-compose.yml` + env.  
-   Ou local:
+1. Copie `portainer/stack.env.example` → `.env` e preencha segredos.
+2. Ajuste `PUBLIC_BASE_URL` (`http://IP:8001` sem domínio).
+3. No Portainer: **Stacks → Add stack** → cole `docker-compose.yml` + env.
+
+Guia completo: **[DEPLOY_PORTAINER.md](DEPLOY_PORTAINER.md)**
 
 ```powershell
 docker compose up -d --build
+curl http://127.0.0.1:8001/health
+# Painel: http://127.0.0.1:5180
 ```
 
-3. Health: http://127.0.0.1:8001/health  
-4. Painel: http://127.0.0.1:5180 (informe `ADMIN_API_TOKEN` no topo)
+**Docker Hub:** opcional. O Portainer pode buildar direto do GitHub. Ver [DEPLOY_PORTAINER.md](DEPLOY_PORTAINER.md) §2.
 
-No n8n, aponte webhooks para `http://HOST:8001/...` (ou URL pública do reverse proxy).
+---
 
 ## Painel operacional
 
-Abas: **Métricas**, **Conversas**, **Planos**, **Promoções**, **Config IA** (RAG), **Ferramentas** (webhooks dinâmicos), **Unidades**.
+| Aba | Função |
+|-----|--------|
+| Chat teste | Simular conversa local |
+| Métricas | Funil e totais |
+| Conversas | Lista + handoff + histórico de mensagens |
+| **Clientes** | Ficha completa (cadastro, plano, IXC) |
+| Planos | Catálogo com imagens |
+| Promoções | Códigos promocionais |
+| Config IA | OpenAI, RAG, tom de voz |
+| **Chatwoot** | Webhook inbound, inbox, teste de payload |
+| Ferramentas | Webhooks n8n dinâmicos |
+| Unidades | Filiais / cidades |
 
-APIs admin (todas com `X-Admin-Token`):
+Autenticação admin: header `X-Admin-Token` = `ADMIN_API_TOKEN` do `.env`.
 
-- `GET/POST/PUT/DELETE /admin/unidades`
-- `GET/POST/PUT/DELETE /admin/planos`
-- `GET/POST/DELETE /admin/promocoes`
-- `GET/PUT /admin/config` (`rag_webhook_url`, etc.)
-- `GET/POST/PUT/DELETE /admin/ferramentas`
-- `GET /metrics/resumo|funil|conversas`
-
-A transferência automática prioriza a ferramenta `transferir_atendimento` cadastrada no painel.
+---
 
 ## Desenvolvimento local
 
 ```powershell
-# 1) Postgres (stack iavendas)
 docker compose up -d postgres
-# container: iavendas-postgres · porta 5433
+# .env: DATABASE_URL=postgresql://sofia:SENHA@127.0.0.1:5433/sofia
 
-# 2) .env na raiz
-DATABASE_URL=postgresql://sofia:sofia@127.0.0.1:5433/sofia
-
-# 3) API
-.\run_backend.ps1
-
-# 4) Painel
-cd frontend
-npm install
-npm run dev
+.\run_backend.ps1          # API :8001
+cd frontend && npm run dev # Painel :5180
 ```
 
-## GitHub
+---
 
-Não versionar:
+## Integrações
 
-- `.env`, `.venv`, `sofia_local.db`, `node_modules`, `dist`
+| Canal | Entrada | Saída |
+|-------|---------|-------|
+| Chatwoot/WhatsApp | `POST /webhooks/chatwoot` | Ferramenta `enviar_mensagem` (n8n) |
+| n8n | `POST /chat` | Webhooks configurados no painel |
+| IXC | Via n8n | Cadastro, ativação, agenda |
 
-Checklist antes do push:
+Webhook Chatwoot (produção): `{PUBLIC_BASE_URL}/webhooks/chatwoot`
 
-1. `.env.example` atualizado (sem senhas reais)  
-2. `docker compose config` válido  
-3. `/health` retorna `"database": "postgresql"`  
+---
 
-## Escalabilidade
+## Git — o que NÃO versionar
 
-- Estado e histórico no **PostgreSQL** com pool.  
-- Réplicas da API compartilham o mesmo banco.  
-- Buffer WhatsApp é por processo → 1 worker/réplica (já no Dockerfile).  
-- Planos/RAG/cadastro via webhooks n8n continuam escalando fora da API.
+- `.env`, `.venv`, `node_modules`, `dist/`, `backend/uploads/`
 
-## Documentos
+Antes do push: `docker compose config` válido e `/health` com PostgreSQL.
 
-- [`REGRAS_NEGOCIO.md`](REGRAS_NEGOCIO.md) — comportamento comercial  
-- [`FLUXO_SOFIA.md`](FLUXO_SOFIA.md) — fases e webhooks  
-- [`n8n/CHATWOOT_HANDOFF.md`](n8n/CHATWOOT_HANDOFF.md) — transferência Chatwoot  
+---
+
+## Documentação
+
+- [DEPLOY_PORTAINER.md](DEPLOY_PORTAINER.md) — Portainer, portas, domínio, Docker Hub
+- [REGRAS_NEGOCIO.md](REGRAS_NEGOCIO.md) — comportamento comercial
+- [FLUXO_SOFIA.md](FLUXO_SOFIA.md) — fases e webhooks
+- [n8n/GUIA_CHATWOOT_SOFIA.md](n8n/GUIA_CHATWOOT_SOFIA.md) — Chatwoot

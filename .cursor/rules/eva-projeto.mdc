@@ -1,0 +1,55 @@
+---
+description: Contexto fixo da Eva — negócio, stack e convenções
+globs:
+  - backend/**/*
+  - frontend/**/*
+  - n8n/**/*
+  - docker-compose*.yml
+  - .env.example
+  - portainer/**/*
+alwaysApply: true
+---
+
+# Eva MOV FIBRA — contexto do projeto
+
+## Identidade
+
+- IA de vendas: **Eva** (nome público; não usar Sofia com o cliente).
+- Repositório: `EdreiM/IA_VENDAS_MOVFIBRA`.
+
+## Funil comercial (ordem)
+
+localização → planos → cadastro → termos → ativação → agendamento → encerramento  
+Auxiliares: `sem_cobertura`, `transferido`.
+
+## Stack
+
+| Camada | Tecnologia |
+|--------|------------|
+| API | FastAPI, Python 3.12, uvicorn |
+| Banco | **PostgreSQL** (`DATABASE_URL`) — nunca SQLite em produção |
+| Painel | React + Vite; produção = nginx no container |
+| Integrações | n8n webhooks, Chatwoot, IXC |
+
+## Docker / Portainer (padrão)
+
+| Serviço | Container | Porta HOST |
+|---------|-----------|------------|
+| API | `iavendas-api` | 8001 |
+| Painel | `iavendas-frontend` | 5180 |
+| PG | `iavendas-postgres` | 5433 |
+
+- Compose: `docker-compose.yml` (build Git) ou `docker-compose.hub.yml` (Docker Hub).
+- Deploy: ver `DEPLOY_PORTAINER.md`.
+- `PUBLIC_BASE_URL` = URL pública da API (webhook Chatwoot, n8n, mídia).
+
+## Painel — abas principais
+
+Chat teste · Métricas · Conversas · **Clientes** · Planos · Config IA · **Chatwoot** · Ferramentas · Unidades
+
+## Regras de código
+
+- Escopo mínimo; reutilizar padrões existentes.
+- Config operacional no PostgreSQL (`sofia_config`, `ferramentas`) + `.env` fallback.
+- Secrets nunca no Git.
+- Documentação: `REGRAS_NEGOCIO.md`, `FLUXO_SOFIA.md`.

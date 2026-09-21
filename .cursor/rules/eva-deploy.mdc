@@ -1,0 +1,55 @@
+---
+description: Deploy Docker, Portainer e variáveis de ambiente da Eva
+globs:
+  - docker-compose*.yml
+  - backend/Dockerfile
+  - frontend/Dockerfile
+  - frontend/nginx.conf
+  - DEPLOY_PORTAINER.md
+  - portainer/**/*
+  - scripts/publish-docker.ps1
+alwaysApply: false
+---
+
+# Eva — deploy e infraestrutura
+
+## Portas (não alterar sem documentar)
+
+- **8001** → API (container 8000)
+- **5180** → Painel (container 80)
+- **5433** → PostgreSQL (container 5432)
+
+Conflito? Ajuste `SOFIA_API_PORT`, `SOFIA_DASH_PORT`, `POSTGRES_PORT` no `.env`.
+
+## URLs sem domínio
+
+```env
+PUBLIC_BASE_URL=http://IP-SERVidor:8001
+CORS_ORIGINS=http://IP-Servidor:5180
+```
+
+Webhook Chatwoot: `{PUBLIC_BASE_URL}/webhooks/chatwoot`
+
+## Frontend em Docker
+
+- `VITE_API_BASE=""` — nginx faz proxy para serviço `api`.
+- Rotas proxy: `/admin`, `/metrics`, `/chatwoot`, `/webhooks`, `/chat`, `/health`, `/media`.
+
+## Volumes persistentes
+
+- `iavendas_pg_data` — PostgreSQL
+- `iavendas_uploads` — imagens de planos
+
+## Docker Hub (opcional)
+
+Não é obrigatório. Portainer pode buildar do GitHub.
+
+Se usar Hub: `scripts/publish-docker.ps1` + `docker-compose.hub.yml`.
+
+## Checklist deploy
+
+1. `POSTGRES_PASSWORD` e `ADMIN_API_TOKEN` definidos
+2. `PUBLIC_BASE_URL` acessível externamente (n8n + Chatwoot)
+3. `/health` → `"database": "postgresql"`
+4. Painel: sync ferramentas + config Chatwoot
+5. Firewall: 8001 e 5180 abertas (ou reverse proxy)
