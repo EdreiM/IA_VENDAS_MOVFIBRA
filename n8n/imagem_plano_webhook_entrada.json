@@ -1,0 +1,110 @@
+{
+  "name": "Sofia — Webhook Imagem Plano (entrada)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "enviar_imagem_plano_sofia",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [336, -112],
+      "id": "217bbcc9-64eb-4ad1-b6f3-940c04cfc445",
+      "name": "Webhook Imagem Plano Sofia",
+      "webhookId": "enviar-imagem-plano-sofia"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "1IliNE2S8jPIRwa9",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/1IliNE2S8jPIRwa9",
+          "cachedResultName": "IMAGEM PLANO Sofia v5 — URL painel (subfluxo)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id_cliente": "={{ $json.body.id_cliente || $json.id_cliente }}",
+            "conversation_id": "={{ $json.body.conversation_id || $json.conversation_id }}",
+            "id_plano": "={{ $json.body.id_plano || $json.id_plano || $json.body.plano_confirmado_id || $json.plano_confirmado_id }}",
+            "plano_confirmado": "={{ $json.body.plano_confirmado || $json.plano_confirmado || $json.body.plano_nome || $json.plano_nome }}",
+            "nome": "={{ $json.body.nome || $json.nome }}",
+            "telefone": "={{ $json.body.telefone || $json.telefone }}",
+            "imagem_url": "={{ $json.body.imagem_url || $json.imagem_url }}",
+            "imagem_file_name": "={{ $json.body.imagem_file_name || $json.imagem_file_name }}",
+            "imagem_mime_type": "={{ $json.body.imagem_mime_type || $json.imagem_mime_type }}",
+            "content": "={{ $json.body.content || $json.content || $json.body.descricao || $json.descricao }}",
+            "descricao": "={{ $json.body.descricao || $json.descricao || $json.body.content || $json.content }}",
+            "chatwoot_attachment_field": "={{ $json.body.chatwoot_attachment_field || $json.chatwoot_attachment_field || 'attachments[]' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "id_cliente", "displayName": "id_cliente", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "conversation_id", "displayName": "conversation_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "id_plano", "displayName": "id_plano", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "plano_confirmado", "displayName": "plano_confirmado", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "nome", "displayName": "nome", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "telefone", "displayName": "telefone", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "imagem_url", "displayName": "imagem_url", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "imagem_file_name", "displayName": "imagem_file_name", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "imagem_mime_type", "displayName": "imagem_mime_type", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "content", "displayName": "content", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "descricao", "displayName": "descricao", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "chatwoot_attachment_field", "displayName": "chatwoot_attachment_field", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [624, -112],
+      "id": "c6ce92b7-765b-4b44-a677-70f10ee8797d",
+      "name": "Execute IMAGEM PLANO Sofia v",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, -208],
+      "id": "e9f3216d-ded5-4b7c-9679-1ab6e9a5fdea",
+      "name": "Respond to Webhook2"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{\n  {\n    resultado: 'erro',\n    ok: false,\n    erro: true,\n    transferir: true,\n    motivo: String($json.errorDescription || $json.errorMessage || $json.motivo || 'Falha na ferramenta'),\n    ferramenta: 'enviar_imagem_plano'\n  }\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [880, -16],
+      "id": "24953bee-59a1-4ed6-94c6-db39affd5ec0",
+      "name": "Respond to Webhook3"
+    }
+  ],
+  "connections": {
+    "Webhook Imagem Plano Sofia": {
+      "main": [[{ "node": "Execute IMAGEM PLANO Sofia v", "type": "main", "index": 0 }]]
+    },
+    "Execute IMAGEM PLANO Sofia v": {
+      "main": [
+        [{ "node": "Respond to Webhook2", "type": "main", "index": 0 }],
+        [{ "node": "Respond to Webhook3", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "79075fb22e5045e1beb3493444de048310c5aee705e7f3d3f6b2ea7d89bc4b09"
+  }
+}

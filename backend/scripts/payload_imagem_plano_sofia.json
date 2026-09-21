@@ -1,0 +1,16 @@
+{
+  "id_cliente": "559392219098@s.whatsapp.net",
+  "conversation_id": "2969",
+  "id_plano": "1212",
+  "plano_confirmado": "MOV SUPER+",
+  "plano_nome": "MOV SUPER+",
+  "nome": "Edrei teste",
+  "telefone": "93999990001",
+  "imagem_url": "https://SEU-HOST-PUBLICO/media/planos/plano_1212_exemplo.jpg",
+  "imagem_url_relativa": "/media/planos/plano_1212_exemplo.jpg",
+  "imagem_file_name": "plano_1212_exemplo.jpg",
+  "imagem_mime_type": "image/jpeg",
+  "chatwoot_attachment_field": "attachments[]",
+  "content": "✅ Internet ilimitada 📶\n✅ Imagina Só e Ubook 📚\n✅ Repetidor Mesh com 2 roteadores em comodato 📡",
+  "descricao": "✅ Internet ilimitada 📶\n✅ Imagina Só e Ubook 📚\n✅ Repetidor Mesh com 2 roteadores em comodato 📡"
+}

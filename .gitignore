@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+sofia_local.db
+frontend/node_modules/
+frontend/dist/
+backend/uploads/
+uploads/

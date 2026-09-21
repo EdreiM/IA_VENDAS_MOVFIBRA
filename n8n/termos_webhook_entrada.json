@@ -1,0 +1,80 @@
+{
+  "name": "Sofia — Webhook Termos (entrada)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "enviar_termos_sofia",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [1072, 560],
+      "id": "webhook-termos-sofia",
+      "name": "Webhook Termos Sofia",
+      "webhookId": "enviar-termos-sofia"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SUBSTITUIR_ID_SUBFLUXO_TERMOS_V4",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id_cliente": "={{ $json.body.id_cliente || $json.id_cliente }}",
+            "conversation_id": "={{ $json.body.conversation_id || $json.conversation_id }}",
+            "ixc_id_cliente": "={{ $json.body.ixc_id_cliente || $json.ixc_id_cliente || $json.body.ixc_cliente_id || $json.ixc_cliente_id }}",
+            "id_contrato_ixc": "={{ $json.body.id_contrato_ixc || $json.id_contrato_ixc || $json.body.id_contrato || $json.id_contrato }}",
+            "nome": "={{ $json.body.nome || $json.nome }}",
+            "telefone": "={{ $json.body.telefone || $json.telefone }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "id_cliente", "displayName": "id_cliente", "type": "string" },
+            { "id": "conversation_id", "displayName": "conversation_id", "type": "string" },
+            { "id": "ixc_id_cliente", "displayName": "ixc_id_cliente", "type": "string" },
+            { "id": "id_contrato_ixc", "displayName": "id_contrato_ixc", "type": "string" },
+            { "id": "nome", "displayName": "nome", "type": "string" },
+            { "id": "telefone", "displayName": "telefone", "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1360, 560],
+      "id": "exec-termos-v4",
+      "name": "Execute TERMOS SOFIA v4"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1632, 560],
+      "id": "respond-termos",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "connections": {
+    "Webhook Termos Sofia": {
+      "main": [[{ "node": "Execute TERMOS SOFIA v4", "type": "main", "index": 0 }]]
+    },
+    "Execute TERMOS SOFIA v4": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

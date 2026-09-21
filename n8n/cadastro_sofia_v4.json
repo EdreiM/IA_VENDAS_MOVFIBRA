@@ -1,0 +1,1895 @@
+{
+  "name": "CADASTRO IXC v4 — Sofia (subfluxo)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "id_cliente"
+            },
+            {
+              "name": "nome"
+            },
+            {
+              "name": "cpf"
+            },
+            {
+              "name": "email"
+            },
+            {
+              "name": "telefone"
+            },
+            {
+              "name": "data_nascimento"
+            },
+            {
+              "name": "rg"
+            },
+            {
+              "name": "cep"
+            },
+            {
+              "name": "rua"
+            },
+            {
+              "name": "numero"
+            },
+            {
+              "name": "bairro"
+            },
+            {
+              "name": "cidade"
+            },
+            {
+              "name": "complemento"
+            },
+            {
+              "name": "plano_confirmado"
+            },
+            {
+              "name": "plano_confirmado_id"
+            },
+            {
+              "name": "conversation_id"
+            },
+            {
+              "name": "contact_id"
+            },
+            {
+              "name": "ixc_cliente_id"
+            },
+            {
+              "name": "caixa_fibra"
+            },
+            {
+              "name": "localizacao_fixa"
+            },
+            {
+              "name": "data_vencimento_pref"
+            },
+            {
+              "name": "data_hora_agendamento"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -3648,
+        0
+      ],
+      "id": "286699c6-216b-4cd2-91b2-2e28f6bb6fa4",
+      "name": "Trigger Sofia"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\r\n * n8n Code — entrada do subfluxo CADASTRO SOFIA v4\r\n * Aceita body do Webhook Sofia OU inputs do Execute Workflow.\r\n * Saída: mesmo shape do antigo \"Buscando cliente\" (Postgres), sem DB.\r\n */\r\nconst raw = $input.first().json;\r\nconst body = raw.body && typeof raw.body === 'object' ? raw.body : raw;\r\n\r\nfunction digits(v) {\r\n  return String(v ?? '').replace(/\\D/g, '');\r\n}\r\n\r\nfunction telBr(v) {\r\n  let n = digits(v);\r\n  if (n.length === 13 && n.startsWith('55')) n = n.slice(2);\r\n  return n;\r\n}\r\n\r\nconst ixc = String(body.ixc_cliente_id || body.ixc_id_cliente || '').trim();\r\n\r\nreturn [\r\n  {\r\n    json: {\r\n      id_cliente: String(body.id_cliente || ''),\r\n      conversation_id: String(body.conversation_id || ''),\r\n      contact_id: String(body.contact_id || ''),\r\n      nome: String(body.nome || ''),\r\n      cpf_cnpj: digits(body.cpf || body.cpf_cnpj),\r\n      email: String(body.email || ''),\r\n      telefone: telBr(body.telefone),\r\n      whatsapp: telBr(body.telefone),\r\n      cep: String(body.cep || ''),\r\n      rua: String(body.rua || ''),\r\n      numero_endereco: String(body.numero || body.numero_endereco || ''),\r\n      bairro: String(body.bairro || ''),\r\n      cidade: String(body.cidade || ''),\r\n      complemento: String(body.complemento || 'Sem complemento'),\r\n      data_nascimento: String(body.data_nascimento || ''),\r\n      plano_id: String(body.plano_confirmado_id || body.plano_id || body.id_vd_contrato || ''),\r\n      plano_confirmado: String(body.plano_confirmado || ''),\r\n      rg_cliente: digits(body.rg || body.rg_cliente),\r\n      localizacao: String(body.localizacao_fixa || body.localizacao || ''),\r\n      caixa_fibra: String(body.caixa_fibra || ''),\r\n      data_vencimento: String(body.data_vencimento_pref || body.data_vencimento || '5'),\r\n      data_hora_agendamento: String(body.data_hora_agendamento || ''),\r\n      ixc_id_cliente: ixc,\r\n      cadastrado: ixc ? 'sim' : 'nao',\r\n    },\r\n  },\r\n];\r\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3400,
+        0
+      ],
+      "id": "5edd0285-1dbb-4029-8064-b7a5efba6913",
+      "name": "Normalizar Sofia"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c96be6a0-7c7d-4367-b243-23e8e4ef2255",
+              "leftValue": "={{ $('Normalizar Sofia').item.json.cadastrado }}",
+              "rightValue": "sim",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3040,
+        0
+      ],
+      "id": "a4b22cf6-f26c-4c26-b2d8-f0c94f67657c",
+      "name": "If cadastrado?"
+    },
+    {
+      "parameters": {
+        "url": "https://ixc.mov.pro.br/webservice/v1/cidade",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ixcsoft",
+              "value": "listar"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "qtype",
+              "value": "nome"
+            },
+            {
+              "name": "query",
+              "value": "={{ $('Normalizar Sofia').item.json.cidade }}"
+            },
+            {
+              "name": "oper",
+              "value": "=="
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2336,
+        544
+      ],
+      "id": "ea4d850a-476e-48e2-99e4-a43dba39dadd",
+      "name": "Coleta_id_cidade",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "oTcpUfNTfpW9r72r",
+          "name": "c0002_ixc_Agente_de_IA_api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "28b51292-6271-4af8-8422-93730703d0c6",
+              "name": "id_cidade",
+              "value": "={{ $json.registros[0].id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2096,
+        544
+      ],
+      "id": "f25dc74e-073a-4042-882f-3adbdb012ebf",
+      "name": "Id_cidade"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ixc.mov.pro.br/webservice/v1/cliente",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ixcsoft",
+              "value": "incluir"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "ativo",
+              "value": "S"
+            },
+            {
+              "name": "id_tipo_cliente",
+              "value": "19"
+            },
+            {
+              "name": "tipo_cliente_scm",
+              "value": "03"
+            },
+            {
+              "name": "tipo_pessoa",
+              "value": "F"
+            },
+            {
+              "name": "razao",
+              "value": "={{ $('Normalizar Sofia').item.json.nome }}"
+            },
+            {
+              "name": "cnpj_cpf",
+              "value": "={{ (() => { const v = $('Normalizar Sofia').item.json.cpf_cnpj?.toString().replace(/\\D/g,''); if(!v)return''; if(v.length===11)return v.replace(/(\\d{3})(\\d{3})(\\d{3})(\\d{2})/,'$1.$2.$3-$4'); if(v.length===14)return v.replace(/(\\d{2})(\\d{3})(\\d{3})(\\d{4})(\\d{2})/,'$1.$2.$3/$4-$5'); return v; })() }}"
+            },
+            {
+              "name": "contribuinte_icms",
+              "value": "N"
+            },
+            {
+              "name": "data_nascimento",
+              "value": "={{ $('Normalizar Sofia').item.json.data_nascimento }}"
+            },
+            {
+              "name": "tipo_assinante",
+              "value": "3"
+            },
+            {
+              "name": "filial_id",
+              "value": "3"
+            },
+            {
+              "name": "cep",
+              "value": "={{ ($('Normalizar Sofia').item.json.cep||'').replace(/\\D/g,'').replace(/^(\\d{5})(\\d{3})$/,'$1-$2')||'01010-100' }}"
+            },
+            {
+              "name": "endereco",
+              "value": "={{ ($('Normalizar Sofia').item.json.rua||'').trim()||'rua projetada' }}"
+            },
+            {
+              "name": "numero",
+              "value": "={{ ($('Normalizar Sofia').item.json.numero_endereco||'').trim()||'555' }}"
+            },
+            {
+              "name": "bairro",
+              "value": "={{ $('Normalizar Sofia').item.json.bairro }}"
+            },
+            {
+              "name": "cidade",
+              "value": "={{ $('Id_cidade').item.json.id_cidade }}"
+            },
+            {
+              "name": "complemento",
+              "value": "={{ $('Normalizar Sofia').item.json.complemento || 'Sem complemento' }}"
+            },
+            {
+              "name": "tipo_localidade",
+              "value": "U"
+            },
+            {
+              "name": "telefone_celular",
+              "value": "={{ $('Normalizar Sofia').item.json.telefone }}"
+            },
+            {
+              "name": "whatsapp",
+              "value": "={{ $('Normalizar Sofia').item.json.telefone }}"
+            },
+            {
+              "name": "email",
+              "value": "={{ $('Normalizar Sofia').item.json.email }}"
+            },
+            {
+              "name": "senha",
+              "value": "movbrasil"
+            },
+            {
+              "name": "hotsite_acesso",
+              "value": "2"
+            },
+            {
+              "name": "crm",
+              "value": "N"
+            },
+            {
+              "name": "id_vendedor",
+              "value": "308"
+            },
+            {
+              "name": "iss_classificacao_padrao",
+              "value": "99"
+            },
+            {
+              "name": "desconto_irrf_valor_inferior",
+              "value": "S"
+            },
+            {
+              "name": "hotsite_email",
+              "value": "={{ $('Normalizar Sofia').item.json.cpf_cnpj.replace(/\\D/g, '') }}"
+            },
+            {
+              "name": "fantasia",
+              "value": "={{ $('Normalizar Sofia').item.json.nome }}"
+            },
+            {
+              "name": "cob_envia_email",
+              "value": "S"
+            },
+            {
+              "name": "cob_envia_sms",
+              "value": "N"
+            },
+            {
+              "name": "ie_identidade",
+              "value": "={{ $('Normalizar Sofia').item.json.rg_cliente }}"
+            },
+            {
+              "name": "id_conta",
+              "value": "70302"
+            },
+            {
+              "name": "id_candato_tipo",
+              "value": "53"
+            },
+            {
+              "name": "id_campanha",
+              "value": "15"
+            },
+            {
+              "name": "responsavel",
+              "value": "486"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1872,
+        544
+      ],
+      "id": "4fd59324-9504-4e0c-8665-5191fb3911a6",
+      "name": "cadastro_cliente",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "oTcpUfNTfpW9r72r",
+          "name": "c0002_ixc_Agente_de_IA_api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b930a746-55f6-4e93-9052-4583f88cd24c",
+              "leftValue": "={{ $('cadastro_cliente').item.json.type }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1680,
+        544
+      ],
+      "id": "f4aac107-bf3e-4efd-b7e6-6cdcf2c56bea",
+      "name": "If3 cliente OK"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\r\n * n8n Code — ID IXC unificado (cliente novo ou já existente).\r\n * Conecte ANTES de Coleta_id_cidade_cadastra nos dois ramos do If cadastrado.\r\n */\r\nconst norm = $('Normalizar Sofia').first().json;\r\nlet ixcId = String(norm.ixc_id_cliente || '').trim();\r\n\r\nconst criados = $('cadastro_cliente').all();\r\nif (criados.length > 0 && criados[0].json?.id) {\r\n  ixcId = String(criados[0].json.id).trim();\r\n}\r\n\r\nif (!ixcId) {\r\n  throw new Error('ixc_id_cliente vazio — cadastro_cliente falhou ou ixc_cliente_id não veio no payload');\r\n}\r\n\r\nreturn [{ json: { ixc_id_cliente: ixcId, cadastrado: 'sim' } }];\r\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        0
+      ],
+      "id": "1c3f47b3-72dc-4487-86e1-fe036fa33a9b",
+      "name": "Cliente IXC ID"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9cef7bb2-97d4-4794-87b0-73d52f15c7d3",
+              "name": "resultado",
+              "value": "erro",
+              "type": "string"
+            },
+            {
+              "id": "89010d7b-1069-4eb4-963d-7a61c4b67bf3",
+              "name": "motivo",
+              "value": "={{ 'Erro cadastro cliente: ' + ($('cadastro_cliente').item.json.message || 'desconhecido') }}",
+              "type": "string"
+            },
+            {
+              "id": "460d4e5e-a90e-4d9e-a2eb-5e352b8b82c6",
+              "name": "erro",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1168,
+        944
+      ],
+      "id": "ef66021b-368c-4751-a862-37ac99e2785b",
+      "name": "Resposta Erro Cliente"
+    },
+    {
+      "parameters": {
+        "url": "https://ixc.mov.pro.br/webservice/v1/cidade",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ixcsoft",
+              "value": "listar"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "qtype",
+              "value": "nome"
+            },
+            {
+              "name": "query",
+              "value": "={{ $('Normalizar Sofia').item.json.cidade }}"
+            },
+            {
+              "name": "oper",
+              "value": "=="
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2336,
+        -16
+      ],
+      "id": "c0d065cb-062f-4270-90e5-4c4581e92cbb",
+      "name": "Coleta_id_cidade_cadastra",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "oTcpUfNTfpW9r72r",
+          "name": "c0002_ixc_Agente_de_IA_api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://ixc.mov.pro.br/webservice/v1/vd_contratos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ixcsoft",
+              "value": "listar"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "qtype",
+              "value": "vd_contratos.id"
+            },
+            {
+              "name": "query",
+              "value": "={{ $('Normalizar Sofia').item.json.plano_id }}"
+            },
+            {
+              "name": "oper",
+              "value": "=="
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2096,
+        -16
+      ],
+      "id": "f274255f-57ca-4593-bff9-e4b34e73beae",
+      "name": "bucar plano venda",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "oTcpUfNTfpW9r72r",
+          "name": "c0002_ixc_Agente_de_IA_api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ixc.mov.pro.br/webservice/v1/cliente_contrato",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "tipo",
+              "value": "={{ $json.registros[0].tipo }}"
+            },
+            {
+              "name": "id_cliente",
+              "value": "={{ $('Cliente IXC ID').item.json.ixc_id_cliente }}"
+            },
+            {
+              "name": "id_vd_contrato",
+              "value": "={{ $('Normalizar Sofia').item.json.plano_id }}"
+            },
+            {
+              "name": "descricao_aux_plano_venda",
+              "value": "={{ $json.registros[0].nome }}"
+            },
+            {
+              "name": "contrato",
+              "value": "={{ $json.registros[0].nome }}"
+            },
+            {
+              "name": "id_tipo_contrato",
+              "value": "={{ (() => { const v = Number($('Normalizar Sofia').item.json.data_vencimento); const m = {5:5,10:75,15:15,20:20}; return m[v]??75; })() }}"
+            },
+            {
+              "name": "id_modelo",
+              "value": "23"
+            },
+            {
+              "name": "id_filial",
+              "value": "3"
+            },
+            {
+              "name": "data",
+              "value": "={{ $now.format('dd/MM/yyyy') }}"
+            },
+            {
+              "name": "motivo_inclusao",
+              "value": "I"
+            },
+            {
+              "name": "id_tipo_documento",
+              "value": "501"
+            },
+            {
+              "name": "id_carteira_cobranca",
+              "value": "33"
+            },
+            {
+              "name": "id_vendedor",
+              "value": "308"
+            },
+            {
+              "name": "cc_previsao",
+              "value": "P"
+            },
+            {
+              "name": "tipo_cobranca",
+              "value": "P"
+            },
+            {
+              "name": "renovacao_automatica",
+              "value": "S"
+            },
+            {
+              "name": "base_geracao_tipo_doc",
+              "value": "P"
+            },
+            {
+              "name": "id_tipo_doc_ativ",
+              "value": "501"
+            },
+            {
+              "name": "fidelidade",
+              "value": "12"
+            },
+            {
+              "name": "bloqueio_automatico",
+              "value": "S"
+            },
+            {
+              "name": "aviso_atraso",
+              "value": "S"
+            },
+            {
+              "name": "endereco_padrao_cliente",
+              "value": "N"
+            },
+            {
+              "name": "cep",
+              "value": "={{ $('Normalizar Sofia').item.json.cep.replace(/\\D/g,'').replace(/^(\\d{5})(\\d{3})$/,'$1-$2') }}"
+            },
+            {
+              "name": "cep_novo",
+              "value": "={{ $('Normalizar Sofia').item.json.cep.replace(/\\D/g,'').replace(/^(\\d{5})(\\d{3})$/,'$1-$2') }}"
+            },
+            {
+              "name": "endereco",
+              "value": "={{ $('Normalizar Sofia').item.json.rua }}"
+            },
+            {
+              "name": "endereco_novo",
+              "value": "={{ $('Normalizar Sofia').item.json.rua }}"
+            },
+            {
+              "name": "numero",
+              "value": "={{ $('Normalizar Sofia').item.json.numero_endereco }}"
+            },
+            {
+              "name": "numero_novo",
+              "value": "={{ $('Normalizar Sofia').item.json.numero_endereco }}"
+            },
+            {
+              "name": "bairro",
+              "value": "={{ $('Normalizar Sofia').item.json.bairro }}"
+            },
+            {
+              "name": "bairro_novo",
+              "value": "={{ $('Normalizar Sofia').item.json.bairro }}"
+            },
+            {
+              "name": "cidade",
+              "value": "={{ $('Coleta_id_cidade_cadastra').item.json.registros[0].id }}"
+            },
+            {
+              "name": "cidade_novo",
+              "value": "={{ $('Coleta_id_cidade_cadastra').item.json.registros[0].id }}"
+            },
+            {
+              "name": "complemento",
+              "value": "={{ $('Normalizar Sofia').item.json.complemento || 'Sem complemento' }}"
+            },
+            {
+              "name": "complemento_novo",
+              "value": "={{ $('Normalizar Sofia').item.json.complemento || 'Sem complemento' }}"
+            },
+            {
+              "name": "latitude",
+              "value": "={{ String($('Normalizar Sofia').item.json.localizacao || '').split(',')[0].trim() }}"
+            },
+            {
+              "name": "latitude_novo",
+              "value": "={{ String($('Normalizar Sofia').item.json.localizacao || '').split(',')[0].trim() }}"
+            },
+            {
+              "name": "longitude",
+              "value": "={{ (String($('Normalizar Sofia').item.json.localizacao || '').split(',')[1] || '').trim() }}"
+            },
+            {
+              "name": "longitude_novo",
+              "value": "={{ (String($('Normalizar Sofia').item.json.localizacao || '').split(',')[1] || '').trim() }}"
+            },
+            {
+              "name": "status_internet",
+              "value": "AA"
+            },
+            {
+              "name": "id_motivo_inclusao",
+              "value": "1"
+            },
+            {
+              "name": "data_renovacao",
+              "value": "={{ $now.setZone('America/Santarem').plus({ years: 1 }).toFormat('dd/MM/yyyy') }}"
+            },
+            {
+              "name": "taxa_instalacao",
+              "value": "0.00"
+            },
+            {
+              "name": "id_indexador_reajuste",
+              "value": "5"
+            },
+            {
+              "name": "tipo_doc_opc",
+              "value": "429"
+            },
+            {
+              "name": "tipo_doc_opc2",
+              "value": "420"
+            },
+            {
+              "name": "tipo_doc_opc3",
+              "value": "428"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1856,
+        -16
+      ],
+      "id": "45a4df70-d403-48e8-9249-537c20e4d1e2",
+      "name": "cadastro_contrato",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "oTcpUfNTfpW9r72r",
+          "name": "c0002_ixc_Agente_de_IA_api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c7ff89e2-a328-4e1c-9b45-f9714a182c9e",
+              "leftValue": "={{ $json.type }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1648,
+        -16
+      ],
+      "id": "0cdac752-85d1-4635-9344-87737a7fec62",
+      "name": "If6 contrato OK"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cf3ef90c-8389-4e3d-805b-9d9431f14726",
+              "name": "id_contrato",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "bbf05a11-2749-43ca-8c72-4988313488cf",
+              "name": "cidade",
+              "value": "={{ $('Coleta_id_cidade_cadastra').item.json.registros[0].nome }}",
+              "type": "string"
+            },
+            {
+              "id": "aefafac9-dc73-4871-a074-2985b204b376",
+              "name": "cpf",
+              "value": "={{ String($('Normalizar Sofia').item.json.cpf_cnpj||'').replace(/\\D/g,'').padStart(11,'0').slice(-11).replace(/(\\d{3})(\\d{3})(\\d{3})(\\d{2})/,'$1.$2.$3-$4') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1408,
+        -32
+      ],
+      "id": "cc5b390c-b8fb-4695-af8d-f7d5f7137e49",
+      "name": "retorno_contrato"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ae2ca1eb-e131-408f-90bf-91cf03f1dd7f",
+              "name": "resultado",
+              "value": "erro",
+              "type": "string"
+            },
+            {
+              "id": "6842afc4-d1fd-43d7-b155-2a9d6ae5fd38",
+              "name": "motivo",
+              "value": "={{ 'Erro cadastro contrato: ' + ($json.message || 'desconhecido') }}",
+              "type": "string"
+            },
+            {
+              "id": "7bc37201-8d07-45d2-b4f4-d8ab957fd993",
+              "name": "erro",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1248,
+        208
+      ],
+      "id": "1b5d6e9a-4594-42ca-b739-f66654d71d25",
+      "name": "Resposta Erro Contrato"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cidade = String($json.cidade || \"\");\nconst cpf = String($json.cpf || \"\");\nconst mapa = { santarem:\"stm\", alenquer:\"alq\", altamira:\"atm\", \"brasil novo\":\"bn\", medicilandia:\"med\", uruara:\"uru\", ruropolis:\"rp\", itaituba:\"itb\", \"mojui dos campos\":\"mjc\" };\nconst norm = (t) => String(t).normalize(\"NFD\").replace(/[\\u0300-\\u036f]/g,\"\").toLowerCase().trim();\nconst sigla = mapa[norm(cidade)] || \"??\";\nreturn [{ json: { ...$json, pppoe: cpf.replace(/\\D/g,\"\") + \"_\" + sigla } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        -32
+      ],
+      "id": "6ce30b15-1fd9-4dc6-8970-57b2c1a18a43",
+      "name": "Criação_ppoe"
+    },
+    {
+      "parameters": {
+        "url": "https://ixc.mov.pro.br/webservice/v1/vd_contratos_produtos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ixcsoft",
+              "value": "listar"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "qtype",
+              "value": "id_vd_contrato"
+            },
+            {
+              "name": "query",
+              "value": "={{ $('bucar plano venda').item.json.registros[0].id }}"
+            },
+            {
+              "name": "oper",
+              "value": "=="
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -976,
+        -32
+      ],
+      "id": "7711bc16-067d-4206-8c81-e4433aa43778",
+      "name": "bucar plano velo",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "oTcpUfNTfpW9r72r",
+          "name": "c0002_ixc_Agente_de_IA_api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ixc.mov.pro.br/webservice/v1/radusuarios",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "autenticacao_por_mac",
+              "value": "P"
+            },
+            {
+              "name": "relacionar_concentrador_ao_login",
+              "value": "H"
+            },
+            {
+              "name": "auto_preencher_ipv6",
+              "value": "H"
+            },
+            {
+              "name": "fixar_ipv6",
+              "value": "H"
+            },
+            {
+              "name": "relacionar_ipv6_ao_login",
+              "value": "H"
+            },
+            {
+              "name": "service_tag_vlan",
+              "value": "N"
+            },
+            {
+              "name": "mtu",
+              "value": "1500"
+            },
+            {
+              "name": "onu_compartilhada",
+              "value": "N"
+            },
+            {
+              "name": "tipo_acesso",
+              "value": "http"
+            },
+            {
+              "name": "ativo",
+              "value": "S"
+            },
+            {
+              "name": "tipo_conexao_mapa",
+              "value": "F"
+            },
+            {
+              "name": "id_contrato",
+              "value": "={{ $('retorno_contrato').item.json.id_contrato }}"
+            },
+            {
+              "name": "id_grupo",
+              "value": "=1080"
+            },
+            {
+              "name": "id_cliente",
+              "value": "={{ $('cadastro_contrato').item.json.atualiza_campos[2].valor }}"
+            },
+            {
+              "name": "login",
+              "value": "={{ $('Criação_ppoe').item.json.pppoe }}"
+            },
+            {
+              "name": "senha",
+              "value": "={{ $('retorno_contrato').item.json.cpf.replace(/\\D/g, '') }}"
+            },
+            {
+              "name": "auto_preencher_ip",
+              "value": "H"
+            },
+            {
+              "name": "auto_preencher_mac",
+              "value": "H"
+            },
+            {
+              "name": "endereco",
+              "value": "={{ $('Normalizar Sofia').item.json.rua }}"
+            },
+            {
+              "name": "numero",
+              "value": "={{ $('Normalizar Sofia').item.json.numero_endereco }}"
+            },
+            {
+              "name": "complemento",
+              "value": "={{ $('Normalizar Sofia').item.json.complemento }}"
+            },
+            {
+              "name": "relacionar_ip_ao_login",
+              "value": "H"
+            },
+            {
+              "name": "bairro",
+              "value": "={{ $('Normalizar Sofia').item.json.bairro }}"
+            },
+            {
+              "name": "relacionar_mac_ao_login",
+              "value": "H"
+            },
+            {
+              "name": "latitude",
+              "value": "={{ String($('Normalizar Sofia').item.json.localizacao || '').split(',')[0].trim() }}"
+            },
+            {
+              "name": "longitude",
+              "value": "={{ (String($('Normalizar Sofia').item.json.localizacao || '').split(',')[1] || '').trim() }}"
+            },
+            {
+              "name": "autenticacao",
+              "value": "L"
+            },
+            {
+              "name": "login_simultaneo",
+              "value": "1"
+            },
+            {
+              "name": "senha_md5",
+              "value": "N"
+            },
+            {
+              "name": "fixar_ip",
+              "value": "H"
+            },
+            {
+              "name": "porta_http",
+              "value": "80"
+            },
+            {
+              "name": "cliente_tem_a_senha",
+              "value": "N"
+            },
+            {
+              "name": "tipo_vinculo_plano",
+              "value": "D"
+            },
+            {
+              "name": "cidade",
+              "value": "={{ $('Coleta_id_cidade_cadastra').item.json.registros[0].id }}"
+            },
+            {
+              "name": "cep",
+              "value": "={{ $('Normalizar Sofia').item.json.cep.replace(/\\D/g, '').replace(/^(\\d{5})(\\d{3})$/,'$1-$2') }}"
+            },
+            {
+              "name": "referencia",
+              "value": "={{ $('Normalizar Sofia').item.json.complemento }}"
+            },
+            {
+              "name": "endereco_padrao_cliente",
+              "value": "N"
+            },
+            {
+              "name": "id_filial",
+              "value": "3"
+            },
+            {
+              "name": "senha_router1",
+              "value": "movt3l3c0m"
+            },
+            {
+              "name": "senha_router2",
+              "value": "movt3l3c0m"
+            },
+            {
+              "name": "porta_router2",
+              "value": "1978"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -672,
+        -32
+      ],
+      "id": "194f9dc8-5dc4-4ad7-a8b3-558bc0e31c63",
+      "name": "cadastro_login",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "oTcpUfNTfpW9r72r",
+          "name": "c0002_ixc_Agente_de_IA_api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "354551da-1dad-419e-ac07-cddca1f1fe62",
+              "leftValue": "={{ $json.type }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -448,
+        -32
+      ],
+      "id": "f2ccb6ec-56de-47d9-8f3d-caf240aae84c",
+      "name": "If1 login OK"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ccd49018-7bf7-4553-b73f-e267b1374022",
+              "leftValue": "={{ $json.message }}",
+              "rightValue": "Login já existe!",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -224,
+        64
+      ],
+      "id": "424908c1-dd4c-4fa8-91ae-a1c34fe1c1a5",
+      "name": "If2 login existe?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d6378cca-ad42-410e-a1b9-f7af84e8f281",
+              "name": "resultado",
+              "value": "erro",
+              "type": "string"
+            },
+            {
+              "id": "3332b043-1561-42c3-95e4-3872a97c96c7",
+              "name": "motivo",
+              "value": "={{ 'Erro cadastro login: ' + ($json.message || 'desconhecido') }}",
+              "type": "string"
+            },
+            {
+              "id": "85f7606e-7cc7-4867-8010-0f876792db26",
+              "name": "erro",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        416,
+        416
+      ],
+      "id": "002e6cb7-6a3a-4b2c-b7b8-466ce13b4350",
+      "name": "Resposta Erro Login"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5ab2af97-2aa7-44b5-9344-0feb74b4e1de",
+              "name": "mensagem",
+              "value": "=Telefone: {{ $('Normalizar Sofia').item.json.telefone }}\\nendereço: {{ $('Normalizar Sofia').item.json.rua }}, {{ $('Normalizar Sofia').item.json.bairro }}\\nCaixa: {{ $('Normalizar Sofia').item.json.caixa_fibra }}\\nLocalização: {{ $('Normalizar Sofia').item.json.localizacao }}",
+              "type": "string"
+            },
+            {
+              "id": "228fa7a7-1306-44c3-b6de-3c6fac880653",
+              "name": "id_login",
+              "value": "={{ $('cadastro_login').item.json.id || $json.id}}",
+              "type": "string"
+            },
+            {
+              "id": "15cad9a5-9ab6-4f23-acad-bbb41fc77837",
+              "name": "id_contrato",
+              "value": "={{ $('retorno_contrato').item.json.id_contrato }}",
+              "type": "string"
+            },
+            {
+              "id": "d144e6fd-2f45-4bf0-8472-13cc39c3f07d",
+              "name": "data_instalacao",
+              "value": "={{ $('Normalizar Sofia').item.json.data_hora_agendamento }}",
+              "type": "string"
+            },
+            {
+              "id": "3cc4d5cd-273e-4158-9cf6-c9294e5dc5e5",
+              "name": "id_cliente",
+              "value": "={{ $('cadastro_login').item.json.atualiza_campos[1].valor }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        496,
+        -48
+      ],
+      "id": "c613abd6-8679-44c6-b0b2-16d866279544",
+      "name": "dado_OS"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ixc.mov.pro.br/webservice/v1/su_ticket",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "tipo",
+              "value": "C"
+            },
+            {
+              "name": "id_cliente",
+              "value": "={{ $json.id_cliente }}"
+            },
+            {
+              "name": "id_login",
+              "value": "={{ $json.id_login }}"
+            },
+            {
+              "name": "id_contrato",
+              "value": "={{ $json.id_contrato }}"
+            },
+            {
+              "name": "id_filial",
+              "value": "3"
+            },
+            {
+              "name": "id_assunto",
+              "value": "585"
+            },
+            {
+              "name": "titulo",
+              "value": "ATIVAÇÃO DE NOVO CLIENTE"
+            },
+            {
+              "name": "origem_endereco",
+              "value": "L"
+            },
+            {
+              "name": "id_wfl_processo",
+              "value": "106"
+            },
+            {
+              "name": "id_ticket_setor",
+              "value": "45"
+            },
+            {
+              "name": "id_responsavel_tecnico",
+              "value": "249"
+            },
+            {
+              "name": "data_criacao",
+              "value": "={{ $now.format('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "id_usuarios",
+              "value": "225"
+            },
+            {
+              "name": "menssagem",
+              "value": "={{ $json.mensagem }}"
+            },
+            {
+              "name": "su_status",
+              "value": "N"
+            },
+            {
+              "name": "prioridade",
+              "value": "A"
+            },
+            {
+              "name": "data_agenda",
+              "value": "={{ $json.data_instalacao }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        752,
+        -48
+      ],
+      "id": "9bcde73f-d051-4d7d-8682-1ad31c4513ba",
+      "name": "OS",
+      "retryOnFail": true,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "oTcpUfNTfpW9r72r",
+          "name": "c0002_ixc_Agente_de_IA_api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "05f29385-e79b-4e36-9446-b57683bc91e3",
+              "leftValue": "={{ $json.type }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        944,
+        -48
+      ],
+      "id": "2f236a1d-7530-4fb3-8394-a35e25a74eae",
+      "name": "If5 OS OK"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "71f4cd5f-84c9-4bc3-a37d-c970f8b9ca04",
+              "name": "resultado",
+              "value": "erro",
+              "type": "string"
+            },
+            {
+              "id": "924bfd16-7cde-434b-b526-92b5a9ff11fc",
+              "name": "motivo",
+              "value": "={{ 'Erro abertura OS: ' + ($json.message || 'desconhecido') }}",
+              "type": "string"
+            },
+            {
+              "id": "a60b85a6-543f-4315-a1ec-800763f3133d",
+              "name": "erro",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1184,
+        144
+      ],
+      "id": "1eee8f55-7bd2-453f-81ac-69b2c62ad2d6",
+      "name": "Resposta Erro OS"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1c40a262-febc-4093-88e2-1220deb11101",
+              "leftValue": "={{ $('Normalizar Sofia').item.json.conversation_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals",
+                "name": "filter.operator.notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1700,
+        -64
+      ],
+      "id": "72c63e3b-9125-442b-ad69-592843413c43",
+      "name": "Tem conversation_id?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.mov.pro.br/api/v1/accounts/2/conversations/{{ $('Normalizar Sofia').item.json.conversation_id.trim() }}/labels",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "api_access_token",
+              "value": "ugEufRFeoBACNJNcPVGLZaoD"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"labels\": [\"contratou\", \"aguradando_assinatura\"] }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1900,
+        -64
+      ],
+      "id": "60f23650-0c86-4f12-bed4-9c9aa688b3e0",
+      "name": "Cadastrou chatwoot",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\r\n * n8n Code — resposta final para a Sofia (Respond to Webhook / retorno subfluxo)\r\n * Conecte após OS OK + labels Chatwoot (opcional).\r\n */\r\nconst cliente = $('Normalizar Sofia').first().json;\r\nconst unificado = $('Cliente IXC ID').first()?.json || {};\r\nconst ixcId =\r\n  String(unificado.ixc_id_cliente || '').trim() ||\r\n  String(cliente.ixc_id_cliente || '').trim() ||\r\n  String($('cadastro_cliente').first()?.json?.id || '').trim();\r\n\r\nconst contrato = $('retorno_contrato').first()?.json || {};\r\nconst osNode = $('OS').first()?.json || {};\r\nconst loginNode = $('cadastro_login').first()?.json || $('cadastro_login1').first()?.json || {};\r\n\r\nconst idContrato = String(contrato.id_contrato || '').trim();\r\nconst osId = String(osNode.id || osNode.os_id || '').trim();\r\nconst idLogin = String(loginNode.id || '').trim();\r\n\r\nconst ok = Boolean(ixcId && idContrato && osId);\r\n\r\nreturn [\r\n  {\r\n    json: {\r\n      resultado: ok ? 'ok' : 'erro',\r\n      ixc_cliente_id: ixcId,\r\n      id_contrato_ixc: idContrato,\r\n      os_id: osId,\r\n      id_login: idLogin,\r\n      motivo: ok\r\n        ? 'Cadastro concluído (cliente + contrato + login + OS)'\r\n        : `Incompleto: ixc=${ixcId || '-'} contrato=${idContrato || '-'} os=${osId || '-'}`,\r\n      erro: !ok,\r\n    },\r\n  },\r\n];\r\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        -64
+      ],
+      "id": "9c7cc0b3-7eca-4ccc-bcf9-a6f3b8d06577",
+      "name": "Resposta Sofia"
+    },
+    {
+      "parameters": {
+        "content": "## CADASTRO SOFIA v4\nSem Postgres",
+        "height": 120,
+        "width": 800,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -3648,
+        -120
+      ],
+      "typeVersion": 1,
+      "id": "d4d2658b-2af2-413a-a538-4f15a0b919ab",
+      "name": "Note"
+    }
+  ],
+  "connections": {
+    "Trigger Sofia": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Sofia": {
+      "main": [
+        [
+          {
+            "node": "If cadastrado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If cadastrado?": {
+      "main": [
+        [
+          {
+            "node": "Cliente IXC ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Coleta_id_cidade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coleta_id_cidade": {
+      "main": [
+        [
+          {
+            "node": "Id_cidade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Id_cidade": {
+      "main": [
+        [
+          {
+            "node": "cadastro_cliente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "cadastro_cliente": {
+      "main": [
+        [
+          {
+            "node": "If3 cliente OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If3 cliente OK": {
+      "main": [
+        [
+          {
+            "node": "Cliente IXC ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Erro Cliente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cliente IXC ID": {
+      "main": [
+        [
+          {
+            "node": "Coleta_id_cidade_cadastra",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coleta_id_cidade_cadastra": {
+      "main": [
+        [
+          {
+            "node": "bucar plano venda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "bucar plano venda": {
+      "main": [
+        [
+          {
+            "node": "cadastro_contrato",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "cadastro_contrato": {
+      "main": [
+        [
+          {
+            "node": "If6 contrato OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If6 contrato OK": {
+      "main": [
+        [
+          {
+            "node": "retorno_contrato",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Erro Contrato",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "retorno_contrato": {
+      "main": [
+        [
+          {
+            "node": "Criação_ppoe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Criação_ppoe": {
+      "main": [
+        [
+          {
+            "node": "bucar plano velo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "bucar plano velo": {
+      "main": [
+        [
+          {
+            "node": "cadastro_login",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "cadastro_login": {
+      "main": [
+        [
+          {
+            "node": "If1 login OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1 login OK": {
+      "main": [
+        [
+          {
+            "node": "dado_OS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If2 login existe?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2 login existe?": {
+      "main": [
+        [
+          {
+            "node": "dado_OS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Erro Login",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "dado_OS": {
+      "main": [
+        [
+          {
+            "node": "OS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OS": {
+      "main": [
+        [
+          {
+            "node": "If5 OS OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If5 OS OK": {
+      "main": [
+        [
+          {
+            "node": "Tem conversation_id?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Erro OS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem conversation_id?": {
+      "main": [
+        [
+          {
+            "node": "Cadastrou chatwoot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cadastrou chatwoot": {
+      "main": [
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

@@ -1,0 +1,546 @@
+{
+  "name": "TERMOS SOFIA v4 — áudio + PDF (subfluxo)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "id_cliente"
+            },
+            {
+              "name": "conversation_id"
+            },
+            {
+              "name": "ixc_id_cliente"
+            },
+            {
+              "name": "id_contrato_ixc"
+            },
+            {
+              "name": "nome"
+            },
+            {
+              "name": "telefone"
+            }
+          ]
+        }
+      },
+      "id": "e8561592-9d2a-415a-a31a-c84da657d3f1",
+      "typeVersion": 1.1,
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [
+        -1712,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\r\n * n8n Code — entrada subfluxo TERMOS SOFIA v4\r\n */\r\nconst raw = $input.first().json;\r\nconst body = raw.body && typeof raw.body === 'object' ? raw.body : raw;\r\n\r\nreturn [\r\n  {\r\n    json: {\r\n      id_cliente: String(body.id_cliente || ''),\r\n      conversation_id: String(body.conversation_id || ''),\r\n      ixc_id_cliente: String(body.ixc_id_cliente || body.ixc_cliente_id || ''),\r\n      id_contrato_ixc: String(body.id_contrato_ixc || body.id_contrato || ''),\r\n      nome: String(body.nome || ''),\r\n      telefone: String(body.telefone || ''),\r\n    },\r\n  },\r\n];\r\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1520,
+        560
+      ],
+      "id": "f8083d1c-d9a7-4cc8-800a-957be5338f19",
+      "name": "Normalizar Sofia"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -1328,
+        560
+      ],
+      "id": "7b6ed3c6-24d5-497b-a510-649549efc73a",
+      "name": "Wait",
+      "webhookId": "7cdf1f07-26e5-42c9-8a20-194220663070"
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "value": "ia_vendas",
+          "mode": "list",
+          "cachedResultName": "ia_vendas"
+        },
+        "table": {
+          "__rl": true,
+          "value": "audios",
+          "mode": "list",
+          "cachedResultName": "audios"
+        },
+        "where": {
+          "values": [
+            {
+              "column": "nome_arquivo",
+              "value": "audio_fidelidade_mov"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1120,
+        560
+      ],
+      "id": "ba3f21f6-091e-4afe-abbc-61cf5861db68",
+      "name": "audio",
+      "credentials": {
+        "postgres": {
+          "id": "fBJznTgwjZ9E5LEZ",
+          "name": "MOV FIBRA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base64 = $json.audio_base64;\r\n\r\nconst binaryData = await this.helpers.prepareBinaryData(\r\n  Buffer.from(base64, 'base64'),\r\n  $json.nome_arquivo || 'audio.ogg',\r\n  $json.mime_type || 'application/ogg'\r\n);\r\n\r\nreturn [\r\n  {\r\n    json: $('Normalizar Sofia').first().json,\r\n    binary: {\r\n      audio_fidelidade: binaryData,\r\n    },\r\n  },\r\n];\r\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        560
+      ],
+      "id": "59705533-124c-422e-9526-1da44dbe37a9",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.mov.pro.br/api/v1/accounts/2/conversations/{{ $json.conversation_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "ugEufRFeoBACNJNcPVGLZaoD"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "Segue o áudio de fidelidade 🎧"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "attachments[]",
+              "inputDataFieldName": "=audio_fidelidade"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -704,
+        560
+      ],
+      "id": "8accc1f0-6a9a-4634-bceb-6ae577923fba",
+      "name": "envia audio",
+      "executeOnce": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://ixc.mov.pro.br/webservice/v1/cliente_contrato_assinatura_termo",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ixcsoft",
+              "value": "listar"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "qtype",
+              "value": "=id_contrato"
+            },
+            {
+              "name": "query",
+              "value": "=$('Normalizar Sofia').item.json.id_contrato_ixc"
+            },
+            {
+              "name": "oper",
+              "value": "=="
+            },
+            {
+              "name": "page",
+              "value": "1"
+            },
+            {
+              "name": "rp",
+              "value": "20"
+            },
+            {
+              "name": "sortname",
+              "value": "cliente_contrato_assinatura_termo.id"
+            },
+            {
+              "name": "sortorder",
+              "value": "asc"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {}
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -480,
+        560
+      ],
+      "id": "2aa226f0-9bd0-4cf6-ad3c-29f026026a7c",
+      "name": "requisição_termos",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "oTcpUfNTfpW9r72r",
+          "name": "c0002_ixc_Agente_de_IA_api"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\r\n * n8n Code — escolhe o registro de termo/contrato (PDF), não RG/selfie.\r\n * Entrada: resposta de cliente_contrato_assinatura_termo\r\n */\r\nconst ctx = $('Normalizar Sofia').first().json;\r\nconst rows = Array.isArray($json.registros) ? $json.registros : [];\r\n\r\nif (!rows.length) {\r\n  throw new Error(\r\n    `Nenhum registro em cliente_contrato_assinatura_termo para contrato ${ctx.id_contrato_ixc || '?'}`,\r\n  );\r\n}\r\n\r\nconst norm = (v) => String(v ?? '').toLowerCase();\r\n\r\nconst textoRegistro = (r) =>\r\n  [\r\n    r.tipo,\r\n    r.tipo_documento,\r\n    r.tipo_doc,\r\n    r.descricao,\r\n    r.nome,\r\n    r.documento,\r\n    r.modelo_termo,\r\n    r.termo,\r\n    r.obs,\r\n    r.arquivo,\r\n    r.extensao,\r\n    r.mime_type,\r\n  ]\r\n    .map(norm)\r\n    .join(' ');\r\n\r\nconst isIdentity = (r) =>\r\n  /identidade|documento pessoal|\\brg\\b|\\bcnh\\b|selfie|rosto|facial|comprovante|foto/.test(\r\n    textoRegistro(r),\r\n  );\r\n\r\nconst isTermo = (r) =>\r\n  /termo|fidelidade|contrato|ades[aã]o|assinatura digital/.test(textoRegistro(r)) &&\r\n  !isIdentity(r);\r\n\r\nconst isPdf = (r) => {\r\n  const t = textoRegistro(r);\r\n  return t.includes('pdf') || t.includes('application/pdf');\r\n};\r\n\r\nconst byIdAsc = (a, b) => Number(a.id || 0) - Number(b.id || 0);\r\n\r\nlet chosen =\r\n  rows.find((r) => isTermo(r) && isPdf(r)) ||\r\n  rows.find((r) => isTermo(r)) ||\r\n  rows.find((r) => isPdf(r) && !isIdentity(r)) ||\r\n  rows.filter((r) => !isIdentity(r)).sort(byIdAsc)[0] ||\r\n  rows.slice().sort(byIdAsc)[0];\r\n\r\nif (!chosen?.id) {\r\n  throw new Error('Registro de termo sem id válido');\r\n}\r\n\r\nreturn [\r\n  {\r\n    json: {\r\n      ...ctx,\r\n      id_termo_ixc: String(chosen.id),\r\n      termo_debug: {\r\n        total: rows.length,\r\n        escolhido_id: chosen.id,\r\n        escolhido_tipo: chosen.tipo || chosen.tipo_documento || '',\r\n        escolhido_nome: chosen.nome || chosen.descricao || '',\r\n      },\r\n    },\r\n  },\r\n];\r\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        560
+      ],
+      "id": "c39462d6-8fc2-4e97-8729-15552924913b",
+      "name": "Selecionar termo PDF"
+    },
+    {
+      "parameters": {
+        "url": "https://ixc.mov.pro.br/webservice/v1/botao_rel_28088",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "={{ $json.id_termo_ixc }}"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {
+              "maxRedirects": "=21"
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "attachments[]"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -256,
+        560
+      ],
+      "name": "baixartermo_unico",
+      "id": "781824f2-7bea-4e74-b175-76e97a9aa313",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "oTcpUfNTfpW9r72r",
+          "name": "c0002_ixc_Agente_de_IA_api"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\r\n * n8n Code — garante PDF antes de enviar ao Chatwoot\r\n * n8n 2.x: binary vem em $input.first().binary (não existe $binary global).\r\n */\r\nconst ctx =\r\n  $('Selecionar termo PDF').first()?.json ||\r\n  $('Normalizar Sofia').first()?.json ||\r\n  {};\r\n\r\nconst item = $input.first();\r\nconst binary = item?.binary || {};\r\nconst bin = binary['attachments[]'] || binary.data;\r\n\r\nif (!bin) {\r\n  throw new Error('IXC não retornou arquivo do termo');\r\n}\r\n\r\nconst mime = String(\r\n  bin.mimeType || bin.mimetype || bin.fileType || '',\r\n).toLowerCase();\r\nconst name = String(bin.fileName || bin.fileExtension || '').toLowerCase();\r\n\r\nif (!mime.includes('pdf') && !name.endsWith('.pdf')) {\r\n  throw new Error(\r\n    `Arquivo errado (esperado PDF, veio ${mime || name || 'desconhecido'}). ` +\r\n      `id_termo=${ctx.id_termo_ixc || '?'}`,\r\n  );\r\n}\r\n\r\nreturn [\r\n  {\r\n    json: ctx,\r\n    binary,\r\n  },\r\n];\r\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        560
+      ],
+      "id": "09b9fd03-cfde-4670-9377-fb10c559af58",
+      "name": "Validar PDF termo"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.mov.pro.br/api/v1/accounts/2/conversations/{{ $('Normalizar Sofia').first().json.conversation_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "ugEufRFeoBACNJNcPVGLZaoD"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "message_type",
+              "value": "outgoing"
+            },
+            {
+              "name": "private",
+              "value": "false"
+            },
+            {
+              "name": "content",
+              "value": "=Termo de fidelidade"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "attachments[]",
+              "inputDataFieldName": "=attachments[]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -32,
+        560
+      ],
+      "id": "8151125d-6aed-4430-9b82-b203bfd6892e",
+      "name": "Envia_chatwoot",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\r\n * n8n Code — resposta TERMOS v4 para Eva/Sofia\r\n *\r\n * Fluxo linear: áudio → IXC termos → PDF Chatwoot.\r\n * Se o PDF foi (termoOk), o áudio já passou — mesmo que o HTTP do áudio\r\n * não traga id/message_type no JSON (comum em multipart no n8n 2.x).\r\n */\r\nfunction chatwootOk(json) {\r\n  if (!json || typeof json !== 'object') return false;\r\n  if (json.error || json.errorMessage || json.errorDescription) return false;\r\n\r\n  const status = Number(json.statusCode || json.status || 0);\r\n  if (status >= 400) return false;\r\n  if (status >= 200 && status < 300 && (json.id || json.content != null)) return true;\r\n\r\n  const mt = json.message_type;\r\n  if (mt === 'outgoing' || mt === 1 || mt === '1') return true;\r\n  if (json.id) return true;\r\n  if (json.content != null) return true;\r\n  if (json.payload) return true;\r\n  if (json.status === 'sent' || json.status === 'delivered') return true;\r\n\r\n  const nested = json.message || json.data?.message || json.data;\r\n  if (nested && typeof nested === 'object' && (nested.id || nested.content != null)) {\r\n    return true;\r\n  }\r\n\r\n  return false;\r\n}\r\n\r\nfunction nodeOk(name) {\r\n  try {\r\n    const items = $(name).all();\r\n    if (!items.length) return false;\r\n    return items.some((item) => chatwootOk(item.json || {}));\r\n  } catch {\r\n    return false;\r\n  }\r\n}\r\n\r\nfunction nodeExecutou(name) {\r\n  try {\r\n    return $(name).all().length > 0;\r\n  } catch {\r\n    return false;\r\n  }\r\n}\r\n\r\nfunction audioProvavelmenteOk() {\r\n  const candidatos = [\r\n    'envia audio',\r\n    'Envia audio',\r\n    'envia_audio',\r\n  ];\r\n  for (const nome of candidatos) {\r\n    if (nodeOk(nome)) return true;\r\n  }\r\n  for (const nome of candidatos) {\r\n    if (nodeExecutou(nome)) return true;\r\n  }\r\n  // Fallback: qualquer nó cujo nome contenha \"audio\" e tenha rodado\r\n  try {\r\n    for (const nome of Object.keys($workflow?.nodes || {})) {\r\n      if (!/audio/i.test(nome)) continue;\r\n      if (nodeOk(nome) || nodeExecutou(nome)) return true;\r\n    }\r\n  } catch {\r\n    /* n8n 2.x pode não expor $workflow */\r\n  }\r\n  return false;\r\n}\r\n\r\nlet audioOk = audioProvavelmenteOk();\r\nconst termoOk = nodeOk('Envia_chatwoot') || nodeOk('Envia chatwoot');\r\n\r\n// Neste workflow o PDF só existe se o ramo do áudio teve sucesso\r\nif (!audioOk && termoOk) {\r\n  audioOk = true;\r\n}\r\n\r\nconst ok = audioOk && termoOk;\r\n\r\nreturn [\r\n  {\r\n    json: {\r\n      resultado: ok ? 'ok' : 'erro',\r\n      audio_enviado: audioOk,\r\n      termo_enviado: termoOk,\r\n      motivo: ok\r\n        ? 'Áudio e termo enviados no Chatwoot'\r\n        : `Parcial: audio=${audioOk} termo=${termoOk}`,\r\n      erro: !ok,\r\n      transferir: !termoOk,\r\n    },\r\n  },\r\n];\r\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        560
+      ],
+      "id": "cbc533d3-d5d3-4569-bfcf-ad875ea7f5da",
+      "name": "Resposta Sofia"
+    },
+    {
+      "parameters": {
+        "content": "# Termos Sofia v4\n\nSem Postgres estado. Payload Sofia traz id_contrato_ixc.",
+        "height": 400,
+        "width": 2100,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1776,
+        480
+      ],
+      "typeVersion": 1,
+      "id": "321b2bdc-d50c-421b-8766-47c080b0a5a3",
+      "name": "Sticky Note"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Sofia": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "audio": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "envia audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envia audio": {
+      "main": [
+        [
+          {
+            "node": "requisição_termos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "requisição_termos": {
+      "main": [
+        [
+          {
+            "node": "Selecionar termo PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Selecionar termo PDF": {
+      "main": [
+        [
+          {
+            "node": "baixartermo_unico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "baixartermo_unico": {
+      "main": [
+        [
+          {
+            "node": "Validar PDF termo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar PDF termo": {
+      "main": [
+        [
+          {
+            "node": "Envia_chatwoot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envia_chatwoot": {
+      "main": [
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "id_cliente": "559392219098@s.whatsapp.net",
+        "conversation_id": "2969",
+        "ixc_id_cliente": "83458",
+        "id_contrato_ixc": "92405",
+        "nome": "Edrei teste",
+        "telefone": "93999990001"
+      }
+    ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "79075fb22e5045e1beb3493444de048310c5aee705e7f3d3f6b2ea7d89bc4b09"
+  }
+}

@@ -1,0 +1,179 @@
+{
+  "name": "ATIVAÇÃO IXC v4 — Sofia (subfluxo)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "id_cliente"
+            },
+            {
+              "name": "conversation_id"
+            },
+            {
+              "name": "ixc_id_cliente"
+            },
+            {
+              "name": "id_contrato_ixc"
+            },
+            {
+              "name": "nome"
+            },
+            {
+              "name": "cpf"
+            },
+            {
+              "name": "telefone"
+            }
+          ]
+        }
+      },
+      "id": "43280924-e595-481d-ab13-6a48037a609c",
+      "typeVersion": 1.1,
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [
+        -1328,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\r\n * n8n Code — entrada subfluxo ATIVAÇÃO SOFIA v4\r\n */\r\nconst raw = $input.first().json;\r\nconst body = raw.body && typeof raw.body === 'object' ? raw.body : raw;\r\n\r\nreturn [\r\n  {\r\n    json: {\r\n      id_cliente: String(body.id_cliente || ''),\r\n      conversation_id: String(body.conversation_id || ''),\r\n      ixc_id_cliente: String(body.ixc_id_cliente || body.ixc_cliente_id || ''),\r\n      id_contrato_ixc: String(body.id_contrato_ixc || body.id_contrato || ''),\r\n      nome: String(body.nome || ''),\r\n      cpf: String(body.cpf || body.cpf_cnpj || ''),\r\n      telefone: String(body.telefone || ''),\r\n    },\r\n  },\r\n];\r\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        16
+      ],
+      "id": "a2dcc4dc-c0dd-4e36-a31e-bc4a85e3d410",
+      "name": "Normalizar Sofia"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ixc.mov.pro.br/webservice/v1/cliente_contrato_ativar_cliente",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"id_contrato\": \"{{ $('Normalizar Sofia').item.json.id_contrato_ixc }}\"\n}",
+        "options": {
+          "redirect": {
+            "redirect": {}
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -864,
+        16
+      ],
+      "id": "defb650a-01bb-49ed-bbb4-f253371fb70f",
+      "name": "ativa",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "oTcpUfNTfpW9r72r",
+          "name": "c0002_ixc_Agente_de_IA_api"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\r\n * n8n Code — resposta ATIVAÇÃO v4 para Sofia\r\n *\r\n * Conecte após o nó `ativa` (sucesso e erro → Continue On Fail).\r\n */\r\nconst ativa = $('ativa').first()?.json || {};\r\nconst msg = String(ativa.message || ativa.mensagem || ativa.motivo || '').trim();\r\nconst type = String(ativa.type || '').toLowerCase();\r\n\r\nconst ok =\r\n  type === 'success' ||\r\n  Boolean(ativa.id) ||\r\n  /sucesso|ativado|ok/i.test(msg) ||\r\n  (!ativa.error && !/erro|error|fail/i.test(msg) && Object.keys(ativa).length > 0);\r\n\r\nconst contrato = String(\r\n  $('Normalizar Sofia').first()?.json?.id_contrato_ixc || '',\r\n);\r\n\r\nreturn [\r\n  {\r\n    json: {\r\n      resultado: ok ? 'ok' : 'erro',\r\n      ativado: ok,\r\n      id_contrato_ixc: contrato,\r\n      motivo: ok\r\n        ? msg || 'Contrato ativado com sucesso'\r\n        : msg || 'Erro ao ativar contrato no IXC',\r\n      erro: !ok,\r\n    },\r\n  },\r\n];\r\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        16
+      ],
+      "id": "9fd4ffc4-19a7-4cc1-925b-24c73875c0d7",
+      "name": "Resposta Sofia"
+    },
+    {
+      "parameters": {
+        "content": "# Ativação Sofia v4\n\nSem Postgres.\nSofia manda id_contrato_ixc → IXC ativar → JSON.",
+        "height": 280,
+        "width": 900,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1360,
+        -80
+      ],
+      "typeVersion": 1,
+      "id": "9370e7d0-4a0a-4f01-8157-4b65da6019c5",
+      "name": "Sticky Note"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Sofia": {
+      "main": [
+        [
+          {
+            "node": "ativa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ativa": {
+      "main": [
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "id_cliente": "559392219098@s.whatsapp.net",
+        "conversation_id": "2969",
+        "ixc_id_cliente": "83458",
+        "id_contrato_ixc": "92405",
+        "nome": "Edrei teste",
+        "cpf": "60421079096",
+        "telefone": "93999990001"
+      }
+    ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "79075fb22e5045e1beb3493444de048310c5aee705e7f3d3f6b2ea7d89bc4b09"
+  }
+}

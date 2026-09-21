@@ -1,0 +1,115 @@
+{
+  "name": "Sofia — Webhook Cadastro (entrada)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cadastrar_cliente_sofia",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [1072, 1616],
+      "id": "a73f6de2-1ccb-4741-ac34-fa4d7803ef89",
+      "name": "Webhook Cadastro Sofia",
+      "webhookId": "cadastrar-cliente-sofia"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "EDRaN09Y53t8Xg12",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/EDRaN09Y53t8Xg12",
+          "cachedResultName": "CADASTRO IXC v4 — Sofia (subfluxo)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id_cliente": "={{ $json.body.id_cliente || $json.id_cliente }}",
+            "nome": "={{ $json.body.nome || $json.nome }}",
+            "cpf": "={{ $json.body.cpf || $json.cpf }}",
+            "email": "={{ $json.body.email || $json.email }}",
+            "telefone": "={{ $json.body.telefone || $json.telefone }}",
+            "data_nascimento": "={{ $json.body.data_nascimento || $json.data_nascimento }}",
+            "rg": "={{ $json.body.rg || $json.rg }}",
+            "cep": "={{ $json.body.cep || $json.cep }}",
+            "rua": "={{ $json.body.rua || $json.rua }}",
+            "numero": "={{ $json.body.numero || $json.numero }}",
+            "bairro": "={{ $json.body.bairro || $json.bairro }}",
+            "cidade": "={{ $json.body.cidade || $json.cidade }}",
+            "complemento": "={{ $json.body.complemento || $json.complemento }}",
+            "plano_confirmado": "={{ $json.body.plano_confirmado || $json.plano_confirmado }}",
+            "plano_confirmado_id": "={{ $json.body.plano_confirmado_id || $json.plano_confirmado_id }}",
+            "conversation_id": "={{ $json.body.conversation_id || $json.conversation_id }}",
+            "contact_id": "={{ $json.body.contact_id || $json.contact_id }}",
+            "ixc_cliente_id": "={{ $json.body.ixc_cliente_id || $json.ixc_cliente_id || '' }}",
+            "caixa_fibra": "={{ $json.body.caixa_fibra || $json.caixa_fibra }}",
+            "localizacao_fixa": "={{ $json.body.localizacao_fixa || $json.localizacao_fixa }}",
+            "data_vencimento_pref": "={{ $json.body.data_vencimento_pref || $json.data_vencimento_pref || '5' }}",
+            "data_hora_agendamento": "={{ $json.body.data_hora_agendamento || $json.data_hora_agendamento || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "id_cliente", "displayName": "id_cliente", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "nome", "displayName": "nome", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "cpf", "displayName": "cpf", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "email", "displayName": "email", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "telefone", "displayName": "telefone", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "data_nascimento", "displayName": "data_nascimento", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "rg", "displayName": "rg", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "cep", "displayName": "cep", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "rua", "displayName": "rua", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "numero", "displayName": "numero", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "bairro", "displayName": "bairro", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "cidade", "displayName": "cidade", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "complemento", "displayName": "complemento", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "plano_confirmado", "displayName": "plano_confirmado", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "plano_confirmado_id", "displayName": "plano_confirmado_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "conversation_id", "displayName": "conversation_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "ixc_cliente_id", "displayName": "ixc_cliente_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "caixa_fibra", "displayName": "caixa_fibra", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "localizacao_fixa", "displayName": "localizacao_fixa", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "data_vencimento_pref", "displayName": "data_vencimento_pref", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "data_hora_agendamento", "displayName": "data_hora_agendamento", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1360, 1616],
+      "id": "d5218c75-0660-4d01-905b-5b1d2132024a",
+      "name": "Execute CADASTRO IXC v4"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1632, 1616],
+      "id": "0686e61b-452b-4a07-a515-0f3b2537cd62",
+      "name": "Respond to Webhook5"
+    }
+  ],
+  "connections": {
+    "Webhook Cadastro Sofia": {
+      "main": [[{ "node": "Execute CADASTRO IXC v4", "type": "main", "index": 0 }]]
+    },
+    "Execute CADASTRO IXC v4": {
+      "main": [[{ "node": "Respond to Webhook5", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "79075fb22e5045e1beb3493444de048310c5aee705e7f3d3f6b2ea7d89bc4b09"
+  }
+}

@@ -1,0 +1,301 @@
+{
+  "name": "IMAGEM PLANO Sofia v5 — URL painel (subfluxo)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "id_cliente"
+            },
+            {
+              "name": "conversation_id"
+            },
+            {
+              "name": "id_plano"
+            },
+            {
+              "name": "plano_confirmado"
+            },
+            {
+              "name": "nome"
+            },
+            {
+              "name": "telefone"
+            },
+            {
+              "name": "imagem_url"
+            },
+            {
+              "name": "imagem_file_name"
+            },
+            {
+              "name": "imagem_mime_type"
+            },
+            {
+              "name": "content"
+            },
+            {
+              "name": "descricao"
+            },
+            {
+              "name": "chatwoot_attachment_field"
+            }
+          ]
+        }
+      },
+      "id": "5d6ba00d-cc06-431a-b1af-3bb381cf3166",
+      "typeVersion": 1.1,
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [
+        -640,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * n8n Code — entrada IMAGEM PLANO v5 (payload pronto da Eva)\n * Sem switch por id_plano nem base64 — só valida e repassa.\n */\nconst raw = $input.first().json;\nconst body = raw.body && typeof raw.body === 'object' ? raw.body : raw;\n\nfunction txt(v) {\n  return v == null ? '' : String(v).trim();\n}\n\nconst conversation_id = txt(body.conversation_id);\nconst imagem_url = txt(body.imagem_url);\nconst id_plano = txt(\n  body.id_plano || body.plano_confirmado_id || body.plano_id || body.id_vd_contrato,\n);\nconst content = txt(body.content || body.descricao);\nconst imagem_file_name = txt(body.imagem_file_name) || 'plano.jpg';\nconst imagem_mime_type = txt(body.imagem_mime_type) || 'image/jpeg';\n\nconst faltando = [];\nif (!conversation_id) faltando.push('conversation_id');\nif (!imagem_url) faltando.push('imagem_url');\n\nif (faltando.length) {\n  return [\n    {\n      json: {\n        erro: true,\n        resultado: 'erro',\n        imagem_enviada: false,\n        motivo: `Campos ausentes: ${faltando.join(', ')}`,\n        id_plano,\n        conversation_id,\n        imagem_url,\n      },\n    },\n  ];\n}\n\nreturn [\n  {\n    json: {\n      id_cliente: txt(body.id_cliente),\n      conversation_id,\n      id_plano,\n      plano_confirmado: txt(body.plano_confirmado || body.plano_nome),\n      nome: txt(body.nome),\n      telefone: txt(body.telefone),\n      imagem_url,\n      imagem_file_name,\n      imagem_mime_type,\n      content,\n      descricao: content,\n      chatwoot_attachment_field: txt(body.chatwoot_attachment_field) || 'attachments[]',\n      erro: false,\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        320
+      ],
+      "id": "f32fbf99-f975-4ae2-a0e7-762a5b3f50dd",
+      "name": "Normalizar Sofia"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4ff88c53-05ca-478d-857e-71e79cfd93c1",
+              "leftValue": "={{ $json.erro }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -192,
+        320
+      ],
+      "id": "144060d5-2fc2-48a6-967d-fe6a41829ce2",
+      "name": "Payload inválido?"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.imagem_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "attachments[]"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        48,
+        240
+      ],
+      "id": "b7c6298d-481b-4396-b9d6-ea9f22a8c663",
+      "name": "Baixar imagem",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.mov.pro.br/api/v1/accounts/2/conversations/{{ $('Normalizar Sofia').item.json.conversation_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "ugEufRFeoBACNJNcPVGLZaoD"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "message_type",
+              "value": "outgoing"
+            },
+            {
+              "name": "private",
+              "value": "false"
+            },
+            {
+              "name": "content",
+              "value": "={{ $('Normalizar Sofia').item.json.content || '' }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "attachments[]",
+              "inputDataFieldName": "attachments[]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        304,
+        240
+      ],
+      "id": "520ff6c5-a9df-4a6b-8d42-136e825127fb",
+      "name": "Envio da imagem chatwoot",
+      "executeOnce": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * n8n Code — resposta IMAGEM PLANO v5 para Eva\n */\nfunction nodeOk(name) {\n  try {\n    const item = $(name).first();\n    if (!item) return false;\n    const j = item.json || {};\n    if (j.error || j.erro) return false;\n    return Boolean(j.id || j.payload || j.content || j.status === 'sent');\n  } catch {\n    return false;\n  }\n}\n\nconst norm =\n  $('Normalizar Sofia1').first()?.json ||\n  $('Normalizar Sofia').first()?.json ||\n  {};\n\nif (norm.erro) {\n  return [\n    {\n      json: {\n        resultado: 'erro',\n        imagem_enviada: false,\n        id_plano: String(norm.id_plano || ''),\n        motivo: norm.motivo || 'Payload inválido',\n        erro: true,\n      },\n    },\n  ];\n}\n\nconst enviada = [\n  'Envio da imagem chatwoot1',\n  'Envio da imagem chatwoot',\n].some((name) => nodeOk(name));\n\nconst idPlano = String(norm.id_plano || '');\n\nreturn [\n  {\n    json: {\n      resultado: enviada ? 'ok' : 'erro',\n      imagem_enviada: enviada,\n      id_plano: idPlano,\n      motivo: enviada ? 'Imagem enviada' : 'Imagem não enviada',\n      erro: !enviada,\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        320
+      ],
+      "id": "fb3f4f9a-0b22-4c75-b4e5-c10af35082ea",
+      "name": "Resposta Sofia"
+    },
+    {
+      "parameters": {
+        "content": "# Imagem Plano v5\n\nEva envia imagem_url + content + metadados.\nSem base64, sem switch por id_plano.\n\n1. Baixar imagem (GET imagem_url)\n2. POST Chatwoot multipart",
+        "height": 420,
+        "width": 920,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -672,
+        80
+      ],
+      "typeVersion": 1,
+      "id": "8c6a36ab-a760-4305-9c12-6c63d8a945ca",
+      "name": "Sticky Note"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Sofia": {
+      "main": [
+        [
+          {
+            "node": "Payload inválido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload inválido?": {
+      "main": [
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Baixar imagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baixar imagem": {
+      "main": [
+        [
+          {
+            "node": "Envio da imagem chatwoot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envio da imagem chatwoot": {
+      "main": [
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resposta Sofia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "id_cliente": "559392219098@s.whatsapp.net",
+        "conversation_id": "2969",
+        "id_plano": "1212",
+        "plano_confirmado": "MOV SUPER+",
+        "imagem_url": "https://SEU-HOST/media/planos/plano_1212_exemplo.jpg",
+        "imagem_file_name": "plano_1212.jpg",
+        "imagem_mime_type": "image/jpeg",
+        "content": "✅ Internet ilimitada 📶\n✅ Imagina Só e Ubook 📚\n✅ Repetidor Mesh"
+      }
+    ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "79075fb22e5045e1beb3493444de048310c5aee705e7f3d3f6b2ea7d89bc4b09"
+  }
+}

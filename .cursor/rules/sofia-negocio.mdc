@@ -1,0 +1,17 @@
+---
+description: Regras de negócio e arquitetura da Eva (MOV FIBRA)
+globs:
+  - backend/app/**/*.py
+  - frontend/src/**/*.{ts,tsx}
+alwaysApply: true
+---
+
+# Eva — contexto fixo
+
+- Identidade: IA de vendas **Eva** (não Sofia).
+- Funil: localização → planos → cadastro → termos → ativação → agendamento → encerramento.
+- Persistência: PostgreSQL (`DATABASE_URL`), nunca SQLite em produção.
+- Plano único: benefícios + imagem opcional. Lista completa: bolhas sem imagem.
+- Transferência: fase `transferido` + handoff Chatwoot se `CHATWOOT_TRANSFER_ENABLED`.
+- Deploy: Docker Compose / Portainer (API 8001, dash 5180, PG 5433).
+- Detalhes: `REGRAS_NEGOCIO.md` e `FLUXO_SOFIA.md`.

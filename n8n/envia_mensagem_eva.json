@@ -1,0 +1,252 @@
+{
+  "name": "Envia mensagem Eva → Chatwoot",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "envia_mensagem_eva",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "775ec366-0fdf-474f-b592-b9a84779e949",
+      "name": "Webhook",
+      "webhookId": "b88ca2ab-214e-46cd-b8fc-42c1fc004e21"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * n8n Code — webhook envia_mensagem_eva\n * Expande outputs[] em itens (1 mensagem WhatsApp por bolha).\n */\nconst raw = $input.first().json;\nconst body = raw.body && typeof raw.body === 'object' ? raw.body : raw;\n\nfunction txt(v) {\n  return v == null ? '' : String(v).trim();\n}\n\nconst conversation_id = txt(body.conversation_id);\nconst id_cliente = txt(body.id_cliente);\n\nconst mensagens = [];\nconst outputs = body.outputs;\nif (Array.isArray(outputs)) {\n  for (const o of outputs) {\n    const m = txt(o);\n    if (m) mensagens.push(m);\n  }\n}\nif (!mensagens.length) {\n  const unica =\n    txt(body.mensagem) ||\n    txt(body.content) ||\n    txt(body.output) ||\n    txt(body.resposta);\n  if (unica) mensagens.push(unica);\n}\n\nif (!conversation_id) {\n  return [\n    {\n      json: {\n        erro: true,\n        motivo: 'conversation_id ausente',\n        conversation_id: '',\n        mensagem: '',\n      },\n    },\n  ];\n}\n\nif (!mensagens.length) {\n  return [\n    {\n      json: {\n        erro: true,\n        motivo: 'mensagem/resposta vazia',\n        conversation_id,\n        mensagem: '',\n      },\n    },\n  ];\n}\n\nreturn mensagens.map((mensagem, idx) => ({\n  json: {\n    conversation_id,\n    id_cliente,\n    mensagem,\n    indice: idx + 1,\n    total: mensagens.length,\n    erro: false,\n  },\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "f2f99984-897f-44ac-993e-1eb13790e254",
+      "name": "Normalizar"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a62b2fe0-ea07-4eb4-b12e-10431833adce",
+              "leftValue": "={{ $json.erro }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "c17d2fa9-968e-43c4-98e0-082a95af05e2",
+      "name": "Payload inválido?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.mov.pro.br/api/v1/accounts/2/conversations/{{ $json.conversation_id }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "ugEufRFeoBACNJNcPVGLZaoD"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { content: $json.mensagem, message_type: \"outgoing\", private: false } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        -80
+      ],
+      "id": "b882dd8e-083e-4c06-8f3b-65b9b17b0198",
+      "name": "Envia_msg_chatwoot",
+      "retryOnFail": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * n8n Code — resposta envia_mensagem_eva para Eva\n */\nconst norm = ($('Normalizar').all() || []).filter((it) => !it.json?.erro);\nconst total = norm.length;\n\nif (!total) {\n  const err = $('Normalizar').first()?.json || {};\n  return [\n    {\n      json: {\n        resultado: 'erro',\n        ok: false,\n        erro: true,\n        motivo: err.motivo || 'Payload inválido',\n        enviadas: 0,\n        total: 0,\n      },\n    },\n  ];\n}\n\nconst enviadas = ($('Envia_msg_chatwoot').all() || []).filter((it) => {\n  const j = it.json || {};\n  if (j.error || j.erro) return false;\n  return Boolean(j.id || j.payload || j.content || j.status === 'sent');\n}).length;\n\nconst ok = enviadas >= total;\n\nreturn [\n  {\n    json: {\n      resultado: ok ? 'ok' : 'erro',\n      ok,\n      erro: !ok,\n      enviadas,\n      total,\n      motivo: ok ? 'Mensagens enviadas' : `Enviadas ${enviadas}/${total}`,\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "id": "d0d36e9f-b858-44c3-a4fe-fab75fa3e4c3",
+      "name": "Resposta Eva"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1120,
+        -80
+      ],
+      "id": "895e3833-3578-4376-8862-94959c2a5add",
+      "name": "Respond to Webhook OK",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{\n  {\n    resultado: \"erro\",\n    ok: false,\n    erro: true,\n    motivo: String($json.motivo || $json.errorDescription || $json.errorMessage || \"Falha ao enviar mensagem\"),\n    ferramenta: \"enviar_mensagem\"\n  }\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1120,
+        96
+      ],
+      "id": "6b9e13d5-2bab-401f-bab6-2dc25991a934",
+      "name": "Respond to Webhook Erro",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "content": "# Envia mensagem Eva → Chatwoot\n\nPOST /webhook/envia_mensagem_eva\n\nPayload:\n- conversation_id (obrig.)\n- mensagem OU outputs[] (bolhas)\n\nEva com CHATWOOT_MSG_WEBHOOK_URL chama este fluxo.",
+        "height": 280,
+        "width": 520,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -40,
+        -200
+      ],
+      "typeVersion": 1,
+      "id": "4ca76e39-ee68-4e6d-86ae-cd2c8d0ea8a0",
+      "name": "Sticky Note"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalizar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar": {
+      "main": [
+        [
+          {
+            "node": "Payload inválido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload inválido?": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook Erro",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Envia_msg_chatwoot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envia_msg_chatwoot": {
+      "main": [
+        [
+          {
+            "node": "Resposta Eva",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook Erro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resposta Eva": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "Webhook": [
+      {
+        "body": {
+          "conversation_id": "3075",
+          "id_cliente": "93992219098",
+          "outputs": [
+            "Olá! Boa, temos cobertura no Centro.",
+            "Esse plano te atende?"
+          ]
+        }
+      }
+    ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "79075fb22e5045e1beb3493444de048310c5aee705e7f3d3f6b2ea7d89bc4b09"
+  }
+}
