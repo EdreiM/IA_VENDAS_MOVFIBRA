@@ -78,7 +78,9 @@ def enviar_imagem_plano(estado: dict[str, Any]) -> dict[str, Any]:
         }
 
     # Chatwoot direto (token + arquivo local)
-    if local is not None and cid and settings.chatwoot_api_token:
+    from app.chatwoot_config import resolver_chatwoot_api_token
+
+    if local is not None and cid and resolver_chatwoot_api_token():
         from app.integrations import chatwoot as chatwoot_api
 
         envio = chatwoot_api.enviar_anexo_imagem(cid, str(local))

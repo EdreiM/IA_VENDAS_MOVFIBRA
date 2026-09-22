@@ -169,15 +169,19 @@ textarea {
   margin-bottom: 18px;
 }
 
-.token-row,
+.user-bar,
 .top-filters {
   display: flex;
   gap: 8px;
-  align-items: end;
+  align-items: center;
   flex-wrap: wrap;
 }
 
-.token-row input,
+.user-email {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .top-filters select,
 label input,
 label select,
@@ -185,12 +189,41 @@ label textarea,
 .param-row input,
 .param-row select {
   width: 100%;
-  background: #000000;
+  background: #2b005c;
+  color: #ffffff;
   border: 1px solid var(--line);
   border-radius: 0;
   padding: 10px 14px;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+select option {
+  background: #2b005c;
+  color: #ffffff;
+}
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: min(400px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: var(--shadow);
+}
+
+.login-card h1 {
+  margin: 0 0 8px;
+  font-size: 1.35rem;
 }
 
 label textarea {
@@ -199,7 +232,6 @@ label textarea {
   resize: vertical;
 }
 
-.token-row input:focus,
 .top-filters select:focus,
 label input:focus,
 label select:focus,

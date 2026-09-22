@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field
 from app import admin_store, metrics, planos_admin, unidades as unidades_mod, ferramentas as ferramentas_mod
 from app.allowlist import entrada_permitida, motivo_bloqueio, modo_entrada
 from app.chatwoot_webhook import analisar_evento_chatwoot, extrair_evento_chatwoot
+from app.admin_auth import exigir_admin as _exigir_admin
+from app.admin_auth import login as admin_login
 from app.config import get_settings
 from app.db import init_schema, mensagem_ja_processada, marcar_mensagem_processada, resetar_cliente, turnos_recentes
 from app.integrations import chatwoot as chatwoot_api
@@ -104,7 +106,14 @@ class ConfigChatwootIn(BaseModel):
     buffer_enabled: bool = False
     public_base_url: str = ""
     webhook_token: str = ""
+    chatwoot_base_url: str = ""
+    chatwoot_api_token: str = ""
     unidade_id: int | None = None
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
 
 
 class ChatwootTestParseIn(BaseModel):
@@ -156,16 +165,24 @@ class FerramentaIn(BaseModel):
     ativo: bool = True
     parametros: list[FerramentaParamIn] = Field(default_factory=list)
 
-def _exigir_admin(authorization: str | None, x_admin_token: str | None) -> None:
+@app.post("/admin/login")
+def admin_login_route(body: LoginIn):
+    return admin_login(body.email, body.password)
+
+
+@app.get("/admin/me")
+def admin_me(
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    _exigir_admin(authorization, x_admin_token)
     settings = get_settings()
-    expected = (settings.admin_api_token or "").strip()
-    if not expected:
-        return
-    token = (x_admin_token or "").strip()
-    if authorization and authorization.lower().startswith("bearer "):
-        token = authorization[7:].strip()
-    if token != expected:
-        raise HTTPException(status_code=401, detail="Token admin inválido")
+    return {"ok": True, "email": settings.admin_email or "admin@movfibra.com"}
+
+
+@app.post("/admin/logout")
+def admin_logout():
+    return {"ok": True}
 
 
 def _talvez_enviar_chatwoot(

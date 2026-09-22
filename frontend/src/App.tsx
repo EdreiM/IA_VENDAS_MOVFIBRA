@@ -41,7 +41,10 @@ import {
   fetchTeams,
   fetchTurnos,
   fetchUnidades,
+  clearAdminToken,
+  fetchAdminMe,
   getAdminToken,
+  postAdminLogin,
   postHandoff,
   postChat,
   postReset,
@@ -182,7 +185,7 @@ function rotuloCliente(c: { nome?: string | null; telefone?: string | null; id_c
 }
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "chat", label: "Chat teste" },
+  { id: "chat", label: "Simulador" },
   { id: "metricas", label: "Métricas" },
   { id: "conversas", label: "Conversas" },
   { id: "clientes", label: "Clientes" },
@@ -208,7 +211,11 @@ const emptyTool = (): Omit<Ferramenta, "id" | "chamadas_sucesso"> => ({
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("chat");
-  const [tokenInput, setTokenInput] = useState(getAdminToken());
+  const [authed, setAuthed] = useState<boolean | null>(null);
+  const [userEmail, setUserEmail] = useState("");
+  const [loginEmail, setLoginEmail] = useState("admin@movfibra.com");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginBusy, setLoginBusy] = useState(false);
   const [unidades, setUnidades] = useState<Unidade[]>([]);
   const [unidadeFiltro, setUnidadeFiltro] = useState<number | "">("");
   const [error, setError] = useState("");
@@ -216,7 +223,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [apiOk, setApiOk] = useState<boolean | null>(null);
 
-  const [chatId, setChatId] = useState("teste-local");
+  const [chatId, setChatId] = useState("");
   const [chatConversationId, setChatConversationId] = useState("");
   const [chatInput, setChatInput] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
@@ -294,12 +301,16 @@ export default function App() {
     buffer_enabled: false,
     public_base_url: "",
     webhook_token: "",
+    chatwoot_base_url: "https://chatwoot.mov.pro.br",
+    chatwoot_api_token: "",
   });
   const [cwMeta, setCwMeta] = useState({
     webhook_url: "",
     envio_ok: false,
     token_mask: "",
     token_configured: false,
+    api_mask: "",
+    api_configured: false,
   });
   const [inboxes, setInboxes] = useState<Option[]>([]);
   const [cwTestPayload, setCwTestPayload] = useState("");
@@ -313,11 +324,27 @@ export default function App() {
 
   const uid = unidadeFiltro === "" ? undefined : Number(unidadeFiltro);
 
-  const saveToken = (e: FormEvent) => {
+  const doLogin = async (e: FormEvent) => {
     e.preventDefault();
-    setAdminToken(tokenInput.trim());
-    setOkMsg("Token salvo");
-    void refreshAll();
+    setLoginBusy(true);
+    setError("");
+    try {
+      const r = await postAdminLogin(loginEmail.trim(), loginPassword);
+      setAdminToken(r.token);
+      setUserEmail(r.email);
+      setAuthed(true);
+      setLoginPassword("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoginBusy(false);
+    }
+  };
+
+  const doLogout = () => {
+    clearAdminToken();
+    setAuthed(false);
+    setUserEmail("");
   };
 
   const refreshUnidades = useCallback(async () => {
@@ -400,18 +427,22 @@ export default function App() {
       buffer_enabled: !!cfg.buffer_enabled,
       public_base_url: cfg.public_base_url || "",
       webhook_token: "",
+      chatwoot_base_url: cfg.chatwoot_base_url || "https://chatwoot.mov.pro.br",
+      chatwoot_api_token: "",
     });
     setCwMeta({
       webhook_url: cfg.webhook_url || "",
       envio_ok: !!cfg.envio_resposta_configurado,
       token_mask: cfg.webhook_token_mask || "",
       token_configured: !!cfg.webhook_token_configured,
+      api_mask: cfg.chatwoot_api_token_mask || "",
+      api_configured: !!cfg.chatwoot_api_configured,
     });
     try {
       const inb = await fetchInboxes();
       if (inb.ok) setInboxes(mapInboxes(inb.data));
     } catch {
-      /* lista de inboxes opcional — depende do token Chatwoot no .env */
+      /* lista de inboxes — salve o token Chatwoot abaixo e atualize */
     }
     try {
       const ex = await fetchExemploPayloadChatwoot();
@@ -465,8 +496,26 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    void refreshAll();
-  }, [refreshAll]);
+    void (async () => {
+      const tok = getAdminToken();
+      if (!tok) {
+        setAuthed(false);
+        return;
+      }
+      try {
+        const me = await fetchAdminMe();
+        setUserEmail(me.email);
+        setAuthed(true);
+      } catch {
+        clearAdminToken();
+        setAuthed(false);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (authed) void refreshAll();
+  }, [authed, refreshAll]);
 
   const maxFunil = useMemo(
     () => Math.max(1, ...(funil?.etapas.map((e) => e.quantidade) || [1])),
@@ -650,8 +699,18 @@ export default function App() {
         envio_ok: !!saved.envio_resposta_configurado,
         token_mask: saved.webhook_token_mask || "",
         token_configured: !!saved.webhook_token_configured,
+        api_mask: saved.chatwoot_api_token_mask || "",
+        api_configured: !!saved.chatwoot_api_configured,
       });
-      setCwForm((f) => ({ ...f, webhook_token: "" }));
+      setCwForm((f) => ({ ...f, webhook_token: "", chatwoot_api_token: "" }));
+      if (saved.chatwoot_api_configured) {
+        try {
+          const inb = await fetchInboxes();
+          if (inb.ok) setInboxes(mapInboxes(inb.data));
+        } catch {
+          /* ignore */
+        }
+      }
       setOkMsg("Integração Chatwoot salva");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -757,7 +816,7 @@ export default function App() {
     try {
       const r = await postChat({
         mensagem,
-        id_cliente: chatId.trim() || "teste-local",
+        id_cliente: chatId.trim() || `sim-${Date.now()}`,
         conversation_id: chatConversationId.trim() || undefined,
         buffer: false,
       });
@@ -800,11 +859,13 @@ export default function App() {
   async function reiniciarChat() {
     setError("");
     try {
-      await postReset(chatId.trim() || "teste-local");
+      const cid = chatId.trim() || `sim-${Date.now()}`;
+      if (!chatId.trim()) setChatId(cid);
+      await postReset(cid);
       setChatMsgs([
         {
           who: "sistema",
-          text: `Conversa reiniciada para ${chatId.trim() || "teste-local"}. Pode mandar um oi.`,
+          text: `Conversa reiniciada (${cid}). Pode mandar um oi.`,
         },
       ]);
       setChatEstado("inicio");
@@ -812,6 +873,55 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  if (authed === null) {
+    return (
+      <div className="login-shell">
+        <p className="muted">Carregando…</p>
+      </div>
+    );
+  }
+
+  if (!authed) {
+    return (
+      <div className="login-shell">
+        <form className="login-card" onSubmit={(e) => void doLogin(e)}>
+          <div className="brand" style={{ marginBottom: "1.5rem" }}>
+            <span className="brand-mark">E</span>
+            <div>
+              <strong>Eva</strong>
+              <small>Painel operacional MOV</small>
+            </div>
+          </div>
+          <h1>Entrar</h1>
+          <label>
+            Email
+            <input
+              type="email"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              autoComplete="username"
+              required
+            />
+          </label>
+          <label>
+            Senha
+            <input
+              type="password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </label>
+          {error ? <div className="alert bad">{error}</div> : null}
+          <button type="submit" disabled={loginBusy}>
+            {loginBusy ? "Entrando…" : "Entrar"}
+          </button>
+        </form>
+      </div>
+    );
   }
 
   return (
@@ -844,15 +954,12 @@ export default function App() {
 
       <main className="main">
         <header className="topbar">
-          <form className="token-row" onSubmit={saveToken}>
-            <input
-              type="password"
-              placeholder="ADMIN_API_TOKEN"
-              value={tokenInput}
-              onChange={(e) => setTokenInput(e.target.value)}
-            />
-            <button type="submit">Salvar token</button>
-          </form>
+          <div className="user-bar">
+            <span className="user-email">{userEmail}</span>
+            <button type="button" className="ghost" onClick={doLogout}>
+              Sair
+            </button>
+          </div>
           <div className="top-filters">
             <label>
               Unidade
@@ -889,9 +996,9 @@ export default function App() {
               <div className="chat-main">
                 <div className="row-head">
                   <div>
-                    <h1>Chat de testes</h1>
+                    <h1>Simulador</h1>
                     <p className="muted" style={{ margin: 0 }}>
-                      Converse com a Eva como se fosse o cliente no WhatsApp.
+                      Simule uma conversa com a Eva (como no WhatsApp).
                     </p>
                   </div>
                   <div className="chat-toolbar">
@@ -900,7 +1007,7 @@ export default function App() {
                       <input
                         value={chatId}
                         onChange={(e) => setChatId(e.target.value)}
-                        placeholder="teste-local"
+                        placeholder="telefone ou id_cliente"
                       />
                     </label>
                     <label className="chat-id">
@@ -1811,7 +1918,7 @@ export default function App() {
                   onChange={(e) => setIaForm({ ...iaForm, llm_provider: e.target.value })}
                 >
                   <option value="openai">OpenAI</option>
-                  <option value="ollama">Ollama (local)</option>
+                  <option value="ollama">Ollama</option>
                 </select>
               </label>
               <label>
@@ -1890,7 +1997,7 @@ export default function App() {
                     onChange={(e) => setIaForm({ ...iaForm, rag_provider: e.target.value })}
                   >
                     <option value="webhook">Webhook n8n (produção)</option>
-                    <option value="mock">Mock local (teste)</option>
+                    <option value="mock">Mock (simulação)</option>
                     <option value="none">Desligada</option>
                   </select>
                 </label>
@@ -1989,6 +2096,34 @@ export default function App() {
               </label>
 
               <label>
+                URL do Chatwoot
+                <input
+                  value={cwForm.chatwoot_base_url}
+                  onChange={(e) => setCwForm({ ...cwForm, chatwoot_base_url: e.target.value })}
+                  placeholder="https://chatwoot.mov.pro.br"
+                />
+              </label>
+
+              <label>
+                Token API Chatwoot
+                {cwMeta.api_configured ? (
+                  <span className="key-mask"> (atual: {cwMeta.api_mask})</span>
+                ) : (
+                  <span className="key-mask"> (não configurado)</span>
+                )}
+                <input
+                  type="password"
+                  value={cwForm.chatwoot_api_token}
+                  onChange={(e) => setCwForm({ ...cwForm, chatwoot_api_token: e.target.value })}
+                  placeholder="Cole o access token do Chatwoot"
+                  autoComplete="off"
+                />
+                <small className="field-hint">
+                  Perfil Chatwoot → Access Token. Necessário para listar inboxes.
+                </small>
+              </label>
+
+              <label>
                 Caixa de entrada (inbox)
                 <select
                   value={cwForm.inbox_id}
@@ -2002,7 +2137,7 @@ export default function App() {
                   ))}
                 </select>
                 <small className="field-hint">
-                  Só mensagens desta inbox chegam na IA. Lista vem da API Chatwoot (.env token).
+                  Só mensagens desta inbox chegam na Eva. Salve o token acima e clique Atualizar.
                 </small>
               </label>
 
@@ -2036,7 +2171,7 @@ export default function App() {
                   placeholder="https://api.seudominio.com"
                 />
                 <small className="field-hint">
-                  Usada para montar a URL do webhook. Em local: http://127.0.0.1:8001
+                  Ex.: http://200.6.142.5:8002 — usada para montar a URL do webhook.
                 </small>
               </label>
 

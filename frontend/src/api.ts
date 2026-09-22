@@ -12,6 +12,28 @@ export function getAdminToken() {
   return token();
 }
 
+export function clearAdminToken() {
+  localStorage.removeItem("sofia_admin_token");
+}
+
+export async function postAdminLogin(email: string, password: string) {
+  const res = await fetch(`${API_BASE}/admin/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = (data as { detail?: unknown }).detail;
+    throw new Error(typeof detail === "string" ? detail : `HTTP ${res.status}`);
+  }
+  return data as { ok: boolean; token: string; email: string };
+}
+
+export async function fetchAdminMe() {
+  return api<{ ok: boolean; email: string }>("/admin/me");
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -321,6 +343,7 @@ export type ConfigChatwoot = {
   eventos_recomendados: string[];
   chatwoot_base_url: string;
   chatwoot_api_configured: boolean;
+  chatwoot_api_token_mask: string;
 };
 
 export type ChatwootParseResult = {

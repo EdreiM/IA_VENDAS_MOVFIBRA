@@ -7,24 +7,24 @@ from typing import Any
 
 import httpx
 
+from app.chatwoot_config import resolver_chatwoot_api_token, resolver_chatwoot_base_url
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 
 def _headers() -> dict[str, str]:
-    settings = get_settings()
     return {
-        "api_access_token": settings.chatwoot_api_token,
+        "api_access_token": resolver_chatwoot_api_token(),
         "Content-Type": "application/json",
     }
 
 
 def _base_account() -> tuple[str, str] | None:
     settings = get_settings()
-    if not settings.chatwoot_api_token:
+    if not resolver_chatwoot_api_token():
         return None
-    base = settings.chatwoot_base_url.rstrip("/")
+    base = resolver_chatwoot_base_url()
     account = settings.chatwoot_account_id
     return base, account
 
@@ -144,8 +144,7 @@ def enviar_anexo_imagem(
 
     base, account = roots
     url = f"{base}/api/v1/accounts/{account}/conversations/{conversation_id}/messages"
-    settings = get_settings()
-    headers = {"api_access_token": settings.chatwoot_api_token}
+    headers = {"api_access_token": resolver_chatwoot_api_token()}
 
     ext = path.suffix.lower()
     ct = content_type or {

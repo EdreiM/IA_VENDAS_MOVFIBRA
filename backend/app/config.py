@@ -153,7 +153,10 @@ class Settings(BaseSettings):
     # Se true, /chat também respeita allowlist (padrão false = chat local livre)
     sofia_enforce_allowlist_on_chat: bool = False
 
-    # Token opcional para /metrics e /admin (vazio = sem auth em local)
+    # Painel admin — login email/senha (produção)
+    admin_email: str = "admin@movfibra.com"
+    admin_password: str = ""
+    # Token legado opcional (compat); login gera token de sessão
     admin_api_token: str = ""
 
     # Alerta quando ferramenta falha: none | evolution | chatwoot

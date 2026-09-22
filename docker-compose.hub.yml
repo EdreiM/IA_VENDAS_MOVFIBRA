@@ -29,10 +29,12 @@ services:
       DB_POOL_MIN_SIZE: "2"
       DB_POOL_MAX_SIZE: "20"
       PLANS_PROVIDER: postgres
+      ADMIN_EMAIL: admin@movfibra.com
+      ADMIN_PASSWORD: TROQUE_SENHA_ADMIN
     volumes:
       - iavendas_uploads:/app/uploads
     ports:
-      - "8001:8000"
+      - "8002:8000"
     networks:
       - iavendas_net
     healthcheck:
