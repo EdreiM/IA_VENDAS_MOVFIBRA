@@ -39,8 +39,7 @@ services:
     container_name: iavendas-api
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      - postgres
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-sofia}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sofia}
       DB_POOL_MIN_SIZE: ${DB_POOL_MIN_SIZE:-2}
@@ -71,8 +70,7 @@ services:
     container_name: iavendas-frontend
     restart: unless-stopped
     depends_on:
-      api:
-        condition: service_healthy
+      - api
     ports:
       - "${SOFIA_DASH_PORT:-5180}:80"
     networks:
