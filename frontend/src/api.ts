@@ -240,6 +240,12 @@ export const fetchConversas = (limite = 40, opts?: { unidade_id?: number; status
 export const fetchTurnos = (idCliente: string) =>
   api<{ items: unknown[] }>(`/metrics/turnos/${encodeURIComponent(idCliente)}`);
 
+export const deleteConversa = (id_cliente: string) =>
+  api<{ ok: boolean; id_cliente: string }>(
+    `/admin/conversas/${encodeURIComponent(id_cliente)}`,
+    { method: "DELETE" },
+  );
+
 export const fetchUnidades = () => api<{ items: Unidade[] }>("/admin/unidades");
 export const createUnidade = (body: { codigo: string; nome: string; ativo: boolean }) =>
   api<Unidade>("/admin/unidades", { method: "POST", body: JSON.stringify(body) });

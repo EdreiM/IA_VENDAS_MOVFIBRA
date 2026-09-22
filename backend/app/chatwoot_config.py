@@ -94,7 +94,7 @@ def resolver_chatwoot_base_url(*, unidade_id: int | None = None) -> str:
 
 
 def envio_resposta_configurado(*, unidade_id: int | None = None) -> bool:
-    """True se há ferramenta enviar_mensagem ou webhook .env."""
+    """True se há ferramenta enviar_mensagem, webhook .env ou token API Chatwoot no painel."""
     try:
         from app.ferramentas_catalog import resolver_url_ferramenta
 
@@ -102,6 +102,8 @@ def envio_resposta_configurado(*, unidade_id: int | None = None) -> bool:
             return True
     except Exception:
         pass
+    if resolver_chatwoot_api_token(unidade_id=unidade_id):
+        return True
     settings = get_settings()
     return bool((settings.chatwoot_msg_webhook_url or "").strip()) or settings.chatwoot_reply_enabled
 

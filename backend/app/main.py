@@ -220,9 +220,20 @@ def _talvez_enviar_chatwoot(
             contact_id=str(contact_id or ""),
         )
 
-    ativo = settings.chatwoot_reply_enabled if forcar is None else forcar
+    from app.chatwoot_config import resolver_chatwoot_api_token
+
+    api_direto = bool(resolver_chatwoot_api_token())
+    if forcar is True:
+        ativo = True
+    elif forcar is False:
+        ativo = False
+    else:
+        ativo = settings.chatwoot_reply_enabled or api_direto
     if not ativo:
-        return None
+        return {
+            "ok": False,
+            "motivo": "Resposta não enviada — configure token API Chatwoot no painel ou ferramenta enviar_mensagem",
+        }
     if len(outputs) == 1:
         return chatwoot_api.enviar_outgoing(cid, outputs[0])
     return chatwoot_api.enviar_outgoing_multiplas(cid, outputs)
@@ -594,6 +605,22 @@ def metrics_turnos_cliente(
 ):
     _exigir_admin(authorization, x_admin_token)
     return {"id_cliente": id_cliente, "items": turnos_recentes(id_cliente, limite)}
+
+
+@app.delete("/admin/conversas/{id_cliente}")
+def admin_deletar_conversa(
+    id_cliente: str,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Remove estado, histórico e turnos da conversa (irreversível)."""
+    _exigir_admin(authorization, x_admin_token)
+    cid = (id_cliente or "").strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="id_cliente obrigatório")
+    limpar_buffer(cid)
+    resetar_cliente(cid)
+    return {"ok": True, "id_cliente": cid}
 
 
 class ClientePatchIn(BaseModel):

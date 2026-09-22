@@ -11,6 +11,7 @@ import {
   createFerramenta,
   createPlano,
   createUnidade,
+  deleteConversa,
   deleteFerramenta,
   deletePlano,
   deletePromocao,
@@ -239,6 +240,7 @@ export default function App() {
   const [funil, setFunil] = useState<Funil | null>(null);
   const [conversas, setConversas] = useState<Conversa[]>([]);
   const [statusFiltro, setStatusFiltro] = useState("");
+  const [convBusca, setConvBusca] = useState("");
   const [sel, setSel] = useState<Conversa | null>(null);
   const [turnos, setTurnos] = useState<unknown[]>([]);
   const [mensagensConv, setMensagensConv] = useState<MensagemHistorico[]>([]);
@@ -522,6 +524,18 @@ export default function App() {
     [funil],
   );
 
+  const conversasFiltradas = useMemo(() => {
+    const q = convBusca.trim().toLowerCase();
+    if (!q) return conversas;
+    return conversas.filter((c) => {
+      const blob = [c.nome, c.telefone, c.id_cliente, c.conversation_id, c.fase, c.cidade]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return blob.includes(q);
+    });
+  }, [conversas, convBusca]);
+
   async function onSelectConversa(c: Conversa) {
     setSel(c);
     setMensagensConv([]);
@@ -585,6 +599,26 @@ export default function App() {
   async function buscarClientes(e: FormEvent) {
     e.preventDefault();
     await refreshClientes();
+  }
+
+  async function deletarConversaSelecionada() {
+    if (!sel) return;
+    const rotulo = sel.nome || sel.telefone || sel.id_cliente;
+    const ok = window.confirm(
+      `Tem certeza que deseja excluir a conversa de "${rotulo}"?\n\nIsso apaga o histórico, estado e turnos. Não pode ser desfeito.`,
+    );
+    if (!ok) return;
+    setError("");
+    try {
+      await deleteConversa(sel.id_cliente);
+      setSel(null);
+      setTurnos([]);
+      setMensagensConv([]);
+      setOkMsg("Conversa excluída");
+      await refreshConversas();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function doHandoff() {
@@ -1163,152 +1197,193 @@ export default function App() {
         )}
 
         {tab === "conversas" && (
-          <section className="panel split">
-            <div>
-              <div className="row-head">
+          <section className="panel conv-panel">
+            <div className="row-head">
+              <div>
                 <h1>Conversas</h1>
-                <select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value)}>
-                  <option value="">Todos status</option>
-                  <option value="com_ia">Com IA</option>
-                  <option value="transferido">Transferido</option>
-                  <option value="finalizado">Finalizado</option>
-                </select>
+                <p className="muted">Histórico e intervenção humana</p>
               </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Cliente</th>
-                      <th>Status</th>
-                      <th>Fase</th>
-                      <th>Cidade</th>
-                      <th>Atualizado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {conversas.map((c) => (
-                      <tr
-                        key={c.id_cliente}
-                        className={sel?.id_cliente === c.id_cliente ? "selected" : ""}
-                        onClick={() => void onSelectConversa(c)}
-                      >
-                        <td>
-                          <div>{c.nome || c.id_cliente}</div>
-                          <small>{c.telefone || c.conversation_id || "—"}</small>
-                        </td>
-                        <td>{statusBadge(c.status)}</td>
-                        <td>{c.fase}</td>
-                        <td>{c.cidade || "—"}</td>
-                        <td>
-                          <small>{c.updated_at ? new Date(c.updated_at).toLocaleString() : "—"}</small>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value)}>
+                <option value="">Todos status</option>
+                <option value="com_ia">Com IA</option>
+                <option value="transferido">Transferido</option>
+                <option value="finalizado">Finalizado</option>
+              </select>
             </div>
-            <aside className="detail">
-              <h2>Detalhe</h2>
-              {!sel ? (
-                <p className="muted">Selecione uma conversa.</p>
-              ) : (
-                <>
-                  <p>
-                    <strong>{sel.nome || sel.id_cliente}</strong>
-                    <br />
-                    {statusBadge(sel.status)} · {sel.fase}
-                  </p>
-                  <p className="muted">
-                    Plano: {sel.plano_confirmado || "—"}
-                    <br />
-                    CID: {sel.conversation_id || "—"}
-                  </p>
-                  <h3>Handoff</h3>
-                  <label>
-                    Atendente
-                    <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
-                      <option value="">—</option>
-                      {agents.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Time
-                    <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-                      <option value="">—</option>
-                      {teams.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Labels
-                    <input
-                      value={labelsCsv}
-                      onChange={(e) => setLabelsCsv(e.target.value)}
-                      list="labels-dl"
-                    />
-                    <datalist id="labels-dl">
-                      {labelOptions.map((l) => (
-                        <option key={l} value={l} />
-                      ))}
-                    </datalist>
-                  </label>
-                  <label>
-                    Status
-                    <select value={statusHandoff} onChange={(e) => setStatusHandoff(e.target.value)}>
-                      <option value="open">open</option>
-                      <option value="pending">pending</option>
-                      <option value="resolved">resolved</option>
-                    </select>
-                  </label>
-                  <button type="button" onClick={() => void doHandoff()}>
-                    Transferir agora
-                  </button>
-                  <h3>Histórico de mensagens</h3>
-                  <ul className="msg-timeline">
-                    {mensagensConv.length === 0 ? (
-                      <li className="muted">Nenhuma mensagem registrada ainda.</li>
-                    ) : (
-                      mensagensConv.slice(-30).map((m) => (
-                        <li
-                          key={m.id}
-                          className={m.remetente === "cliente" ? "msg-cliente" : "msg-eva"}
+
+            <div className="conv-layout">
+              <aside className="conv-list">
+                <div className="conv-list-tools">
+                  <input
+                    value={convBusca}
+                    onChange={(e) => setConvBusca(e.target.value)}
+                    placeholder="Buscar nome, telefone ou ID…"
+                  />
+                </div>
+                <ul>
+                  {conversasFiltradas.map((c) => (
+                    <li
+                      key={c.id_cliente}
+                      className={
+                        sel?.id_cliente === c.id_cliente ? "conv-item active" : "conv-item"
+                      }
+                      onClick={() => void onSelectConversa(c)}
+                    >
+                      <strong>{c.nome || c.telefone || c.id_cliente}</strong>
+                      <small>
+                        {c.telefone || c.conversation_id || c.id_cliente}
+                        {c.status ? ` · ${c.status.replace(/_/g, " ")}` : ""}
+                      </small>
+                      <small className="conv-item-meta">
+                        {c.fase}
+                        {c.cidade ? ` · ${c.cidade}` : ""}
+                      </small>
+                    </li>
+                  ))}
+                  {conversasFiltradas.length === 0 && (
+                    <li className="muted conv-empty">Nenhuma conversa encontrada.</li>
+                  )}
+                </ul>
+              </aside>
+
+              <main className="conv-chat">
+                {!sel ? (
+                  <div className="conv-chat-empty muted">Selecione uma conversa na lista.</div>
+                ) : (
+                  <>
+                    <header className="conv-chat-head">
+                      <div>
+                        <h2>{sel.nome || sel.telefone || sel.id_cliente}</h2>
+                        <p className="muted">
+                          {sel.telefone || sel.id_cliente}
+                          {sel.conversation_id ? ` · CID ${sel.conversation_id}` : ""}
+                        </p>
+                      </div>
+                      <div className="conv-chat-actions">
+                        {statusBadge(sel.status)}
+                        <span className="muted-inline">{sel.fase}</span>
+                        <button
+                          type="button"
+                          className="ghost danger"
+                          onClick={() => void deletarConversaSelecionada()}
                         >
-                          <small>
-                            {m.remetente === "cliente" ? "Cliente" : "Eva"}
-                            {m.created_at
-                              ? ` · ${new Date(m.created_at).toLocaleString()}`
-                              : ""}
-                          </small>
-                          <div>{m.mensagem}</div>
-                        </li>
-                      ))
+                          Excluir
+                        </button>
+                      </div>
+                    </header>
+
+                    <div className="conv-messages">
+                      {mensagensConv.length === 0 ? (
+                        <p className="muted conv-chat-empty">Nenhuma mensagem registrada ainda.</p>
+                      ) : (
+                        mensagensConv.map((m) => (
+                          <div
+                            key={m.id}
+                            className={
+                              m.remetente === "cliente"
+                                ? "conv-bubble conv-bubble-cliente"
+                                : "conv-bubble conv-bubble-eva"
+                            }
+                          >
+                            <small>
+                              {m.remetente === "cliente" ? "Cliente" : "Eva"}
+                              {m.created_at
+                                ? ` · ${new Date(m.created_at).toLocaleString()}`
+                                : ""}
+                            </small>
+                            <div>{m.mensagem}</div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {sel.plano_confirmado && (
+                      <p className="conv-meta-bar muted">
+                        Plano: {sel.plano_confirmado}
+                      </p>
                     )}
-                  </ul>
-                  <h3>Turnos recentes</h3>
-                  <ul className="turnos">
-                    {turnos.slice(0, 8).map((t, i) => {
-                      const row = t as Record<string, unknown>;
-                      return (
-                        <li key={i}>
-                          <small>
-                            {String(row.acao || row.fase || "")} —{" "}
-                            {String(row.created_at || "").slice(0, 19)}
-                          </small>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </>
-              )}
-            </aside>
+
+                    <details className="conv-handoff-drawer">
+                      <summary>Handoff e turnos</summary>
+                      <div className="conv-handoff-body">
+                        <div className="conv-handoff-grid">
+                          <label>
+                            Atendente
+                            <select
+                              value={assigneeId}
+                              onChange={(e) => setAssigneeId(e.target.value)}
+                            >
+                              <option value="">—</option>
+                              {agents.map((a) => (
+                                <option key={a.id} value={a.id}>
+                                  {a.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Time
+                            <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+                              <option value="">—</option>
+                              {teams.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Labels
+                            <input
+                              value={labelsCsv}
+                              onChange={(e) => setLabelsCsv(e.target.value)}
+                              list="labels-dl"
+                            />
+                            <datalist id="labels-dl">
+                              {labelOptions.map((l) => (
+                                <option key={l} value={l} />
+                              ))}
+                            </datalist>
+                          </label>
+                          <label>
+                            Status
+                            <select
+                              value={statusHandoff}
+                              onChange={(e) => setStatusHandoff(e.target.value)}
+                            >
+                              <option value="open">open</option>
+                              <option value="pending">pending</option>
+                              <option value="resolved">resolved</option>
+                            </select>
+                          </label>
+                        </div>
+                        <button type="button" onClick={() => void doHandoff()}>
+                          Transferir agora
+                        </button>
+                        <h4>Turnos recentes</h4>
+                        <ul className="turnos conv-turnos">
+                          {turnos.length === 0 ? (
+                            <li className="muted">Nenhum turno.</li>
+                          ) : (
+                            turnos.slice(0, 8).map((t, i) => {
+                              const row = t as Record<string, unknown>;
+                              return (
+                                <li key={i}>
+                                  <small>
+                                    {String(row.acao || row.fase || "")} —{" "}
+                                    {String(row.created_at || "").slice(0, 19)}
+                                  </small>
+                                </li>
+                              );
+                            })
+                          )}
+                        </ul>
+                      </div>
+                    </details>
+                  </>
+                )}
+              </main>
+            </div>
           </section>
         )}
 
@@ -2061,10 +2136,11 @@ export default function App() {
                 <li>
                   Envio de respostas:{" "}
                   {cwMeta.envio_ok ? (
-                    <span>OK (ferramenta ou .env)</span>
+                    <span>OK (API Chatwoot ou ferramenta enviar_mensagem)</span>
                   ) : (
                     <span className="muted-inline">
-                      Configure a ferramenta <em>enviar_mensagem</em> na aba Ferramentas
+                      Salve o <strong>Token API Chatwoot</strong> abaixo ou configure a ferramenta{" "}
+                      <em>enviar_mensagem</em>
                     </span>
                   )}
                 </li>
