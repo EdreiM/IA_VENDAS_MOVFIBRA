@@ -42,7 +42,7 @@ jobs:
           push: true
           tags: |
             ${{ env.BACKEND_IMAGE }}:latest
-            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+            ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
 
       - name: Build e push frontend
         uses: docker/build-push-action@v6
