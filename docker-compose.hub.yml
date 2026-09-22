@@ -1,20 +1,16 @@
-# Eva MOV FIBRA — stack Portainer (Docker Hub)
-# Cole TUDO no Web editor do Portainer.
-# Troque SOMENTE a senha abaixo (linha POSTGRES_PASSWORD).
+# Eva MOV FIBRA — Portainer / Docker Swarm
+# Cole no Web editor. Troque a senha nos 2 lugares (POSTGRES_PASSWORD e DATABASE_URL).
+# Postgres NÃO expõe porta no host (evita conflito com 5433).
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: iavendas-postgres
-    restart: unless-stopped
     environment:
       POSTGRES_USER: sofia
       POSTGRES_PASSWORD: "TROQUE_ESTA_SENHA"
       POSTGRES_DB: sofia
     volumes:
       - iavendas_pg_data:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"
     networks:
       - iavendas_net
     healthcheck:
@@ -22,13 +18,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      restart_policy:
+        condition: any
 
   api:
     image: edreimp/iavendas-backend:latest
-    container_name: iavendas-api
-    restart: unless-stopped
-    depends_on:
-      - postgres
     environment:
       DATABASE_URL: postgresql://sofia:TROQUE_ESTA_SENHA@postgres:5432/sofia
       DB_POOL_MIN_SIZE: "2"
@@ -51,18 +46,20 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 30s
+    deploy:
+      restart_policy:
+        condition: any
 
   frontend:
     image: edreimp/iavendas-frontend:latest
-    container_name: iavendas-frontend
-    restart: unless-stopped
-    depends_on:
-      - api
     ports:
       - "5180:80"
     networks:
       - iavendas_net
+    deploy:
+      restart_policy:
+        condition: any
 
 networks:
   iavendas_net:
