@@ -1,17 +1,6 @@
-# Eva MOV FIBRA — stack Portainer usando imagens do Docker Hub
-#
-# Imagens publicadas pela CI (push na main):
-#   edreimp/iavendas-backend:latest
-#   edreimp/iavendas-frontend:latest
-#
-# Variáveis mínimas no Portainer (Environment variables):
-#   POSTGRES_PASSWORD=senha-forte
-#   DOCKERHUB_USER=edreimp
-#
-# OpenAI, Chatwoot, n8n etc. → painel Eva (Config IA, Chatwoot, Ferramentas).
-# Ver DEPLOY_PORTAINER.md
-
-name: iavendas
+# Eva MOV FIBRA — stack Portainer (Docker Hub)
+# Cole TUDO no Web editor do Portainer.
+# Troque SOMENTE a senha abaixo (linha POSTGRES_PASSWORD).
 
 services:
   postgres:
@@ -19,37 +8,36 @@ services:
     container_name: iavendas-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-sofia}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-sofia}
+      POSTGRES_USER: sofia
+      POSTGRES_PASSWORD: "TROQUE_ESTA_SENHA"
+      POSTGRES_DB: sofia
     volumes:
       - iavendas_pg_data:/var/lib/postgresql/data
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "5433:5432"
     networks:
       - iavendas_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sofia} -d ${POSTGRES_DB:-sofia}"]
+      test: ["CMD-SHELL", "pg_isready -U sofia -d sofia"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   api:
-    image: ${DOCKERHUB_USER:?Defina DOCKERHUB_USER}/iavendas-backend:${IMAGE_TAG:-latest}
+    image: edreimp/iavendas-backend:latest
     container_name: iavendas-api
     restart: unless-stopped
     depends_on:
       - postgres
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-sofia}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sofia}
-      DB_POOL_MIN_SIZE: ${DB_POOL_MIN_SIZE:-2}
-      DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-20}
-      PLANS_PROVIDER: ${PLANS_PROVIDER:-postgres}
-      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
+      DATABASE_URL: postgresql://sofia:TROQUE_ESTA_SENHA@postgres:5432/sofia
+      DB_POOL_MIN_SIZE: "2"
+      DB_POOL_MAX_SIZE: "20"
+      PLANS_PROVIDER: postgres
     volumes:
       - iavendas_uploads:/app/uploads
     ports:
-      - "${SOFIA_API_PORT:-8001}:8000"
+      - "8001:8000"
     networks:
       - iavendas_net
     healthcheck:
@@ -66,22 +54,19 @@ services:
       start_period: 20s
 
   frontend:
-    image: ${DOCKERHUB_USER:?Defina DOCKERHUB_USER}/iavendas-frontend:${IMAGE_TAG:-latest}
+    image: edreimp/iavendas-frontend:latest
     container_name: iavendas-frontend
     restart: unless-stopped
     depends_on:
       - api
     ports:
-      - "${SOFIA_DASH_PORT:-5180}:80"
+      - "5180:80"
     networks:
       - iavendas_net
 
 networks:
   iavendas_net:
-    name: iavendas_net
 
 volumes:
   iavendas_pg_data:
-    name: iavendas_pg_data
   iavendas_uploads:
-    name: iavendas_uploads
