@@ -39,9 +39,11 @@ Auxiliares: `sem_cobertura`, `transferido`.
 | Painel | `iavendas-frontend` | 5180 |
 | PG | `iavendas-postgres` | 5433 |
 
-- Compose: `docker-compose.yml` (build Git) ou `docker-compose.hub.yml` (Docker Hub).
+- Compose: `docker-compose.hub.yml` (Hub, recomendado) ou `docker-compose.yml` (build Git).
+- Imagens Hub: `edreimp/iavendas-backend`, `edreimp/iavendas-frontend` (CI na `main`).
+- Portainer mínimo: `POSTGRES_PASSWORD` + `DOCKERHUB_USER`. Resto no painel.
 - Deploy: ver `DEPLOY_PORTAINER.md`.
-- `PUBLIC_BASE_URL` = URL pública da API (webhook Chatwoot, n8n, mídia).
+- `PUBLIC_BASE_URL` = URL pública da API — configurar na aba **Chatwoot** do painel.
 
 ## Painel — abas principais
 

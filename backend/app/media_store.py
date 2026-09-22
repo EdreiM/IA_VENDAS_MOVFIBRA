@@ -52,7 +52,9 @@ def url_absoluta_imagem(imagem_url: str | None) -> str:
     url = str(imagem_url).strip()
     if url.startswith("http://") or url.startswith("https://"):
         return url
-    base = (get_settings().public_base_url or "").rstrip("/")
+    from app.chatwoot_config import resolver_public_base_url
+
+    base = resolver_public_base_url().rstrip("/")
     if not base:
         return url
     if not url.startswith("/"):

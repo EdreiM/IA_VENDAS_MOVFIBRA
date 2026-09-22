@@ -29,21 +29,28 @@ IA VENDAS/
 
 Portas escolhidas para **não conflitar** com 8000/5173/5432 de outros projetos.
 
-### Deploy rápido
+### Deploy rápido (Portainer + Docker Hub)
 
-1. Copie `portainer/stack.env.example` → `.env` e preencha segredos.
-2. Ajuste `PUBLIC_BASE_URL` (`http://IP:8001` sem domínio).
-3. No Portainer: **Stacks → Add stack** → cole `docker-compose.yml` + env.
+1. No Portainer: **Stacks → Add stack** → cole `docker-compose.hub.yml`.
+2. Environment variables (mínimo):
+
+```env
+POSTGRES_PASSWORD=senha-forte
+DOCKERHUB_USER=edreimp
+```
+
+3. Abra o painel (`http://IP:5180`) e configure OpenAI, Chatwoot e ferramentas nas abas.
 
 Guia completo: **[DEPLOY_PORTAINER.md](DEPLOY_PORTAINER.md)**
 
+Imagens Hub (CI automática): `edreimp/iavendas-backend`, `edreimp/iavendas-frontend`
+
 ```powershell
+# Desenvolvimento local
 docker compose up -d --build
 curl http://127.0.0.1:8001/health
 # Painel: http://127.0.0.1:5180
 ```
-
-**Docker Hub:** opcional. O Portainer pode buildar direto do GitHub. Ver [DEPLOY_PORTAINER.md](DEPLOY_PORTAINER.md) §2.
 
 ---
 
@@ -62,7 +69,7 @@ curl http://127.0.0.1:8001/health
 | Ferramentas | Webhooks n8n dinâmicos |
 | Unidades | Filiais / cidades |
 
-Autenticação admin: header `X-Admin-Token` = `ADMIN_API_TOKEN` do `.env`.
+Autenticação admin: header `X-Admin-Token` = `ADMIN_API_TOKEN` (opcional no Portainer; salve no topo do painel).
 
 ---
 

@@ -19,37 +19,47 @@ alwaysApply: false
 - **5180** → Painel (container 80)
 - **5433** → PostgreSQL (container 5432)
 
-Conflito? Ajuste `SOFIA_API_PORT`, `SOFIA_DASH_PORT`, `POSTGRES_PORT` no `.env`.
+Conflito? Ajuste `SOFIA_API_PORT`, `SOFIA_DASH_PORT`, `POSTGRES_PORT` no env da stack.
+
+## Docker Hub (CI)
+
+| Imagem Hub | Container |
+|------------|-----------|
+| `edreimp/iavendas-backend` | `iavendas-api` |
+| `edreimp/iavendas-frontend` | `iavendas-frontend` |
+
+CI: `.github/workflows/docker-publish.yml` — push na `main` → `:latest`.
+
+Stack Portainer: `docker-compose.hub.yml` (não `iavendas-api` no Hub — nome da imagem é `iavendas-backend`).
+
+## Portainer — mínimo obrigatório
+
+```env
+POSTGRES_PASSWORD=...
+DOCKERHUB_USER=edreimp
+```
+
+OpenAI, Chatwoot, n8n, `PUBLIC_BASE_URL` → **painel Eva** (PostgreSQL `sofia_config`), não no Portainer.
 
 ## URLs sem domínio
 
-```env
-PUBLIC_BASE_URL=http://IP-SERVidor:8001
-CORS_ORIGINS=http://IP-Servidor:5180
-```
-
-Webhook Chatwoot: `{PUBLIC_BASE_URL}/webhooks/chatwoot`
+Painel: `http://IP:5180` — API: `http://IP:8001` — webhook: `{PUBLIC_BASE_URL}/webhooks/chatwoot` (configurar URL pública na aba Chatwoot).
 
 ## Frontend em Docker
 
 - `VITE_API_BASE=""` — nginx faz proxy para serviço `api`.
 - Rotas proxy: `/admin`, `/metrics`, `/chatwoot`, `/webhooks`, `/chat`, `/health`, `/media`.
+- **CORS_ORIGINS** não é necessário no Portainer (mesma origem via nginx).
 
 ## Volumes persistentes
 
 - `iavendas_pg_data` — PostgreSQL
 - `iavendas_uploads` — imagens de planos
 
-## Docker Hub (opcional)
-
-Não é obrigatório. Portainer pode buildar do GitHub.
-
-Se usar Hub: `scripts/publish-docker.ps1` + `docker-compose.hub.yml`.
-
 ## Checklist deploy
 
-1. `POSTGRES_PASSWORD` e `ADMIN_API_TOKEN` definidos
-2. `PUBLIC_BASE_URL` acessível externamente (n8n + Chatwoot)
+1. `POSTGRES_PASSWORD` + `DOCKERHUB_USER` no Portainer
+2. Stack com `docker-compose.hub.yml` → Pull and redeploy após CI
 3. `/health` → `"database": "postgresql"`
-4. Painel: sync ferramentas + config Chatwoot
+4. Painel: Config IA + Chatwoot + sync ferramentas
 5. Firewall: 8001 e 5180 abertas (ou reverse proxy)

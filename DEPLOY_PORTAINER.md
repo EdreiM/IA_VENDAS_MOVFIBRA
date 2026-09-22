@@ -1,6 +1,6 @@
 # Deploy Eva — Portainer / Docker
 
-Guia oficial para subir **API + Painel + PostgreSQL** no Portainer (com ou sem domínio).
+Guia oficial para subir **API + Painel + PostgreSQL** no Portainer.
 
 Repositório: [EdreiM/IA_VENDAS_MOVFIBRA](https://github.com/EdreiM/IA_VENDAS_MOVFIBRA)
 
@@ -14,10 +14,10 @@ Internet / WhatsApp
    Chatwoot (n8n)
        ↓
 ┌──────────────────────────────────────────────┐
-│  Servidor Portainer                          │
+│  Servidor Portainer (ex.: 200.6.142.5)       │
 │                                              │
 │  iavendas-frontend :5180  (nginx + React)    │
-│       │ proxy /api /admin /webhooks …        │
+│       │ proxy /admin /webhooks …             │
 │       ↓                                      │
 │  iavendas-api :8001       (FastAPI Eva)      │
 │       ↓                                      │
@@ -25,160 +25,158 @@ Internet / WhatsApp
 └──────────────────────────────────────────────┘
 ```
 
-| Serviço | Container | Porta HOST | Porta interna |
-|---------|-----------|------------|---------------|
-| Painel | `iavendas-frontend` | **5180** | 80 |
-| API Eva | `iavendas-api` | **8001** | 8000 |
-| PostgreSQL | `iavendas-postgres` | **5433** | 5432 |
+| Serviço | Container | Imagem Docker Hub | Porta HOST |
+|---------|-----------|-------------------|------------|
+| Painel | `iavendas-frontend` | `edreimp/iavendas-frontend` | **5180** |
+| API Eva | `iavendas-api` | `edreimp/iavendas-backend` | **8001** |
+| PostgreSQL | `iavendas-postgres` | `postgres:16-alpine` | **5433** |
 
-Essas portas foram escolhidas para **não conflitar** com stacks comuns (8000, 5173, 5432).
+Portas escolhidas para **não conflitar** com stacks comuns (8000, 5173, 5432).
 
-Se alguma porta já estiver em uso no servidor, altere no `.env`:
+---
+
+## 2. Duas formas de deploy
+
+| Método | Quando usar | Arquivo compose |
+|--------|-------------|-----------------|
+| **A — Docker Hub (recomendado)** | CI já publica imagens; deploy rápido | `docker-compose.hub.yml` |
+| **B — Build no Portainer (Git)** | Sem Hub / primeiro teste | `docker-compose.yml` |
+
+### Método A — Docker Hub + CI (recomendado)
+
+Cada **push na `main`** publica automaticamente:
+
+| Imagem Hub | Tag |
+|------------|-----|
+| `edreimp/iavendas-backend` | `latest` + SHA do commit |
+| `edreimp/iavendas-frontend` | `latest` + SHA do commit |
+
+No Portainer: use `docker-compose.hub.yml` + variáveis mínimas (§5).
+
+Atualizar produção: **Pull and redeploy** na stack.
+
+### Método B — Build local no servidor
+
+O Portainer clona o GitHub e faz `docker build`. Não precisa Docker Hub.
+
+Compose path: `docker-compose.yml`
+
+---
+
+## 3. O que vai no Portainer vs no painel Eva
+
+| Onde | O quê |
+|------|-------|
+| **Portainer** (infra) | `POSTGRES_PASSWORD`, `DOCKERHUB_USER`, portas |
+| **Painel Eva** (operacional) | OpenAI, Chatwoot, n8n, planos, allowlist |
+
+### Obrigatório no Portainer
 
 ```env
-SOFIA_API_PORT=8002
-SOFIA_DASH_PORT=5181
-POSTGRES_PORT=5434
+POSTGRES_PASSWORD=senha-forte-aqui
+DOCKERHUB_USER=edreimp
 ```
+
+### Opcional no Portainer
+
+| Variável | Uso |
+|----------|-----|
+| `ADMIN_API_TOKEN` | Trava endpoints `/admin`. Vazio = painel aberto (ok para primeiro deploy) |
+| `SOFIA_API_PORT` / `SOFIA_DASH_PORT` / `POSTGRES_PORT` | Só se houver conflito de porta |
+| `IMAGE_TAG` | Fixar versão (`latest` ou SHA do commit) |
+
+### Configure depois no painel (não precisa no Portainer)
+
+- **Config IA** → `OPENAI_API_KEY`, modelo
+- **Chatwoot** → `PUBLIC_BASE_URL`, inbox, allowlist
+- **Ferramentas** → webhooks n8n
 
 ---
 
-## 2. Preciso de Docker Hub?
+## 4. URLs (sem domínio)
 
-**Não obrigatoriamente.** Duas formas:
+Descubra o IP: `nslookup portainer.mov.pro.br` (ex.: `200.6.142.5`)
 
-| Método | Quando usar | Arquivo |
-|--------|-------------|---------|
-| **A — Build no Portainer (Git)** | Primeiro deploy, mais simples | `docker-compose.yml` |
-| **B — Imagens no Docker Hub** | Deploy mais rápido, CI/CD | `docker-compose.hub.yml` |
+| Recurso | URL |
+|---------|-----|
+| Painel | `http://200.6.142.5:5180` |
+| API health | `http://200.6.142.5:8001/health` |
+| Webhook Chatwoot | `http://200.6.142.5:8001/webhooks/chatwoot` |
 
-### Método A — Recomendado para começar
+No painel → aba **Chatwoot** → **URL pública**: `http://200.6.142.5:8001`
 
-O Portainer clona o GitHub e faz `docker build` na hora. **Não precisa Docker Hub.**
+**Firewall:** libere **5180** (painel) e **8001** (API/webhooks).
 
-### Método B — Docker Hub (opcional)
-
-Útil quando quiser atualizar só a tag da imagem, sem rebuild no servidor.
-
-```powershell
-# Na sua máquina (substitua SEU_USUARIO)
-$USER = "edreim"
-docker build -t ${USER}/iavendas-api:latest ./backend
-docker build -t ${USER}/iavendas-frontend:latest ./frontend
-docker login
-docker push ${USER}/iavendas-api:latest
-docker push ${USER}/iavendas-frontend:latest
-```
-
-No Portainer use `docker-compose.hub.yml` e defina `DOCKERHUB_USER=edreim`.
+O nginx do painel faz proxy interno — **não precisa** `CORS_ORIGINS` no Portainer.
 
 ---
 
-## 3. Sem domínio (teste / homolog)
+## 5. Passo a passo no Portainer (Docker Hub)
 
-Enquanto o domínio não chega, use o **IP público + porta**:
+### 5.1 Criar stack
 
-| Recurso | URL exemplo |
-|---------|-------------|
-| Painel | `http://203.0.113.10:5180` |
-| API health | `http://203.0.113.10:8001/health` |
-| Webhook Chatwoot | `http://203.0.113.10:8001/webhooks/chatwoot` |
-
-No `.env` do stack:
+1. Portainer → **Stacks** → **Add stack**
+2. Nome: `iavendas`
+3. **Web editor**: cole o conteúdo de [`docker-compose.hub.yml`](docker-compose.hub.yml)
+4. **Environment variables** — cole:
 
 ```env
-PUBLIC_BASE_URL=http://203.0.113.10:8001
-CORS_ORIGINS=http://203.0.113.10:5180,http://localhost:5180
+POSTGRES_PASSWORD=sua-senha-forte
+DOCKERHUB_USER=edreimp
 ```
 
-No painel Eva → aba **Chatwoot**, a URL do webhook será montada a partir de `PUBLIC_BASE_URL`.
+Template completo (opcionais comentados): [`portainer/stack.env.example`](portainer/stack.env.example)
 
-**Firewall:** libere as portas **5180** (painel) e **8001** (API/webhooks) no servidor.
+5. **Deploy the stack**
+
+### 5.2 Validar containers
+
+Aguarde os 3 containers ficarem **healthy/running**:
+
+- `iavendas-postgres`
+- `iavendas-api`
+- `iavendas-frontend`
+
+### 5.3 Configurar no painel
+
+1. Abra `http://SEU-IP:5180`
+2. Se definiu `ADMIN_API_TOKEN`, salve o token no topo do painel
+3. **Config IA** → OpenAI key
+4. **Chatwoot** → URL pública + inbox
+5. **Ferramentas** → sync catálogo + URLs n8n
+
+### 5.4 Testar
+
+```bash
+curl http://200.6.142.5:8001/health
+# {"ok":true,"database":"postgresql",...}
+```
 
 ---
 
-## 4. Com domínio (produção)
-
-Exemplo com reverse proxy (Traefik / Nginx Proxy Manager):
+## 6. Com domínio (produção)
 
 | Serviço | Domínio sugerido |
 |---------|------------------|
-| Painel | `https://eva.movfibra.com.br` |
-| API | `https://api-eva.movfibra.com.br` |
+| Painel | `https://eva.mov.pro.br` |
+| API | `https://api-eva.mov.pro.br` |
 
-```env
-PUBLIC_BASE_URL=https://api-eva.movfibra.com.br
-CORS_ORIGINS=https://eva.movfibra.com.br
-```
-
-Webhook Chatwoot: `https://api-eva.movfibra.com.br/webhooks/chatwoot`
-
-O painel em Docker usa nginx com proxy interno — `VITE_API_BASE` fica vazio (mesma origem via `/admin`, `/webhooks`, etc.).
-
----
-
-## 5. Passo a passo no Portainer
-
-### 5.1 Preparar variáveis
-
-1. Copie `portainer/stack.env.example` → `.env` (ou cole no editor de env do Portainer).
-2. Preencha **obrigatórios**:
-   - `POSTGRES_PASSWORD` (senha forte)
-   - `OPENAI_API_KEY`
-   - `ADMIN_API_TOKEN` (token do painel)
-   - `CHATWOOT_API_TOKEN`
-   - URLs dos webhooks n8n que for usar
-3. Ajuste `PUBLIC_BASE_URL` (IP ou domínio).
-
-### 5.2 Criar stack
-
-1. Portainer → **Stacks** → **Add stack**
-2. Nome: `iavendas` ou `eva-movfibra`
-3. **Web editor**: cole o conteúdo de `docker-compose.yml`
-4. **Environment variables**: cole o `.env` ou use env file
-5. **Deploy the stack**
-
-### 5.3 Build via repositório Git (alternativa)
-
-1. Stacks → Add stack → **Repository**
-2. URL: `https://github.com/EdreiM/IA_VENDAS_MOVFIBRA`
-3. Compose path: `docker-compose.yml`
-4. Ative **Authentication** se repo privado
-5. Deploy
-
-### 5.4 Validar
-
-```bash
-curl http://IP:8001/health
-# {"ok":true,"database":"postgresql",...}
-
-# Painel no navegador
-http://IP:5180
-# Informe ADMIN_API_TOKEN no topo
-```
-
----
-
-## 6. Checklist pós-deploy
-
-- [ ] `/health` → `"database": "postgresql"`
-- [ ] Painel abre e token admin funciona
-- [ ] Aba **Ferramentas** → sync catálogo → URLs n8n preenchidas
-- [ ] Aba **Chatwoot** → inbox + URL webhook correta
-- [ ] `PUBLIC_BASE_URL` acessível de fora (n8n e Chatwoot)
-- [ ] Teste `/chat` ou webhook com allowlist
+Configure no painel → **Chatwoot** → URL pública: `https://api-eva.mov.pro.br`
 
 ---
 
 ## 7. Atualizar stack
 
+### Via CI (código novo)
+
+1. `git push origin main` → GitHub Actions publica no Hub
+2. Portainer → stack `iavendas` → **Pull and redeploy**
+
+### Via build local
+
 ```powershell
-# Local (teste antes)
-docker compose pull   # só se usar hub
 docker compose up -d --build
 ```
-
-No Portainer: **Pull and redeploy** ou **Update the stack** com compose novo do GitHub.
 
 ---
 
@@ -187,7 +185,7 @@ No Portainer: **Pull and redeploy** ou **Update the stack** com compose novo do 
 | Volume | Conteúdo |
 |--------|----------|
 | `iavendas_pg_data` | Banco PostgreSQL |
-| `iavendas_uploads` | Imagens de planos enviadas |
+| `iavendas_uploads` | Imagens de planos |
 
 **Não apague** esses volumes em produção sem backup.
 
@@ -197,11 +195,13 @@ No Portainer: **Pull and redeploy** ou **Update the stack** com compose novo do 
 
 | Sintoma | Causa provável | Ação |
 |---------|----------------|------|
-| API não sobe | `POSTGRES_PASSWORD` vazio | Defina no env do stack |
-| Painel "Failed to fetch" | API down ou token errado | Ver logs `iavendas-api` |
+| Stack não sobe | `POSTGRES_PASSWORD` vazio | Defina no env |
+| Erro ao puxar imagem | `DOCKERHUB_USER` errado ou imagem inexistente | Use `edreimp` + confira Hub |
+| API unhealthy | Postgres ainda iniciando | Aguarde ou veja logs |
+| Painel "Failed to fetch" | API down | `docker logs iavendas-api` |
 | Chatwoot não recebe webhook | Porta 8001 fechada / URL errada | Teste `curl` externo |
-| n8n não baixa imagem plano | `PUBLIC_BASE_URL` = localhost | Use IP/domínio público |
-| Porta em uso | Conflito com outro serviço | Mude `SOFIA_*_PORT` no .env |
+| n8n não baixa imagem plano | URL pública errada no painel | Aba Chatwoot → URL pública |
+| Porta em uso | Conflito com outro serviço | Mude `SOFIA_*_PORT` |
 
 Logs:
 
@@ -215,7 +215,7 @@ docker logs iavendas-postgres -f
 
 ## 10. Referências
 
+- [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) — CI Docker Hub
 - [`README.md`](README.md) — visão geral
 - [`REGRAS_NEGOCIO.md`](REGRAS_NEGOCIO.md) — funil comercial
 - [`FLUXO_SOFIA.md`](FLUXO_SOFIA.md) — fases técnicas
-- [`n8n/GUIA_CHATWOOT_SOFIA.md`](n8n/GUIA_CHATWOOT_SOFIA.md) — integração Chatwoot

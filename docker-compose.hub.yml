@@ -1,14 +1,15 @@
 # Eva MOV FIBRA — stack Portainer usando imagens do Docker Hub
 #
-# Pré-requisito: publicar imagens (ver DEPLOY_PORTAINER.md):
-#   docker build -t SEU_USUARIO/iavendas-api:latest ./backend
-#   docker build -t SEU_USUARIO/iavendas-frontend:latest ./frontend
-#   docker push SEU_USUARIO/iavendas-api:latest
-#   docker push SEU_USUARIO/iavendas-frontend:latest
+# Imagens publicadas pela CI (push na main):
+#   edreimp/iavendas-backend:latest
+#   edreimp/iavendas-frontend:latest
 #
-# No Portainer, defina:
-#   DOCKERHUB_USER=seu_usuario
-#   IMAGE_TAG=latest
+# Variáveis mínimas no Portainer (Environment variables):
+#   POSTGRES_PASSWORD=senha-forte
+#   DOCKERHUB_USER=edreimp
+#
+# OpenAI, Chatwoot, n8n etc. → painel Eva (Config IA, Chatwoot, Ferramentas).
+# Ver DEPLOY_PORTAINER.md
 
 name: iavendas
 
@@ -34,21 +35,18 @@ services:
       retries: 10
 
   api:
-    image: ${DOCKERHUB_USER:?Defina DOCKERHUB_USER}/iavendas-api:${IMAGE_TAG:-latest}
+    image: ${DOCKERHUB_USER:?Defina DOCKERHUB_USER}/iavendas-backend:${IMAGE_TAG:-latest}
     container_name: iavendas-api
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-    env_file:
-      - .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-sofia}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sofia}
       DB_POOL_MIN_SIZE: ${DB_POOL_MIN_SIZE:-2}
       DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-20}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:8001}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://127.0.0.1:5180,http://localhost:5180}
       PLANS_PROVIDER: ${PLANS_PROVIDER:-postgres}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
     volumes:
       - iavendas_uploads:/app/uploads
     ports:
@@ -69,7 +67,7 @@ services:
       start_period: 20s
 
   frontend:
-    image: ${DOCKERHUB_USER}/iavendas-frontend:${IMAGE_TAG:-latest}
+    image: ${DOCKERHUB_USER:?Defina DOCKERHUB_USER}/iavendas-frontend:${IMAGE_TAG:-latest}
     container_name: iavendas-frontend
     restart: unless-stopped
     depends_on:
