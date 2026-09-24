@@ -22,6 +22,7 @@ def _norm(valor: str) -> str:
 def _norm_keep_sep(valor: str) -> str:
     """Normaliza mantendo vírgula / barra para split cidade,bairro."""
     t = _texto(valor).casefold()
+    t = t.replace("，", ",").replace(";", ",")
     for a, b in [
         ("á", "a"), ("à", "a"), ("ã", "a"), ("â", "a"),
         ("é", "e"), ("ê", "e"), ("í", "i"),
@@ -57,9 +58,22 @@ BAIRROS_CONHECIDOS = {
 }
 
 
+def _extrair_conhecido_em(texto: str, tipo: str) -> str | None:
+    """Busca cidade/bairro conhecido dentro de frase ('na cidade de santarem')."""
+    n = _norm(texto)
+    if not n:
+        return None
+    lista = CIDADES_CONHECIDAS if tipo == "cidade" else BAIRROS_CONHECIDOS
+    for item in sorted(lista, key=len, reverse=True):
+        if item == n or re.search(rf"\b{re.escape(item)}\b", n):
+            return _titulo(item)
+    return None
+
+
 def _limpar_nome_local(nome: str, *, preferir: str | None = None) -> str:
     """Remove ruído; preferir='cidade'|'bairro' escolhe lista conhecida."""
     n = _norm(nome)
+    n = re.sub(r"^(?:na\s+)?cidade\s+(?:de\s+)?", "", n).strip()
     n = re.sub(
         r"^(?:na\s+verdade|na\s+real|alias|ali+as|olha|tipo|entao|ai+|ah+|bom|"
         r"quero\s+dizer|digo|cidade|bairro)\s+",
@@ -98,6 +112,12 @@ def extrair_par_cidade_bairro(mensagem: str) -> dict[str, str] | None:
     'santarem, diamantino' / 'santarem - diamantino'
     'cidade santarem bairro diamantino'
     """
+    from app.geo_coords import extrair_gps_mensagem, parece_coordenada
+
+    bruto = _texto(mensagem)
+    if extrair_gps_mensagem(bruto) or parece_coordenada(bruto):
+        return None
+
     msg = _norm_keep_sep(mensagem)
     if not msg:
         return None
@@ -126,16 +146,49 @@ def extrair_par_cidade_bairro(mensagem: str) -> dict[str, str] | None:
             "papel": "par",
         }
 
-    # X, Y (dois lugares) — sem a palavra cidade
-    m = re.search(r"^([^,/]{2,40}?)\s*[,/\-]\s*([^,/]{2,40})$", msg)
+    # bairro X, na cidade de Y
+    m = re.search(
+        r"^(.+?)\s*,\s*(?:na\s+)?cidade\s+(?:de\s+)?(.+)$",
+        msg,
+    )
     if m:
-        esq = _limpar_nome_local(m.group(1), preferir="cidade")
-        dir_ = _limpar_nome_local(m.group(2), preferir="bairro")
-        # Se à esquerda é bairro conhecido e à direita cidade, inverte
-        if classificar_token_unico(m.group(1).strip()) == "bairro" and classificar_token_unico(
-            m.group(2).strip()
-        ) == "cidade":
+        bairro = _limpar_nome_local(m.group(1), preferir="bairro")
+        cidade = _limpar_nome_local(m.group(2), preferir="cidade")
+        if cidade and bairro and _norm(cidade) != _norm(bairro):
+            return {"cidade": cidade, "bairro": bairro, "papel": "par"}
+
+    # X, Y (dois lugares) — sem a palavra cidade
+    m = re.search(r"^([^,/]{2,60}?)\s*[,/\-]\s*([^,/]{2,60})$", msg)
+    if m:
+        esq_raw = m.group(1).strip()
+        dir_raw = m.group(2).strip()
+
+        # "diamantino, na cidade de santarem" (caso genérico)
+        m_cid = re.search(r"^(?:na\s+)?cidade\s+(?:de\s+)?(.+)$", _norm(dir_raw))
+        if m_cid and classificar_token_unico(esq_raw) == "bairro":
+            cidade = _limpar_nome_local(m_cid.group(1), preferir="cidade")
+            bairro = _limpar_nome_local(esq_raw, preferir="bairro")
+            if cidade and bairro and _norm(cidade) != _norm(bairro):
+                return {"cidade": cidade, "bairro": bairro, "papel": "par"}
+
+        esq = _limpar_nome_local(esq_raw, preferir="cidade")
+        dir_ = _limpar_nome_local(dir_raw, preferir="bairro")
+        esq_cls = classificar_token_unico(esq_raw) or classificar_token_unico(esq)
+        dir_cls = classificar_token_unico(dir_raw) or classificar_token_unico(dir_)
+
+        if esq_cls == "bairro" and not dir_cls:
+            cid = _extrair_conhecido_em(dir_raw, "cidade")
+            if cid:
+                esq, dir_ = cid, esq
+        elif esq_cls == "bairro" and dir_cls == "cidade":
             esq, dir_ = dir_, esq
+        elif esq_cls == "cidade" and dir_cls == "bairro":
+            pass
+        elif esq_cls == "bairro" and dir_cls != "cidade":
+            cid = _extrair_conhecido_em(dir_raw, "cidade")
+            if cid:
+                esq, dir_ = cid, esq
+
         if esq and dir_ and _norm(esq) != _norm(dir_):
             return {"cidade": esq, "bairro": dir_, "papel": "par"}
 
@@ -223,6 +276,11 @@ def aplicar_heuristica_localizacao(
 ) -> dict[str, Any]:
     """Ajusta dados.cidade/bairro. Retorna {limpar_cidade, ajustou}."""
     flags: dict[str, Any] = {"limpar_cidade": False, "ajustou": False}
+
+    from app.geo_coords import extrair_gps_mensagem
+
+    if extrair_gps_mensagem(mensagem):
+        return flags
 
     fase_ok = fase in {"inicio", "viabilidade", "sem_cobertura", "vendas"}
     aguardando_ok = aguardando in {"localizacao", "confirmar_bairro"}
