@@ -127,7 +127,9 @@ def _pos_viabilidade(
     caixa = viabilidade.get("caixa_fibra") or ""
 
     if viabilidade.get("viavel"):
-        if not bairro and not escape_geocoding:
+        # Pin GPS + IXC viável → não exige bairro (Google pode não devolver bairro)
+        tem_gps = bool(_parse_gps(localizacao_fixa))
+        if not bairro and not escape_geocoding and not tem_gps:
             return _resultado(
                 resultado="bairro_ambiguo",
                 tem_cobertura=False,
@@ -217,6 +219,7 @@ def checar_cobertura(
                 bairro=bairro_gps,
                 rua=rua_gps,
                 localizacao_fixa=loc_fixa,
+                escape_geocoding=bool(loc_fixa),
             )
 
         # ── Caminho endereço textual ──
