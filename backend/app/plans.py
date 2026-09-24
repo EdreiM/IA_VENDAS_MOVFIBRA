@@ -57,7 +57,7 @@ def _precos(texto: str) -> list[float]:
 
 INTENCOES_TAG: list[tuple[tuple[str, ...], str]] = [
     (("mais barato", "mais barata", "economico", "economica", "menor preco", "mais em conta", "o mais barato"), "mais_barato"),
-    (("mais caro", "premium", "top", "melhor plano", "mais completo", "mais rapido", "mais veloz"), "premium"),
+    (("mais caro", "premium", "top", "melhor plano", "mais completo", "mais rapido", "mais veloz", "mais forte", "plano forte", "mais potente", "mais velocidade"), "premium"),
     (("mesh", "repetidor", "roteador", "roteadores", "dois roteadores", "2 roteadores", "dois wifi"), "mesh"),
     (("telemedicina",), "telemedicina"),
     (("exitlag", "jogos", "jogo", "games", "games"), "exitlag"),

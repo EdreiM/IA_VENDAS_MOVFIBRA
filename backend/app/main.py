@@ -960,9 +960,6 @@ def admin_put_config_cobertura(
     _exigir_admin(authorization, x_admin_token)
     from app import coverage_config
 
-    provider = (body.coverage_provider or "mock").strip().lower()
-    if provider not in {"mock", "ixc"}:
-        raise HTTPException(status_code=400, detail="coverage_provider inválido (mock | ixc)")
     return coverage_config.salvar_config_cobertura(body.model_dump(), unidade_id=body.unidade_id)
 
 

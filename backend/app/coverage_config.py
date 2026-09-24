@@ -22,10 +22,12 @@ def _cfg(chave: str, default: str = "", *, unidade_id: int | None = None) -> str
 
 
 def resolver_coverage_provider(*, unidade_id: int | None = None) -> str:
+    """Produção usa sempre IXC; mock legado no painel é ignorado."""
     db = _cfg("coverage_provider", "", unidade_id=unidade_id).lower()
-    if db in {"mock", "ixc"}:
-        return db
-    return (get_settings().coverage_provider or "mock").strip().lower()
+    if db in {"ixc", "mock"}:
+        return "ixc"
+    env = (get_settings().coverage_provider or "ixc").strip().lower()
+    return "ixc" if env == "mock" else env
 
 
 def resolver_google_maps_api_key(*, unidade_id: int | None = None) -> str:
@@ -57,9 +59,7 @@ def resolver_ixc_password(*, unidade_id: int | None = None) -> str:
 
 
 def cobertura_configurada(*, unidade_id: int | None = None) -> bool:
-    """True se modo ixc e credenciais mínimas presentes."""
-    if resolver_coverage_provider(unidade_id=unidade_id) != "ixc":
-        return True
+    """True se credenciais IXC mínimas presentes."""
     return bool(
         resolver_ixc_user(unidade_id=unidade_id)
         and resolver_ixc_password(unidade_id=unidade_id)
@@ -71,21 +71,17 @@ def google_configurado(*, unidade_id: int | None = None) -> bool:
 
 
 def obter_config_cobertura(*, unidade_id: int | None = None) -> dict[str, Any]:
-    settings = get_settings()
     gkey = resolver_google_maps_api_key(unidade_id=unidade_id)
     ixc_user = resolver_ixc_user(unidade_id=unidade_id)
     ixc_pass = resolver_ixc_password(unidade_id=unidade_id)
-    provider = resolver_coverage_provider(unidade_id=unidade_id)
-
     faltando: list[str] = []
-    if provider == "ixc":
-        if not ixc_user or not ixc_pass:
-            faltando.append("IXC (usuário e senha)")
-        if not gkey:
-            faltando.append("Google Maps (endereço em texto)")
+    if not ixc_user or not ixc_pass:
+        faltando.append("IXC (usuário e senha)")
+    if not gkey:
+        faltando.append("Google Maps (endereço em texto)")
 
     return {
-        "coverage_provider": provider,
+        "coverage_provider": "ixc",
         "ixc_base_url": resolver_ixc_base_url(unidade_id=unidade_id),
         "google_maps_configured": bool(gkey),
         "google_maps_api_key_mask": _mask(gkey) if gkey else "",
@@ -95,20 +91,11 @@ def obter_config_cobertura(*, unidade_id: int | None = None) -> dict[str, Any]:
         "ixc_password_mask": _mask(ixc_pass) if ixc_pass else "",
         "cobertura_pronta": not faltando,
         "faltando": faltando,
-        "env_fallback": {
-            "coverage_provider": settings.coverage_provider,
-            "ixc_base_url": settings.ixc_base_url or "",
-            "google_maps_configured": bool(settings.google_maps_api_key),
-            "ixc_configured": bool(settings.ixc_user and settings.ixc_password),
-        },
     }
 
 
 def salvar_config_cobertura(dados: dict[str, Any], *, unidade_id: int | None = None) -> dict[str, Any]:
-    provider = str(dados.get("coverage_provider") or "mock").strip().lower()
-    if provider not in {"mock", "ixc"}:
-        provider = "mock"
-    admin_store.set_config("coverage_provider", provider, unidade_id=unidade_id)
+    admin_store.set_config("coverage_provider", "ixc", unidade_id=unidade_id)
 
     base = str(dados.get("ixc_base_url") or "").strip().rstrip("/")
     if base:

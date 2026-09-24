@@ -160,7 +160,37 @@ PEDIDOS_LISTA_COMPLETA = {
     "quais planos",
     "lista de planos",
     "me mostra os planos",
+    "quais os outros",
+    "quais as outras",
+    "mostra as outras opcoes",
+    "mostre as outras opcoes",
+    "mostra os outros",
+    "mostre os outros",
+    "ver as outras opcoes",
+    "ver outras opcoes",
+    "quais sao as outras",
+    "me mostra as outras",
+    "me mostre as outras",
+    "todas as opcoes",
+    "mostra todas as opcoes",
 }
+
+_FRAGMENTS_LISTA_COMPLETA = (
+    "quais os outros",
+    "quais as outras",
+    "mostra as outras opcoes",
+    "mostre as outras opcoes",
+    "mostra os outros",
+    "mostre os outros",
+    "ver as outras opcoes",
+    "ver outras opcoes",
+    "quais sao as outras",
+    "me mostra as outras",
+    "me mostre as outras",
+    "todas as opcoes",
+    "mostra todas",
+    "lista todas",
+)
 
 PERGUNTAS_PRECO = {
     "quanto e",
@@ -216,6 +246,9 @@ INTENCAO_PLANO_KEYWORDS = (
     "mais velocidade",
     "mais rapido",
     "mais completo",
+    "mais forte",
+    "plano forte",
+    "mais potente",
     "telemedicina",
     "exitlag",
     "dois wifi",
@@ -335,6 +368,16 @@ def normalizar_texto(valor: str) -> str:
     t = re.sub(r"[\]\[\)\(\}\{]+", " ", t)
     t = re.sub(r"[!?.,;:]+", " ", t)
     return re.sub(r"\s+", " ", t).strip()
+
+
+def eh_pedido_lista_completa_planos(msg: str) -> bool:
+    """Cliente quer ver o catálogo inteiro, não só uma sugestão."""
+    n = normalizar_texto(msg)
+    if not n:
+        return False
+    if any(p in n for p in PEDIDOS_LISTA_COMPLETA):
+        return True
+    return any(p in n for p in _FRAGMENTS_LISTA_COMPLETA)
 
 
 # Pergunta informativa sobre mudança de endereço pós-contratação (≠ trocar cobertura agora)
@@ -1263,12 +1306,14 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         dados.plano = ""
         pergunta = ""
 
-    if fase == "vendas" and any(p in msg for p in PEDIDOS_LISTAR_PLANOS):
+    if fase == "vendas" and (
+        any(p in msg for p in PEDIDOS_LISTAR_PLANOS) or eh_pedido_lista_completa_planos(msg)
+    ):
         eventos = [e for e in eventos if e not in {Evento.PLANO_INFORMADO.value, Evento.OUTRO.value, Evento.PERGUNTA.value}]
         if Evento.PEDIU_TROCAR_PLANO.value not in eventos:
             eventos.append(Evento.PEDIU_TROCAR_PLANO.value)
         # lista completa → marca PERGUNTA para a SM disparar LISTAR_TODOS
-        if any(p in msg for p in PEDIDOS_LISTA_COMPLETA):
+        if eh_pedido_lista_completa_planos(msg):
             if Evento.PERGUNTA.value not in eventos:
                 eventos.append(Evento.PERGUNTA.value)
         elif Evento.PERGUNTA.value not in eventos and any(

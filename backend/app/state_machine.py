@@ -1223,10 +1223,10 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
         )
 
     # Trocar plano sem citar qual — ou listar TODOS os planos
-    from app.parser import PEDIDOS_LISTA_COMPLETA, normalizar_texto
+    from app.parser import eh_pedido_lista_completa_planos, normalizar_texto
 
     msg_n = normalizar_texto(str(resolucao.get("mensagem") or ""))
-    pediu_lista_completa = any(p in msg_n for p in PEDIDOS_LISTA_COMPLETA)
+    pediu_lista_completa = eh_pedido_lista_completa_planos(msg_n)
     pediu_listar_todos = (
         plano.get("pediu_troca_declarada")
         and (flags.get("tem_pergunta") or pediu_lista_completa)

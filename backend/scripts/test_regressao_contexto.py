@@ -18,11 +18,13 @@ from app.models import Evento
 from app.parser import (
     eh_aceite_termos_explicito,
     eh_confirmacao,
+    eh_pedido_lista_completa_planos,
     eh_pergunta_cobertura_informativa,
     eh_pergunta_mudanca_endereco,
     parse_interpretacao,
     tem_duvida_informativa,
 )
+from app.plans import resolver_plano
 from app.response import gerar_resposta
 from app.resolver import resolver
 from app.state_machine import decidir
@@ -838,8 +840,53 @@ def test_cadastro_nao_repete_nem_troca_nome_pela_rua() -> None:
     _assert("número" in msg.casefold() or "numero" in msg.casefold(), msg)
 
 
+def test_pedido_lista_completa_planos() -> None:
+    for msg in (
+        "Quais os outros",
+        "Mostra as outras opções",
+        "me mostre todos",
+    ):
+        _assert(eh_pedido_lista_completa_planos(msg), msg)
+    raw = _raw({"eventos": [], "dados": {}, "confianca": 0.9})
+    estado = {"fase": "vendas", "aguardando": "confirmacao_plano", "tem_cobertura": True}
+    for msg in ("Quais os outros", "Mostra as outras opções"):
+        i = parse_interpretacao(raw, msg, estado)
+        _assert(Evento.PEDIU_TROCAR_PLANO.value in i.eventos, f"{msg} → PEDIU_TROCAR_PLANO")
+        _assert(Evento.PERGUNTA.value in i.eventos, f"{msg} → PERGUNTA")
+
+
+def test_mais_forte_resolve_premium() -> None:
+    planos = [
+        {"id": 1, "nome": "ESSENCIAL", "valor": 129.0, "tags": []},
+        {"id": 2, "nome": "SUPER", "valor": 139.0, "tags": []},
+        {"id": 3, "nome": "INFINITY", "valor": 189.0, "tags": ["premium"]},
+    ]
+    r = resolver_plano("quero plano mais forte", planos, plano_atual_id=2)
+    _assert(r.get("evento") == "PLANO_RESOLVIDO", r)
+    _assert(r["plano"]["nome"] == "INFINITY", r)
+
+
+def test_listar_todos_quando_pediu_outras_opcoes() -> None:
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "tem_cobertura": True,
+        "plano_em_negociacao_id": 2,
+        "plano_em_negociacao": "SUPER",
+    }
+    raw = _raw({"eventos": [], "dados": {}, "confianca": 0.9})
+    i = parse_interpretacao(raw, "Mostra as outras opções", estado)
+    res = resolver(estado, i)
+    res["mensagem"] = "Mostra as outras opções"
+    dec = decidir(estado, res)
+    _assert(dec.acao == "LISTAR_TODOS_PLANOS", dec.acao)
+
+
 def main() -> None:
     tests = [
+        test_pedido_lista_completa_planos,
+        test_mais_forte_resolve_premium,
+        test_listar_todos_quando_pediu_outras_opcoes,
         test_confirmacoes_typo,
         test_cadastro_telefone_mais_pergunta,
         test_data_nascimento_nao_preenche_rua_nem_numero,

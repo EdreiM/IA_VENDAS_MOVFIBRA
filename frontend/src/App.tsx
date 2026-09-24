@@ -91,8 +91,8 @@ const GUIA_TESTE: { titulo: string; dica: string; msgs: string[] }[] = [
   },
   {
     titulo: "2. Localização",
-    dica: "Informe cidade e bairro (cobertura mock/IXC conforme .env).",
-    msgs: ["Santarém, Centro", "Belém, Batista Campos"],
+    dica: "Informe cidade e bairro — consulta real IXC + Google Maps.",
+    msgs: ["Santarém, Diamantino"],
   },
   {
     titulo: "3. Planos",
@@ -237,7 +237,7 @@ export default function App() {
   const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([
     {
       who: "sistema",
-      text: "Guia de teste da Eva. Use as sugestões à direita ou digite livremente. Reinicie a conversa antes de um fluxo novo.",
+      text: "Simulador da Eva. Use as sugestões à direita ou digite livremente. Reinicie a conversa antes de um fluxo novo.",
     },
   ]);
   const [chatEstado, setChatEstado] = useState<string>("—");
@@ -822,6 +822,7 @@ export default function App() {
     try {
       const saved = await saveConfigCobertura({
         ...cobForm,
+        coverage_provider: "ixc",
         unidade_id: uid ?? null,
       });
       setCobMeta({
@@ -1225,8 +1226,8 @@ export default function App() {
                 <div className="guide-block">
                   <strong>Dica</strong>
                   <small>
-                    Preencha <code>conversation_id</code> (Chatwoot) para testar cadastro, termos e
-                    agendamento via n8n. Com cobertura em mock, qualquer cidade/bairro costuma passar.
+                    Preencha <code>conversation_id</code> (Chatwoot) para simular cadastro, termos e
+                    agendamento via n8n. A cobertura usa IXC real — informe endereço com viabilidade.
                   </small>
                 </div>
               </aside>
@@ -2090,7 +2091,6 @@ export default function App() {
                   onChange={(e) => setIaForm({ ...iaForm, llm_provider: e.target.value })}
                 >
                   <option value="openai">OpenAI</option>
-                  <option value="ollama">Ollama</option>
                 </select>
               </label>
               <label>
@@ -2160,7 +2160,7 @@ export default function App() {
               <div className="config-box span2">
                 <strong>RAG / conhecimento</strong>
                 <small className="field-hint">
-                  A Eva consulta este webhook do painel (não depende mais só do .env).
+                  A Eva consulta este webhook configurado no painel.
                 </small>
                 <label>
                   Modo RAG
@@ -2168,8 +2168,7 @@ export default function App() {
                     value={iaForm.rag_provider}
                     onChange={(e) => setIaForm({ ...iaForm, rag_provider: e.target.value })}
                   >
-                    <option value="webhook">Webhook n8n (produção)</option>
-                    <option value="mock">Mock (simulação)</option>
+                    <option value="webhook">Webhook n8n</option>
                     <option value="none">Desligada</option>
                   </select>
                 </label>
@@ -2320,14 +2319,14 @@ export default function App() {
                   value={cwForm.inbound_mode}
                   onChange={(e) => setCwForm({ ...cwForm, inbound_mode: e.target.value })}
                 >
-                  <option value="allowlist">Allowlist (teste)</option>
-                  <option value="open">Aberto (produção)</option>
+                  <option value="allowlist">Allowlist (números autorizados)</option>
+                  <option value="open">Aberto</option>
                   <option value="closed">Fechado</option>
                 </select>
               </label>
 
               <label className="span2">
-                Allowlist (telefones de teste, CSV)
+                Allowlist (telefones autorizados, CSV)
                 <input
                   value={cwForm.allowlist_phones}
                   onChange={(e) => setCwForm({ ...cwForm, allowlist_phones: e.target.value })}
@@ -2423,10 +2422,7 @@ export default function App() {
               <strong>Status</strong>
               <ul className="muted" style={{ margin: "0.5rem 0 0", paddingLeft: "1.2rem" }}>
                 <li>
-                  Modo:{" "}
-                  <span className="badge badge-com_ia">
-                    {cobForm.coverage_provider === "ixc" ? "IXC (produção)" : "Mock (teste)"}
-                  </span>
+                  Modo: <span className="badge badge-com_ia">IXC + Google Maps</span>
                 </li>
                 <li>
                   Pronto para atender:{" "}
@@ -2443,20 +2439,7 @@ export default function App() {
             </div>
 
             <form className="form-grid config-ia" onSubmit={saveCobertura}>
-              <label>
-                Provedor de cobertura
-                <select
-                  value={cobForm.coverage_provider}
-                  onChange={(e) =>
-                    setCobForm({ ...cobForm, coverage_provider: e.target.value })
-                  }
-                >
-                  <option value="ixc">IXC + Google (produção)</option>
-                  <option value="mock">Mock (dev / teste local)</option>
-                </select>
-              </label>
-
-              <label>
+              <label className="span2">
                 URL base IXC
                 <input
                   value={cobForm.ixc_base_url}

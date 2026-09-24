@@ -569,14 +569,12 @@ def apresentar_planos_como_sugestao(
             "algo mais em conta ou com mais velocidade?"
         )
 
+    intro = "Claro! O que mais tem sido escolhido pelos clientes é este:"
+    if total_planos > 1:
+        intro += " Se quiser, te mostro todas as opções disponíveis."
     return formatar_oferta_plano(
         plano,
-        intro="Claro! O que mais tem sido escolhido pelos clientes é este:"
-        + (
-            f" (temos outras {total_planos - 1} opções se quiser comparar)"
-            if total_planos > 2
-            else (" (tem outra opção também)" if total_planos == 2 else "")
-        ),
+        intro=intro,
         cta="Quer esse, ou prefere algo mais em conta / com mais velocidade?",
     )
 
