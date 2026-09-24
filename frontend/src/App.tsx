@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Conversa,
   Ferramenta,
@@ -250,6 +250,9 @@ export default function App() {
   const [sel, setSel] = useState<Conversa | null>(null);
   const [turnos, setTurnos] = useState<unknown[]>([]);
   const [mensagensConv, setMensagensConv] = useState<MensagemHistorico[]>([]);
+  const selIdRef = useRef<string | null>(null);
+  const convMsgsRef = useRef<HTMLDivElement>(null);
+  const prevMsgCountRef = useRef(0);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [clienteBusca, setClienteBusca] = useState("");
   const [selCliente, setSelCliente] = useState<Cliente | null>(null);
@@ -396,6 +399,40 @@ export default function App() {
       status: statusFiltro || undefined,
     });
     setConversas(c.items || []);
+  }, [uid, statusFiltro]);
+
+  const pollConversas = useCallback(async () => {
+    try {
+      const c = await fetchConversas(60, {
+        unidade_id: uid,
+        status: statusFiltro || undefined,
+      });
+      const items = c.items || [];
+      setConversas(items);
+
+      const activeId = selIdRef.current;
+      if (activeId) {
+        const atualizada = items.find((x) => x.id_cliente === activeId);
+        if (atualizada) {
+          setSel((prev) => (prev ? { ...prev, ...atualizada } : atualizada));
+        }
+        const m = await fetchMensagensCliente(activeId, 80);
+        const msgs = m.items || [];
+        setMensagensConv((prev) => {
+          if (
+            prev.length === msgs.length &&
+            prev.length > 0 &&
+            prev[prev.length - 1]?.id === msgs[msgs.length - 1]?.id
+          ) {
+            return prev;
+          }
+          if (prev.length === 0 && msgs.length === 0) return prev;
+          return msgs;
+        });
+      }
+    } catch {
+      /* polling silencioso */
+    }
   }, [uid, statusFiltro]);
 
   const refreshClientes = useCallback(async () => {
@@ -571,6 +608,37 @@ export default function App() {
   useEffect(() => {
     if (authed) void refreshAll();
   }, [authed, refreshAll]);
+
+  useEffect(() => {
+    selIdRef.current = sel?.id_cliente ?? null;
+  }, [sel?.id_cliente]);
+
+  useEffect(() => {
+    if (!authed || tab !== "conversas") return;
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled || document.hidden) return;
+      void pollConversas();
+    };
+    const onVisible = () => {
+      if (!cancelled && !document.hidden) void pollConversas();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const id = window.setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [authed, tab, pollConversas]);
+
+  useEffect(() => {
+    if (mensagensConv.length > prevMsgCountRef.current) {
+      const el = convMsgsRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+    prevMsgCountRef.current = mensagensConv.length;
+  }, [mensagensConv]);
 
   const maxFunil = useMemo(
     () => Math.max(1, ...(funil?.etapas.map((e) => e.quantidade) || [1])),
@@ -1370,7 +1438,7 @@ export default function App() {
                       </div>
                     </header>
 
-                    <div className="conv-messages">
+                    <div className="conv-messages" ref={convMsgsRef}>
                       {mensagensConv.length === 0 ? (
                         <p className="muted conv-chat-empty">Nenhuma mensagem registrada ainda.</p>
                       ) : (
