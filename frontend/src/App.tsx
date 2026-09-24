@@ -18,10 +18,14 @@ import {
   fetchAgents,
   fetchConfigIa,
   fetchConfigChatwoot,
+  fetchConfigCobertura,
   fetchExemploPayloadChatwoot,
+  CoberturaTestResult,
   fetchInboxes,
   saveConfigIa,
   saveConfigChatwoot,
+  saveConfigCobertura,
+  testCobertura,
   testParseChatwoot,
   ChatwootParseResult,
   fetchCliente,
@@ -66,6 +70,7 @@ type Tab =
   | "promocoes"
   | "config"
   | "integracao"
+  | "cobertura"
   | "ferramentas"
   | "unidades";
 
@@ -194,6 +199,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "promocoes", label: "Promoções" },
   { id: "config", label: "Config IA" },
   { id: "integracao", label: "Chatwoot" },
+  { id: "cobertura", label: "Viabilidade" },
   { id: "ferramentas", label: "Ferramentas" },
   { id: "unidades", label: "Unidades" },
 ];
@@ -317,6 +323,30 @@ export default function App() {
   const [inboxes, setInboxes] = useState<Option[]>([]);
   const [cwTestPayload, setCwTestPayload] = useState("");
   const [cwTestResult, setCwTestResult] = useState<ChatwootParseResult | null>(null);
+
+  const [cobForm, setCobForm] = useState({
+    coverage_provider: "ixc",
+    google_maps_api_key: "",
+    ixc_base_url: "https://ixc.mov.pro.br/webservice/v1",
+    ixc_user: "",
+    ixc_password: "",
+  });
+  const [cobMeta, setCobMeta] = useState({
+    google_mask: "",
+    google_configured: false,
+    ixc_user_mask: "",
+    ixc_user_configured: false,
+    ixc_pass_configured: false,
+    ixc_pass_mask: "",
+    pronta: false,
+    faltando: [] as string[],
+  });
+  const [cobTest, setCobTest] = useState({
+    cidade: "Santarém",
+    bairro: "Diamantino",
+    localizacao_fixa: "-2.4494913,-54.7120315",
+  });
+  const [cobTestResult, setCobTestResult] = useState<CoberturaTestResult | null>(null);
 
   const [tools, setTools] = useState<Ferramenta[]>([]);
   const [toolForm, setToolForm] = useState(emptyTool());
@@ -454,6 +484,27 @@ export default function App() {
     }
   }, [uid]);
 
+  const refreshCobertura = useCallback(async () => {
+    const cfg = await fetchConfigCobertura(uid);
+    setCobForm({
+      coverage_provider: cfg.coverage_provider || "ixc",
+      google_maps_api_key: "",
+      ixc_base_url: cfg.ixc_base_url || "https://ixc.mov.pro.br/webservice/v1",
+      ixc_user: "",
+      ixc_password: "",
+    });
+    setCobMeta({
+      google_mask: cfg.google_maps_api_key_mask || "",
+      google_configured: !!cfg.google_maps_configured,
+      ixc_user_mask: cfg.ixc_user_mask || "",
+      ixc_user_configured: !!cfg.ixc_configured,
+      ixc_pass_configured: !!cfg.ixc_password_configured,
+      ixc_pass_mask: cfg.ixc_password_mask || "",
+      pronta: !!cfg.cobertura_pronta,
+      faltando: cfg.faltando || [],
+    });
+  }, [uid]);
+
   const refreshAll = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -477,6 +528,7 @@ export default function App() {
       if (tab === "promocoes") await refreshPromos();
       if (tab === "config") await refreshConfig();
       if (tab === "integracao") await refreshIntegracao();
+      if (tab === "cobertura") await refreshCobertura();
       if (tab === "ferramentas") await refreshTools();
     } catch (err) {
       setApiOk(false);
@@ -494,6 +546,7 @@ export default function App() {
     refreshPromos,
     refreshConfig,
     refreshIntegracao,
+    refreshCobertura,
     refreshTools,
   ]);
 
@@ -758,6 +811,50 @@ export default function App() {
       const payload = JSON.parse(cwTestPayload) as Record<string, unknown>;
       const r = await testParseChatwoot(payload);
       setCwTestResult(r);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function saveCobertura(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    try {
+      const saved = await saveConfigCobertura({
+        ...cobForm,
+        unidade_id: uid ?? null,
+      });
+      setCobMeta({
+        google_mask: saved.google_maps_api_key_mask || "",
+        google_configured: !!saved.google_maps_configured,
+        ixc_user_mask: saved.ixc_user_mask || "",
+        ixc_user_configured: !!saved.ixc_configured,
+        ixc_pass_configured: !!saved.ixc_password_configured,
+        ixc_pass_mask: saved.ixc_password_mask || "",
+        pronta: !!saved.cobertura_pronta,
+        faltando: saved.faltando || [],
+      });
+      setCobForm((f) => ({
+        ...f,
+        google_maps_api_key: "",
+        ixc_user: "",
+        ixc_password: "",
+      }));
+      setOkMsg("Viabilidade salva");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function runTestCobertura() {
+    setError("");
+    setCobTestResult(null);
+    try {
+      const r = await testCobertura({
+        ...cobTest,
+        unidade_id: uid ?? null,
+      });
+      setCobTestResult(r);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -2307,6 +2404,172 @@ export default function App() {
                   }}
                 >
                   {JSON.stringify(cwTestResult, null, 2)}
+                </pre>
+              )}
+            </div>
+          </section>
+        )}
+
+        {tab === "cobertura" && (
+          <section className="panel">
+            <h1>Viabilidade / Cobertura</h1>
+            <p className="muted">
+              Credenciais para consultar cobertura: <strong>Google Maps</strong> (endereço em texto) e{" "}
+              <strong>IXC</strong> (viabilidade técnica). Pin GPS usa IXC direto; Google só enriquece
+              cidade/bairro quando configurado.
+            </p>
+
+            <div className="config-box" style={{ marginBottom: "1rem" }}>
+              <strong>Status</strong>
+              <ul className="muted" style={{ margin: "0.5rem 0 0", paddingLeft: "1.2rem" }}>
+                <li>
+                  Modo:{" "}
+                  <span className="badge badge-com_ia">
+                    {cobForm.coverage_provider === "ixc" ? "IXC (produção)" : "Mock (teste)"}
+                  </span>
+                </li>
+                <li>
+                  Pronto para atender:{" "}
+                  {cobMeta.pronta ? (
+                    <span className="badge badge-com_ia">Sim</span>
+                  ) : (
+                    <span className="badge badge-finalizado">Falta configurar</span>
+                  )}
+                </li>
+                {!cobMeta.pronta && cobMeta.faltando.length > 0 && (
+                  <li>Faltando: {cobMeta.faltando.join(", ")}</li>
+                )}
+              </ul>
+            </div>
+
+            <form className="form-grid config-ia" onSubmit={saveCobertura}>
+              <label>
+                Provedor de cobertura
+                <select
+                  value={cobForm.coverage_provider}
+                  onChange={(e) =>
+                    setCobForm({ ...cobForm, coverage_provider: e.target.value })
+                  }
+                >
+                  <option value="ixc">IXC + Google (produção)</option>
+                  <option value="mock">Mock (dev / teste local)</option>
+                </select>
+              </label>
+
+              <label>
+                URL base IXC
+                <input
+                  value={cobForm.ixc_base_url}
+                  onChange={(e) => setCobForm({ ...cobForm, ixc_base_url: e.target.value })}
+                  placeholder="https://ixc.mov.pro.br/webservice/v1"
+                />
+              </label>
+
+              <label>
+                Usuário IXC
+                {cobMeta.ixc_user_configured ? (
+                  <span className="key-mask"> (atual: {cobMeta.ixc_user_mask})</span>
+                ) : (
+                  <span className="key-mask"> (não configurado)</span>
+                )}
+                <input
+                  type="text"
+                  value={cobForm.ixc_user}
+                  onChange={(e) => setCobForm({ ...cobForm, ixc_user: e.target.value })}
+                  placeholder="Usuário API IXC"
+                  autoComplete="off"
+                />
+              </label>
+
+              <label>
+                Senha IXC
+                {cobMeta.ixc_pass_configured ? (
+                  <span className="key-mask"> (atual: {cobMeta.ixc_pass_mask})</span>
+                ) : (
+                  <span className="key-mask"> (não configurada)</span>
+                )}
+                <input
+                  type="password"
+                  value={cobForm.ixc_password}
+                  onChange={(e) => setCobForm({ ...cobForm, ixc_password: e.target.value })}
+                  placeholder="Cole nova senha para rotacionar"
+                  autoComplete="off"
+                />
+              </label>
+
+              <label className="span2">
+                Google Maps API Key
+                {cobMeta.google_configured ? (
+                  <span className="key-mask"> (atual: {cobMeta.google_mask})</span>
+                ) : (
+                  <span className="key-mask"> (não configurada)</span>
+                )}
+                <input
+                  type="password"
+                  value={cobForm.google_maps_api_key}
+                  onChange={(e) =>
+                    setCobForm({ ...cobForm, google_maps_api_key: e.target.value })
+                  }
+                  placeholder="Chave Geocoding API"
+                  autoComplete="off"
+                />
+                <small className="field-hint">
+                  Necessária quando o cliente informa cidade/bairro em texto. Pin GPS funciona só com
+                  IXC.
+                </small>
+              </label>
+
+              <div className="actions span2">
+                <button type="submit">Salvar</button>
+              </div>
+            </form>
+
+            <div className="config-box" style={{ marginTop: "1.5rem" }}>
+              <strong>Testar consulta</strong>
+              <p className="muted" style={{ marginTop: "0.35rem" }}>
+                Usa as credenciais salvas — não passa pelo LLM.
+              </p>
+              <div className="form-grid config-ia" style={{ marginTop: "0.75rem" }}>
+                <label>
+                  Cidade
+                  <input
+                    value={cobTest.cidade}
+                    onChange={(e) => setCobTest({ ...cobTest, cidade: e.target.value })}
+                  />
+                </label>
+                <label>
+                  Bairro
+                  <input
+                    value={cobTest.bairro}
+                    onChange={(e) => setCobTest({ ...cobTest, bairro: e.target.value })}
+                  />
+                </label>
+                <label className="span2">
+                  GPS (opcional — lat,lng)
+                  <input
+                    value={cobTest.localizacao_fixa}
+                    onChange={(e) =>
+                      setCobTest({ ...cobTest, localizacao_fixa: e.target.value })
+                    }
+                    placeholder="-2.4494913,-54.7120315"
+                  />
+                </label>
+              </div>
+              <button type="button" className="secondary" onClick={() => void runTestCobertura()}>
+                Testar viabilidade
+              </button>
+              {cobTestResult && (
+                <pre
+                  style={{
+                    marginTop: "0.75rem",
+                    padding: "0.75rem",
+                    background: "var(--surface-2, #1a1a1a)",
+                    borderRadius: "6px",
+                    overflow: "auto",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  {JSON.stringify(cobTestResult.resultado, null, 2)}
                 </pre>
               )}
             </div>

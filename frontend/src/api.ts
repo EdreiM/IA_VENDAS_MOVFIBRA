@@ -383,6 +383,48 @@ export const testParseChatwoot = (payload: Record<string, unknown>) =>
     body: JSON.stringify({ payload }),
   });
 
+export type ConfigCobertura = {
+  coverage_provider: string;
+  ixc_base_url: string;
+  google_maps_configured: boolean;
+  google_maps_api_key_mask: string;
+  ixc_configured: boolean;
+  ixc_user_mask: string;
+  ixc_password_configured: boolean;
+  ixc_password_mask: string;
+  cobertura_pronta: boolean;
+  faltando: string[];
+};
+
+export type CoberturaTestResult = {
+  ok: boolean;
+  resultado: {
+    resultado: string;
+    tem_cobertura: boolean;
+    motivo?: string;
+    cidade_normalizada?: string;
+    bairro_normalizado?: string;
+    caixa_fibra?: string;
+  };
+};
+
+export const fetchConfigCobertura = (unidade_id?: number) => {
+  const q = unidade_id ? `?unidade_id=${unidade_id}` : "";
+  return api<ConfigCobertura>(`/admin/config/cobertura${q}`);
+};
+
+export const saveConfigCobertura = (body: Record<string, unknown>) =>
+  api<ConfigCobertura>("/admin/config/cobertura", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+
+export const testCobertura = (body: Record<string, unknown>) =>
+  api<CoberturaTestResult>("/admin/config/cobertura/test", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
 export const fetchInboxes = () =>
   api<{ ok: boolean; data?: unknown; motivo?: string }>("/chatwoot/inboxes");
 

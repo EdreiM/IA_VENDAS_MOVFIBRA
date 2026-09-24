@@ -31,6 +31,11 @@ services:
       PLANS_PROVIDER: postgres
       ADMIN_EMAIL: admin@movfibra.com
       ADMIN_PASSWORD: TROQUE_SENHA_ADMIN
+      # Viabilidade (Google + IXC) — obrigatório para cobertura real
+      COVERAGE_PROVIDER: ixc
+      GOOGLE_MAPS_API_KEY: ""
+      IXC_USER: ""
+      IXC_PASSWORD: ""
     volumes:
       - iavendas_uploads:/app/uploads
     ports:

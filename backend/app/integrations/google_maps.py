@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from app.config import get_settings
+from app.coverage_config import resolver_google_maps_api_key
 
 
 def _get_by_type(components: list[dict], tipos: list[str]) -> str | None:
@@ -53,12 +53,12 @@ def extrair_endereco_gps(results: list[dict]) -> dict[str, Any]:
 
 
 def reverse_geocode(lat: float, lng: float) -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.google_maps_api_key:
-        raise RuntimeError("GOOGLE_MAPS_API_KEY não configurada")
+    api_key = resolver_google_maps_api_key()
+    if not api_key:
+        return {"ok": False, "status": "MISSING_API_KEY", "results": []}
 
     url = "https://maps.googleapis.com/maps/api/geocode/json"
-    params = {"latlng": f"{lat},{lng}", "key": settings.google_maps_api_key}
+    params = {"latlng": f"{lat},{lng}", "key": api_key}
 
     with httpx.Client(timeout=30) as client:
         resp = client.get(url, params=params)
@@ -75,12 +75,12 @@ def reverse_geocode(lat: float, lng: float) -> dict[str, Any]:
 
 def geocode_endereco(endereco: str) -> dict[str, Any]:
     """Endereço textual → lat/lng."""
-    settings = get_settings()
-    if not settings.google_maps_api_key:
-        raise RuntimeError("GOOGLE_MAPS_API_KEY não configurada")
+    api_key = resolver_google_maps_api_key()
+    if not api_key:
+        return {"ok": False, "status": "MISSING_API_KEY", "results": []}
 
     url = "https://maps.googleapis.com/maps/api/geocode/json"
-    params = {"address": f"{endereco}-PA", "key": settings.google_maps_api_key}
+    params = {"address": f"{endereco}-PA", "key": api_key}
 
     with httpx.Client(timeout=30) as client:
         resp = client.get(url, params=params)

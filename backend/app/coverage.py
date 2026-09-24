@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.config import get_settings
+from app.coverage_config import resolver_coverage_provider, resolver_google_maps_api_key
 from app.integrations.google_maps import geocode_endereco, montar_endereco, reverse_geocode
 from app.integrations.ixc import consultar_viabilidade
 
@@ -178,8 +178,7 @@ def checar_cobertura(
     """
     _ = id_cliente  # reservado para logs/alertas futuros
 
-    settings = get_settings()
-    if settings.coverage_provider.lower() != "ixc":
+    if resolver_coverage_provider().lower() != "ixc":
         return _checar_mock(cidade, bairro)
 
     gps = _parse_gps(localizacao_fixa)
@@ -188,26 +187,35 @@ def checar_cobertura(
         # ── Caminho GPS (WhatsApp location pin) ──
         if gps:
             lat, lng = gps
-            geo = reverse_geocode(lat, lng)
-            if not geo.get("ok"):
-                _notificar_erro(f"Google reverse geocode: {geo.get('status')}")
-                return _resultado(
-                    resultado="erro_cobertura",
-                    tem_cobertura=False,
-                    motivo=f"Erro ao interpretar GPS: {geo.get('status')}",
-                )
-
-            cidade = geo.get("cidade") or cidade
-            bairro = geo.get("bairro") or bairro
-            rua = geo.get("rua") or rua
             loc_fixa = localizacao_fixa
+            cidade_gps = cidade
+            bairro_gps = bairro
+            rua_gps = rua
+
+            # Google só enriquece labels — IXC usa lat/lng direto (pin já tem coordenadas)
+            if resolver_google_maps_api_key():
+                try:
+                    geo = reverse_geocode(lat, lng)
+                    if geo.get("ok"):
+                        cidade_gps = geo.get("cidade") or cidade_gps
+                        bairro_gps = geo.get("bairro") or bairro_gps
+                        rua_gps = geo.get("rua") or rua_gps
+                    else:
+                        logger.warning(
+                            "Reverse geocode GPS falhou (%s) — consulta IXC direto",
+                            geo.get("status"),
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Reverse geocode GPS indisponível: %s", exc)
+            else:
+                logger.warning("GOOGLE_MAPS_API_KEY ausente — consulta IXC direto com GPS")
 
             viab = consultar_viabilidade(lat, lng)
             return _pos_viabilidade(
                 viabilidade=viab,
-                cidade=cidade,
-                bairro=bairro,
-                rua=rua,
+                cidade=cidade_gps,
+                bairro=bairro_gps,
+                rua=rua_gps,
                 localizacao_fixa=loc_fixa,
             )
 
@@ -229,13 +237,18 @@ def checar_cobertura(
             )
 
         if not geo.get("ok"):
-            _notificar_erro(f"Google geocode: {geo.get('status')}")
+            status = geo.get("status") or "ERRO"
+            if status == "MISSING_API_KEY":
+                motivo = "GOOGLE_MAPS_API_KEY não configurada no serviço api"
+            else:
+                motivo = f"Endereço não geocodificado: {status}"
+            _notificar_erro(f"Google geocode: {status}")
             return _resultado(
                 resultado="erro_cobertura",
                 tem_cobertura=False,
                 cidade=cidade,
                 bairro=bairro,
-                motivo=f"Endereço não geocodificado: {geo.get('status')}",
+                motivo=motivo,
             )
 
         lat = geo["latitude"]

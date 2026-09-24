@@ -111,6 +111,22 @@ class ConfigChatwootIn(BaseModel):
     unidade_id: int | None = None
 
 
+class ConfigCoberturaIn(BaseModel):
+    coverage_provider: str = "ixc"  # mock | ixc
+    google_maps_api_key: str = ""
+    ixc_base_url: str = ""
+    ixc_user: str = ""
+    ixc_password: str = ""
+    unidade_id: int | None = None
+
+
+class CoberturaTestIn(BaseModel):
+    cidade: str = "Santarém"
+    bairro: str = "Diamantino"
+    localizacao_fixa: str = ""
+    unidade_id: int | None = None
+
+
 class LoginIn(BaseModel):
     email: str
     password: str
@@ -921,6 +937,52 @@ def admin_put_config_chatwoot(
     if mode not in {"closed", "allowlist", "open"}:
         raise HTTPException(status_code=400, detail="inbound_mode inválido")
     return chatwoot_config.salvar_config_chatwoot(body.model_dump(), unidade_id=body.unidade_id)
+
+
+@app.get("/admin/config/cobertura")
+def admin_get_config_cobertura(
+    unidade_id: int | None = None,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    _exigir_admin(authorization, x_admin_token)
+    from app import coverage_config
+
+    return coverage_config.obter_config_cobertura(unidade_id=unidade_id)
+
+
+@app.put("/admin/config/cobertura")
+def admin_put_config_cobertura(
+    body: ConfigCoberturaIn,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    _exigir_admin(authorization, x_admin_token)
+    from app import coverage_config
+
+    provider = (body.coverage_provider or "mock").strip().lower()
+    if provider not in {"mock", "ixc"}:
+        raise HTTPException(status_code=400, detail="coverage_provider inválido (mock | ixc)")
+    return coverage_config.salvar_config_cobertura(body.model_dump(), unidade_id=body.unidade_id)
+
+
+@app.post("/admin/config/cobertura/test")
+def admin_test_cobertura(
+    body: CoberturaTestIn,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Testa viabilidade com as credenciais salvas (sem passar pelo LLM)."""
+    _exigir_admin(authorization, x_admin_token)
+    from app.coverage import checar_cobertura
+
+    resultado = checar_cobertura(
+        cidade=body.cidade.strip(),
+        bairro=body.bairro.strip(),
+        localizacao_fixa=body.localizacao_fixa.strip(),
+        id_cliente="admin-teste-cobertura",
+    )
+    return {"ok": True, "resultado": resultado}
 
 
 @app.get("/admin/config/chatwoot/exemplo-payload")

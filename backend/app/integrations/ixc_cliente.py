@@ -8,6 +8,11 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.coverage_config import (
+    resolver_ixc_base_url,
+    resolver_ixc_password,
+    resolver_ixc_user,
+)
 from app.utils.cpf import somente_numeros
 
 logger = logging.getLogger(__name__)
@@ -32,18 +37,19 @@ def _cpf_do_registro(reg: dict[str, Any]) -> str:
 
 
 def _consultar_ixc(query: str) -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.ixc_user or not settings.ixc_password:
-        raise RuntimeError("IXC_USER e IXC_PASSWORD não configurados")
+    ixc_user = resolver_ixc_user()
+    ixc_password = resolver_ixc_password()
+    if not ixc_user or not ixc_password:
+        raise RuntimeError("Credenciais IXC ausentes — configure na aba Viabilidade do painel")
 
-    url = f"{settings.ixc_base_url.rstrip('/')}/cliente"
+    url = f"{resolver_ixc_base_url()}/cliente"
     payload = {"qtype": "cnpj_cpf", "query": query, "oper": "="}
 
     with httpx.Client(timeout=45) as client:
         resp = client.post(
             url,
             data=payload,
-            auth=(settings.ixc_user, settings.ixc_password),
+            auth=(ixc_user, ixc_password),
             headers={"ixcsoft": "listar"},
         )
         resp.raise_for_status()
@@ -165,8 +171,10 @@ def criar_cliente_ixc(dados: dict[str, Any]) -> dict[str, Any]:
     Campos mínimos para cadastro comercial.
     """
     settings = get_settings()
-    if not settings.ixc_user or not settings.ixc_password:
-        return {"ok": False, "motivo": "IXC_USER e IXC_PASSWORD não configurados"}
+    ixc_user = resolver_ixc_user()
+    ixc_password = resolver_ixc_password()
+    if not ixc_user or not ixc_password:
+        return {"ok": False, "motivo": "Credenciais IXC ausentes — configure na aba Viabilidade do painel"}
 
     nome = str(dados.get("nome") or "").strip()
     cpf_nums = somente_numeros(str(dados.get("cpf") or ""))
@@ -219,12 +227,12 @@ def criar_cliente_ixc(dados: dict[str, Any]) -> dict[str, Any]:
     if nasc:
         payload["data_nascimento"] = nasc
 
-    url = f"{settings.ixc_base_url.rstrip('/')}/cliente"
+    url = f"{resolver_ixc_base_url()}/cliente"
     with httpx.Client(timeout=60) as client:
         resp = client.post(
             url,
             data=payload,
-            auth=(settings.ixc_user, settings.ixc_password),
+            auth=(ixc_user, ixc_password),
             headers={"ixcsoft": "incluir"},
         )
         resp.raise_for_status()
