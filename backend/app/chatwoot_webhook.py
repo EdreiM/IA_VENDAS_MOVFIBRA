@@ -61,7 +61,13 @@ def _mensagem_de_conteudo(payload: dict[str, Any]) -> str:
             lat = att.get("coordinates_lat")
             lng = att.get("coordinates_long")
             if lat is not None and lng is not None:
-                return f"{lat},{lng}"
+                from app.geo_coords import normalizar_lat_lng_br
+
+                try:
+                    la, ln = normalizar_lat_lng_br(float(lat), float(lng))
+                    return f"{la},{ln}"
+                except (TypeError, ValueError):
+                    return f"{lat},{lng}"
         # Imagem/áudio sem caption — placeholder curto (Eva trata texto; mídia fica no n8n)
         if ftype in {"image", "audio", "file", "video"}:
             caption = str(att.get("fallback_title") or "").strip()

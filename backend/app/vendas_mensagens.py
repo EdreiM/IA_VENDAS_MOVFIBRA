@@ -7,6 +7,10 @@ from typing import Any
 
 
 def informar_sem_cobertura(cidade: str = "", bairro: str = "") -> str:
+    from app.geo_coords import parece_coordenada
+
+    if parece_coordenada(cidade) or parece_coordenada(bairro):
+        cidade, bairro = "", ""
     loc = ""
     if cidade and bairro:
         loc = f" em *{bairro}, {cidade}*"

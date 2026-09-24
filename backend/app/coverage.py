@@ -31,10 +31,12 @@ def _norm(s: str) -> str:
 
 
 def _parse_gps(localizacao_fixa: str) -> tuple[float, float] | None:
-    texto = (localizacao_fixa or "").strip()
-    if not texto or "," not in texto:
+    from app.geo_coords import extrair_gps_mensagem
+
+    norm = extrair_gps_mensagem(localizacao_fixa or "")
+    if not norm:
         return None
-    partes = [p.strip() for p in texto.split(",", 1)]
+    partes = [p.strip() for p in norm.split(",", 1)]
     try:
         return float(partes[0]), float(partes[1])
     except ValueError:

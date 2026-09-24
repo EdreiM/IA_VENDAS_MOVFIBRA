@@ -771,6 +771,29 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     dados_base = dict((resolucao.get("dados") or {}).get("para_salvar") or {})
     dados_base.pop("plano", None)
 
+    # Pin GPS do WhatsApp → viabilidade direta (lat,lng normalizado)
+    from app.geo_coords import extrair_gps_mensagem, parece_coordenada
+
+    msg_gps = str(resolucao.get("mensagem") or "")
+    gps_fixa = extrair_gps_mensagem(msg_gps)
+    if gps_fixa and fase in {"inicio", "viabilidade", "sem_cobertura"}:
+        d = dict(dados_base)
+        d["localizacao_fixa"] = gps_fixa
+        if parece_coordenada(str(d.get("cidade") or "")):
+            d.pop("cidade", None)
+        if parece_coordenada(str(d.get("bairro") or "")):
+            d.pop("bairro", None)
+        d["tentativas_sem_cobertura"] = 0
+        return dec(
+            "CHECAR_COBERTURA",
+            None,
+            "viabilidade",
+            "resultado_cobertura",
+            d,
+            "Localização GPS — checar cobertura",
+            "GLOBAL_LOCALIZACAO",
+        )
+
     # Correção implícita só em campos permitidos (pendente + seguintes).
     # Não transformar a rua ("sergio henn") em troca de nome.
     cadastro_permitidos = (

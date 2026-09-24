@@ -1161,6 +1161,17 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     dados_dict = {campo: texto(dados_in.get(campo)) for campo in CAMPOS_DADOS}
     dados = DadosExtraidos(**dados_dict)
 
+    from app.geo_coords import extrair_gps_mensagem, parece_coordenada
+
+    if extrair_gps_mensagem(mensagem_cliente):
+        dados.cidade = ""
+        dados.bairro = ""
+    else:
+        if parece_coordenada(dados.cidade):
+            dados.cidade = ""
+        if parece_coordenada(dados.bairro):
+            dados.bairro = ""
+
     campos = data.get("campos_corrigidos") or []
     if not isinstance(campos, list):
         campos = []
