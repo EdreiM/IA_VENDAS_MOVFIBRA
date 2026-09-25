@@ -991,6 +991,55 @@ def test_plano_no_meio_do_cadastro_nao_vai_para_rua() -> None:
     _assert(not dados.get("rua"), f"rua indevida={dados.get('rua')}")
 
 
+def test_mostre_os_planos_dispara_lista_completa() -> None:
+    estado = {
+        "fase": "vendas",
+        "aguardando": "escolha_plano",
+        "tem_cobertura": True,
+        "plano_em_negociacao_id": 1214,
+        "plano_em_negociacao": "MOV FLEX",
+    }
+    for msg in ("Mostre os planos", "mostra os planos", "me mostre os planos"):
+        dec = _decidir_sem_executar(
+            estado,
+            msg,
+            {"eventos": ["PEDIU_TROCAR_PLANO", "PERGUNTA"], "dados": {}, "confianca": 0.9},
+        )
+        _assert(dec.acao == "LISTAR_TODOS_PLANOS", f"{msg} → {dec.acao}")
+
+
+def test_pedido_planos_com_desconto_lista_filtrada() -> None:
+    estado = {
+        "fase": "vendas",
+        "aguardando": "escolha_plano",
+        "tem_cobertura": True,
+        "plano_em_negociacao_id": 1214,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Que tem desconto",
+        {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.acao == "LISTAR_TODOS_PLANOS", dec.acao)
+    _assert((dec.contexto_resposta or {}).get("filtro") == "desconto", dec.contexto_resposta)
+
+
+def test_sim_apos_oferta_desconto_lista_planos() -> None:
+    estado = {
+        "fase": "vendas",
+        "aguardando": "escolha_plano",
+        "tem_cobertura": True,
+        "ultima_mensagem_sofia": "Quer que eu te mostre os planos com esse benefício?",
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Sim",
+        {"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.acao == "LISTAR_TODOS_PLANOS", dec.acao)
+    _assert((dec.contexto_resposta or {}).get("filtro") == "desconto", dec.contexto_resposta)
+
+
 def test_pedido_lista_completa_planos() -> None:
     for msg in (
         "Quais os outros",
@@ -1017,6 +1066,36 @@ def test_mais_forte_resolve_premium() -> None:
     _assert(r["plano"]["nome"] == "INFINITY", r)
 
 
+def test_resolver_plano_preco_promocional_6950() -> None:
+    planos = [
+        {
+            "id": 1214,
+            "nome": "MOV FLEX",
+            "valor": 119.0,
+            "valor_pontualidade": 99.0,
+            "descricao": "",
+            "beneficios": "",
+            "tags": ["flex"],
+        },
+        {
+            "id": 1212,
+            "nome": "MOV SUPER+",
+            "valor": 139.0,
+            "valor_pontualidade": None,
+            "descricao": (
+                "COMBO MOV SUPER+ – R$ 139,00/mês\n"
+                "Nos 3 primeiros meses, a mensalidade fica por apenas R$ 69,50"
+            ),
+            "beneficios": "50% de desconto nos 3 primeiros meses (R$ 69,50)",
+            "tags": ["super_plus", "promo_inicial"],
+        },
+    ]
+    for msg in ("Qual o de 69,50?", "quero o de 69", "plano dos primeiros meses"):
+        r = resolver_plano(msg, planos, plano_atual_id=1214)
+        _assert(r.get("evento") == "PLANO_RESOLVIDO", f"{msg} → {r}")
+        _assert(r["plano"]["nome"] == "MOV SUPER+", f"{msg} → {r}")
+
+
 def test_listar_todos_quando_pediu_outras_opcoes() -> None:
     estado = {
         "fase": "vendas",
@@ -1037,8 +1116,12 @@ def main() -> None:
     tests = [
         test_correcao_rua_natural_confirmacao_dados,
         test_plano_no_meio_do_cadastro_nao_vai_para_rua,
+        test_mostre_os_planos_dispara_lista_completa,
+        test_pedido_planos_com_desconto_lista_filtrada,
+        test_sim_apos_oferta_desconto_lista_planos,
         test_pedido_lista_completa_planos,
         test_mais_forte_resolve_premium,
+        test_resolver_plano_preco_promocional_6950,
         test_listar_todos_quando_pediu_outras_opcoes,
         test_confirmacoes_typo,
         test_cadastro_telefone_mais_pergunta,

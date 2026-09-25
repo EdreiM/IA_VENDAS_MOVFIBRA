@@ -42,7 +42,7 @@ def _lev(a: str, b: str) -> int:
     return prev[-1]
 
 
-def _precos(texto: str) -> list[float]:
+def _precos(texto: str, *, minimo: float = 50) -> list[float]:
     nums = re.findall(r"\d+(?:[.,]\d{1,2})?", str(texto or ""))
     out: list[float] = []
     for n in nums:
@@ -50,9 +50,69 @@ def _precos(texto: str) -> list[float]:
             v = float(n.replace(",", "."))
         except ValueError:
             continue
-        if v >= 50:
+        if v >= minimo:
             out.append(v)
     return out
+
+
+def _preco_compativel(alvo: float, candidato: float) -> bool:
+    """Igualdade ou '69' referindo-se a promo R$ 69,50."""
+    if abs(alvo - candidato) < 0.011:
+        return True
+    if alvo == int(alvo) and abs(candidato - alvo) < 1.0:
+        return True
+    return False
+
+
+def _precos_do_plano(plano: dict[str, Any]) -> set[float]:
+    """Todos os valores citados no plano (mensal, pontualidade, promo na descrição)."""
+    precos: set[float] = set()
+    try:
+        valor = float(plano.get("valor") or 0)
+        if valor > 0:
+            precos.add(valor)
+    except (TypeError, ValueError):
+        pass
+    pont = plano.get("valor_pontualidade")
+    if pont is not None and str(pont).strip() != "":
+        try:
+            precos.add(float(pont))
+        except (TypeError, ValueError):
+            pass
+    blob = " ".join(
+        str(plano.get(campo) or "")
+        for campo in ("descricao", "beneficios", "condicao_valor_pontualidade")
+    )
+    for p in _precos(blob, minimo=30):
+        precos.add(p)
+    return precos
+
+
+def _plano_tem_preco(plano: dict[str, Any], alvo: float) -> tuple[bool, str]:
+    """Verifica se o preço pedido bate com valor, pontualidade ou promo no texto."""
+    try:
+        valor = float(plano.get("valor") or 0)
+        if _preco_compativel(alvo, valor):
+            return True, "PRECO_EXATO"
+    except (TypeError, ValueError):
+        pass
+    pont = plano.get("valor_pontualidade")
+    if pont is not None and str(pont).strip() != "":
+        try:
+            if _preco_compativel(alvo, float(pont)):
+                return True, "PRECO_PONTUALIDADE"
+        except (TypeError, ValueError):
+            pass
+    extras = _precos_do_plano(plano) - {float(plano.get("valor") or 0)}
+    try:
+        if pont is not None:
+            extras.discard(float(pont))
+    except (TypeError, ValueError):
+        pass
+    for p in extras:
+        if _preco_compativel(alvo, p):
+            return True, "PRECO_PROMOCIONAL"
+    return False, "SEM_CORRESPONDENCIA"
 
 
 INTENCOES_TAG: list[tuple[tuple[str, ...], str]] = [
@@ -70,6 +130,20 @@ INTENCOES_TAG: list[tuple[tuple[str, ...], str]] = [
     (("one plus", "one+"), "one_plus"),
     (("up plus", "up+"), "up_plus"),
     (("super plus", "super+"), "super_plus"),
+    (
+        (
+            "primeiros meses",
+            "primeiro mes",
+            "3 primeiros",
+            "tres primeiros",
+            "desconto nos 3",
+            "50 por cento",
+            "50%",
+            "promocao inicial",
+            "promo inicial",
+        ),
+        "promo_inicial",
+    ),
     (("infinity",), "infinity"),
     (("essencial",), "essencial"),
     (("flex",), "flex"),
@@ -266,12 +340,12 @@ def resolver_plano(
             score, criterio = 110, "NOME_COMPLETO_EXATO"
         elif ref == alias:
             score, criterio = 100, "ALIAS_EXATO"
-        elif any(abs(p - valor) < 0.001 for p in precos):
-            score, criterio = 95, "PRECO_EXATO"
-        elif any(
-            abs(p - float(plano.get("valor_pontualidade") or -1)) < 0.001 for p in precos
-        ):
-            score, criterio = 95, "PRECO_PONTUALIDADE"
+        elif precos:
+            for p_alvo in precos:
+                bate, crit = _plano_tem_preco(plano, p_alvo)
+                if bate:
+                    score, criterio = 95, crit
+                    break
         elif len(ref) >= 3 and (ref in nome or ref in alias):
             score, criterio = 90, "REFERENCIA_CONTIDA"
         elif len(alias) >= 3 and alias in ref:

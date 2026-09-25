@@ -518,6 +518,30 @@ def informar_detalhes_plano(plano: dict[str, Any] | None = None) -> str:
     )
 
 
+def planos_com_desconto_especial(planos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Planos com pontualidade ou promo nos primeiros meses (ex.: SUPER+ R$ 69,50)."""
+    out: list[dict[str, Any]] = []
+    for p in planos:
+        tags = {str(t).casefold() for t in (p.get("tags") or [])}
+        if p.get("valor_pontualidade") is not None and str(p.get("valor_pontualidade")).strip() != "":
+            out.append(p)
+            continue
+        if tags.intersection({"promo_inicial", "pontualidade"}):
+            out.append(p)
+            continue
+        blob = f"{p.get('beneficios') or ''} {p.get('descricao') or ''}".casefold()
+        if any(k in blob for k in ("50%", "primeiros meses", "desconto nos 3", "promocao")):
+            out.append(p)
+    return out
+
+
+def intro_lista_planos_desconto() -> str:
+    return (
+        "Estes planos têm *desconto de pontualidade* ou *promoção especial* "
+        "(como 50% nos primeiros meses):"
+    )
+
+
 def bolhas_lista_completa_planos(
     planos: list[dict[str, Any]],
     *,

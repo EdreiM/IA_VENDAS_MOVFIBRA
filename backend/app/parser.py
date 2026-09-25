@@ -164,6 +164,12 @@ PEDIDOS_LISTA_COMPLETA = {
     "quais planos",
     "lista de planos",
     "me mostra os planos",
+    "me mostre os planos",
+    "mostra os planos",
+    "mostre os planos",
+    "mostrar os planos",
+    "ver os planos",
+    "lista os planos",
     "quais os outros",
     "quais as outras",
     "mostra as outras opcoes",
@@ -381,7 +387,57 @@ def eh_pedido_lista_completa_planos(msg: str) -> bool:
         return False
     if any(p in n for p in PEDIDOS_LISTA_COMPLETA):
         return True
-    return any(p in n for p in _FRAGMENTS_LISTA_COMPLETA)
+    if any(p in n for p in _FRAGMENTS_LISTA_COMPLETA):
+        return True
+    return bool(re.search(r"\b(mostra|mostre|mostrar|ver|lista)\b.{0,24}\bplanos?\b", n))
+
+
+_CHAVES_PEDIDO_PLANOS_DESCONTO = (
+    "tem desconto",
+    "com desconto",
+    "que tem desconto",
+    "planos com desconto",
+    "plano com desconto",
+    "quero desconto",
+    "tem promocao",
+    "com promocao",
+    "promocao inicial",
+    "desconto nos primeiros",
+    "primeiros meses",
+    "50 por cento",
+    "50%",
+)
+
+
+def eh_pedido_planos_com_desconto(msg: str) -> bool:
+    """Cliente quer planos com pontualidade ou promo (ex.: 50% nos 3 primeiros meses)."""
+    n = normalizar_texto(msg)
+    if not n:
+        return False
+    if any(p in n for p in _CHAVES_PEDIDO_PLANOS_DESCONTO):
+        return True
+    return bool(re.search(r"\b(desconto|promocao|promo)\b", n))
+
+
+def cliente_confirmou_ver_planos_desconto(msg: str, ultima_eva: str) -> bool:
+    """'Sim' após Eva oferecer mostrar planos com desconto."""
+    if not eh_confirmacao(msg):
+        return False
+    u = normalizar_texto(ultima_eva)
+    if not u:
+        return False
+    return any(
+        p in u
+        for p in (
+            "planos com desconto",
+            "planos com esse beneficio",
+            "mostrar os planos com",
+            "te mostro os planos",
+            "mostro os planos com",
+            "desconto de pontualidade",
+            "beneficio de pontualidade",
+        )
+    )
 
 
 # Pergunta informativa sobre mudança de endereço pós-contratação (≠ trocar cobertura agora)

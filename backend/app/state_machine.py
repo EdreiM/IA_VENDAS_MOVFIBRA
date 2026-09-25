@@ -1271,15 +1271,43 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
         )
 
     # Trocar plano sem citar qual — ou listar TODOS os planos
-    from app.parser import eh_pedido_lista_completa_planos, normalizar_texto
+    from app.parser import (
+        cliente_confirmou_ver_planos_desconto,
+        eh_pedido_lista_completa_planos,
+        eh_pedido_planos_com_desconto,
+        normalizar_texto,
+    )
 
     msg_n = normalizar_texto(str(resolucao.get("mensagem") or ""))
     pediu_lista_completa = eh_pedido_lista_completa_planos(msg_n)
+    pediu_planos_desconto = eh_pedido_planos_com_desconto(msg_n) or (
+        flags.get("confirmacao")
+        and cliente_confirmou_ver_planos_desconto(
+            msg_n, str(estado.get("ultima_mensagem_sofia") or "")
+        )
+    )
     pediu_listar_todos = (
         plano.get("pediu_troca_declarada")
         and (flags.get("tem_pergunta") or pediu_lista_completa)
         and fase == "vendas"
     ) or (pediu_lista_completa and fase == "vendas" and estado.get("tem_cobertura") is True)
+
+    if (
+        fase == "vendas"
+        and estado.get("tem_cobertura") is True
+        and pediu_planos_desconto
+        and not pediu_lista_completa
+    ):
+        return dec(
+            "LISTAR_TODOS_PLANOS",
+            None,
+            "vendas",
+            "lista_planos",
+            dict(dados_base),
+            "Cliente pediu planos com desconto/promoção",
+            "GLOBAL_PLANO",
+            contexto={"lista_completa": True, "filtro": "desconto"},
+        )
 
     if pediu_listar_todos and estado.get("tem_cobertura") is True:
         return dec(

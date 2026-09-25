@@ -71,7 +71,15 @@ CATALOGO_PLANOS: list[dict[str, Any]] = [
         "destaque": False,
         "valor_pontualidade": None,
         "condicao_valor_pontualidade": None,
-        "tags": ["super_plus", "combo", "mesh", "prime", "faixa_139", "combo_internet_chip"],
+        "tags": [
+            "super_plus",
+            "combo",
+            "mesh",
+            "prime",
+            "faixa_139",
+            "combo_internet_chip",
+            "promo_inicial",
+        ],
     },
     {
         "id": 1180,

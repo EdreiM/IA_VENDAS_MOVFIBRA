@@ -60,14 +60,26 @@ def _executar_acao(estado: dict[str, Any], decisao: Decisao) -> Decisao:
 
     if acao == "LISTAR_TODOS_PLANOS":
         planos = listar_planos(estado)
+        ctx_lista = decisao.contexto_resposta or {}
+        if str(ctx_lista.get("filtro") or "").casefold() == "desconto":
+            from app.vendas_mensagens import planos_com_desconto_especial
+
+            filtrados = planos_com_desconto_especial(planos)
+            if filtrados:
+                planos = filtrados
         ref_id = estado.get("plano_em_negociacao_id") or estado.get("plano_confirmado_id")
         ref = next(
             (p for p in planos if ref_id is not None and int(p["id"]) == int(ref_id)),
             None,
         )
-        lista_completa = bool((decisao.contexto_resposta or {}).get("lista_completa"))
-        # LISTAR_TODOS sempre mostra o catálogo completo
-        return decidir_lista_planos(planos, ref, estado, lista_completa=True or lista_completa)
+        lista_completa = bool(ctx_lista.get("lista_completa"))
+        # LISTAR_TODOS sempre mostra o catálogo completo (ou filtrado)
+        dec_lista = decidir_lista_planos(planos, ref, estado, lista_completa=True or lista_completa)
+        if str(ctx_lista.get("filtro") or "").casefold() == "desconto":
+            ctx_out = dict(dec_lista.contexto_resposta or {})
+            ctx_out["filtro"] = "desconto"
+            dec_lista.contexto_resposta = ctx_out
+        return dec_lista
 
     if acao == "VALIDAR_CPF":
         ctx = decisao.contexto_resposta or {}
@@ -379,16 +391,22 @@ def process_message(
             decisao, estado, historico=historico, mensagem_cliente=mensagem
         )
         if decisao.objetivo_resposta == "APRESENTAR_LISTA_COMPLETA_PLANOS":
-            from app.vendas_mensagens import bolhas_lista_completa_planos
+            from app.vendas_mensagens import (
+                bolhas_lista_completa_planos,
+                intro_lista_planos_desconto,
+            )
 
             ctx = decisao.contexto_resposta or {}
             sugerido = ctx.get("plano_sugerido") or ctx.get("plano") or {}
             if not isinstance(sugerido, dict):
                 sugerido = {}
+            planos_ctx = list(ctx.get("planos") or [])
             outputs = bolhas_lista_completa_planos(
-                list(ctx.get("planos") or []),
+                planos_ctx,
                 plano_destaque=sugerido,
             )
+            if str(ctx.get("filtro") or "").casefold() == "desconto" and planos_ctx:
+                outputs = [intro_lista_planos_desconto(), *outputs]
             resposta = "\n\n".join(outputs)
         elif decisao.objetivo_resposta == "ESCLARECER_PLANO_AMBIGUO":
             from app.vendas_mensagens import bolhas_planos_candidatos
