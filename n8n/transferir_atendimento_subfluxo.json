@@ -22,7 +22,10 @@
             { "name": "ixc_cliente_id" },
             { "name": "id_contrato_ixc" },
             { "name": "os_id" },
-            { "name": "ativado_ixc" }
+            { "name": "ativado_ixc" },
+            { "name": "buffer" },
+            { "name": "mensagens" },
+            { "name": "total_mensagens" }
           ]
         }
       },
@@ -101,24 +104,27 @@
       "parameters": {
         "workflowId": {
           "__rl": true,
-          "value": "f7XrDvsswPYxcLs8",
+          "value": "aqY5bfmOqGWhu1nn",
           "mode": "list",
-          "cachedResultName": "INSERE ATENDIMENTO IXC MOV FIBRA"
+          "cachedResultUrl": "/workflow/aqY5bfmOqGWhu1nn",
+          "cachedResultName": "INSERE ATENDIMENTO IXC MOV FIBRA V4"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
             "id_cliente": "={{ $('When Executed by Another Workflow').first().json.id_cliente }}",
-            "ixc_id_cliente": "={{ $('When Executed by Another Workflow').first().json.ixc_cliente_id || '' }}",
+            "ixc_id_cliente": "={{ $('When Executed by Another Workflow').first().json.ixc_cliente_id || $('When Executed by Another Workflow').first().json.ixc_id_cliente || '' }}",
             "nome": "={{ $('When Executed by Another Workflow').first().json.nome || '' }}",
-            "conversation_id": "={{ $('When Executed by Another Workflow').first().json.conversation_id || '' }}"
+            "buffer": "={{ $('When Executed by Another Workflow').first().json.buffer || ('Transferência Eva — ' + ($('When Executed by Another Workflow').first().json.motivo || 'TRANSFERIR_HUMANO')) }}",
+            "mensagens": "={{ $('When Executed by Another Workflow').first().json.mensagens || [] }}"
           },
-          "matchingColumns": ["id_cliente"],
+          "matchingColumns": [],
           "schema": [
             { "id": "id_cliente", "displayName": "id_cliente", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "ixc_id_cliente", "displayName": "ixc_id_cliente", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "nome", "displayName": "nome", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "conversation_id", "displayName": "conversation_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+            { "id": "buffer", "displayName": "buffer", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "mensagens", "displayName": "mensagens", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "array" }
           ],
           "attemptToConvertTypes": false,
           "convertFieldsToString": true

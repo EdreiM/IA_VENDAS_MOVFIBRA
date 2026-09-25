@@ -44,7 +44,10 @@
             "ixc_cliente_id": "={{ $json.body.ixc_cliente_id || $json.ixc_cliente_id || $json.body.ixc_id_cliente || $json.ixc_id_cliente || '' }}",
             "id_contrato_ixc": "={{ $json.body.id_contrato_ixc || $json.id_contrato_ixc || '' }}",
             "os_id": "={{ $json.body.os_id || $json.os_id || '' }}",
-            "ativado_ixc": "={{ $json.body.ativado_ixc ?? $json.ativado_ixc ?? false }}"
+            "ativado_ixc": "={{ $json.body.ativado_ixc ?? $json.ativado_ixc ?? false }}",
+            "buffer": "={{ $json.body.buffer || $json.buffer || '' }}",
+            "mensagens": "={{ $json.body.mensagens || $json.mensagens || [] }}",
+            "total_mensagens": "={{ $json.body.total_mensagens ?? $json.total_mensagens ?? 0 }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -65,7 +68,10 @@
             { "id": "ixc_cliente_id", "displayName": "ixc_cliente_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "id_contrato_ixc", "displayName": "id_contrato_ixc", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "os_id", "displayName": "os_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "ativado_ixc", "displayName": "ativado_ixc", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "boolean" }
+            { "id": "ativado_ixc", "displayName": "ativado_ixc", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "boolean" },
+            { "id": "buffer", "displayName": "buffer", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "mensagens", "displayName": "mensagens", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "array" },
+            { "id": "total_mensagens", "displayName": "total_mensagens", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "number" }
           ],
           "attemptToConvertTypes": false,
           "convertFieldsToString": true

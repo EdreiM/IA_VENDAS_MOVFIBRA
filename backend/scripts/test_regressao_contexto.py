@@ -391,6 +391,8 @@ def test_payload_transferencia_inclui_contexto() -> None:
     _assert(p["contexto"]["fase"] == "cadastro", p)
     _assert(p["contexto"]["objetivo"] == "Cliente pediu humano", p)
     _assert(p["transferido_humano"] is True, p)
+    _assert("buffer" in p, p)
+    _assert("mensagens" in p, p)
 
 
 def test_termos_webhook_dispara_com_url_configurada() -> None:

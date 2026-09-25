@@ -35,7 +35,7 @@ def montar_payload_transferencia(estado: dict[str, Any], motivo: str) -> dict[st
     from app.webhook_payload import snapshot_cliente
 
     motivo_txt = (motivo or estado.get("motivo_transferencia") or "TRANSFERIR_HUMANO").strip()
-    snap = snapshot_cliente(estado)
+    snap = snapshot_cliente(estado, incluir_historico=True)
     ctx = {
         "fase": snap.get("fase"),
         "aguardando": snap.get("aguardando"),

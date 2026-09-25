@@ -76,7 +76,8 @@ Campos principais (snapshot completo + extras):
 ## Importar no n8n
 
 1. Importe `n8n/transferir_atendimento_subfluxo.json` — ajuste IDs se necessário:
-   - `INSERE ATENDIMENTO IXC MOV FIBRA` → workflow real da instância
+   - `INSERE ATENDIMENTO IXC MOV FIBRA V4` (`aqY5bfmOqGWhu1nn`)
+   - No trigger do subfluxo, declare também `buffer`, `mensagens` e `total_mensagens`
    - `team_id: 1` → time vendas no Chatwoot
 2. Importe `n8n/transferir_webhook_entrada.json`
 3. No webhook entrada, troque `SUBSTITUA_PELO_ID_DO_SUBFLUXO` pelo ID do subfluxo importado
