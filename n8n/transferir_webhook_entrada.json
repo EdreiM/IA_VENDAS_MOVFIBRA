@@ -1,0 +1,106 @@
+{
+  "name": "Eva — Webhook Transferir (entrada)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "transferir_atendimento_eva",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [480, 320],
+      "id": "a1b2c3d4-transfer-webhook-001",
+      "name": "Webhook Transferir Eva",
+      "webhookId": "transferir-atendimento-eva"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "OWQoni9m5EG7Vim7",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/OWQoni9m5EG7Vim7",
+          "cachedResultName": "TRANSFERIR ATENDIMENTO — Eva (subfluxo)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id_cliente": "={{ $json.body.id_cliente || $json.id_cliente }}",
+            "motivo": "={{ $json.body.motivo || $json.motivo || 'TRANSFERIR_HUMANO' }}",
+            "contexto": "={{ $json.body.contexto || $json.contexto || {} }}",
+            "conversation_id": "={{ $json.body.conversation_id || $json.conversation_id }}",
+            "contact_id": "={{ $json.body.contact_id || $json.contact_id || '' }}",
+            "nome": "={{ $json.body.nome || $json.nome || '' }}",
+            "cpf": "={{ $json.body.cpf || $json.cpf || '' }}",
+            "telefone": "={{ $json.body.telefone || $json.telefone || '' }}",
+            "cidade": "={{ $json.body.cidade || $json.cidade || '' }}",
+            "bairro": "={{ $json.body.bairro || $json.bairro || '' }}",
+            "fase": "={{ $json.body.fase || $json.fase || '' }}",
+            "aguardando": "={{ $json.body.aguardando || $json.aguardando || '' }}",
+            "plano_confirmado": "={{ $json.body.plano_confirmado || $json.plano_confirmado || '' }}",
+            "cadastro_completo": "={{ $json.body.cadastro_completo ?? $json.cadastro_completo ?? false }}",
+            "ixc_cliente_id": "={{ $json.body.ixc_cliente_id || $json.ixc_cliente_id || $json.body.ixc_id_cliente || $json.ixc_id_cliente || '' }}",
+            "id_contrato_ixc": "={{ $json.body.id_contrato_ixc || $json.id_contrato_ixc || '' }}",
+            "os_id": "={{ $json.body.os_id || $json.os_id || '' }}",
+            "ativado_ixc": "={{ $json.body.ativado_ixc ?? $json.ativado_ixc ?? false }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "id_cliente", "displayName": "id_cliente", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "motivo", "displayName": "motivo", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "contexto", "displayName": "contexto", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "object" },
+            { "id": "conversation_id", "displayName": "conversation_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "nome", "displayName": "nome", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "cpf", "displayName": "cpf", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "telefone", "displayName": "telefone", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "cidade", "displayName": "cidade", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "bairro", "displayName": "bairro", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "fase", "displayName": "fase", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "aguardando", "displayName": "aguardando", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "plano_confirmado", "displayName": "plano_confirmado", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "cadastro_completo", "displayName": "cadastro_completo", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "boolean" },
+            { "id": "ixc_cliente_id", "displayName": "ixc_cliente_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "id_contrato_ixc", "displayName": "id_contrato_ixc", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "os_id", "displayName": "os_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "ativado_ixc", "displayName": "ativado_ixc", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "boolean" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [768, 320],
+      "id": "a1b2c3d4-transfer-exec-002",
+      "name": "Execute TRANSFERIR subfluxo"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.retorno ? { resultado: 'ok', retorno: $json.retorno } : ($json.resultado ? $json : { resultado: 'ok', retorno: 'sucesso' }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1056, 320],
+      "id": "a1b2c3d4-transfer-respond-003",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "connections": {
+    "Webhook Transferir Eva": {
+      "main": [[{ "node": "Execute TRANSFERIR subfluxo", "type": "main", "index": 0 }]]
+    },
+    "Execute TRANSFERIR subfluxo": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

@@ -27,6 +27,40 @@ def labels_do_env() -> list[str]:
     return [p.strip() for p in (settings.chatwoot_transfer_labels or "").split(",") if p.strip()]
 
 
+def montar_payload_transferencia(estado: dict[str, Any], motivo: str) -> dict[str, Any]:
+    """
+    Pacote enviado ao webhook n8n `transferir_atendimento_eva`.
+    Inclui snapshot completo + campo `contexto` resumido para o subfluxo.
+    """
+    from app.webhook_payload import snapshot_cliente
+
+    motivo_txt = (motivo or estado.get("motivo_transferencia") or "TRANSFERIR_HUMANO").strip()
+    snap = snapshot_cliente(estado)
+    ctx = {
+        "fase": snap.get("fase"),
+        "aguardando": snap.get("aguardando"),
+        "objetivo": motivo_txt,
+        "plano_confirmado": snap.get("plano_confirmado"),
+        "plano_em_negociacao": snap.get("plano_em_negociacao"),
+        "tem_cobertura": snap.get("tem_cobertura"),
+        "cadastro_completo": snap.get("cadastro_completo"),
+        "ixc_cliente_id": snap.get("ixc_cliente_id"),
+        "id_contrato_ixc": snap.get("id_contrato_ixc"),
+        "os_id": snap.get("os_id"),
+        "ativado_ixc": bool(estado.get("ativado_ixc")),
+        "agendamento_confirmado": snap.get("agendamento_confirmado"),
+        "termos_enviados": bool(estado.get("termos_enviados")),
+    }
+    return {
+        **snap,
+        "motivo": motivo_txt,
+        "contexto": ctx,
+        "ativado_ixc": bool(estado.get("ativado_ixc")),
+        "termos_enviados": bool(estado.get("termos_enviados")),
+        "transferido_humano": True,
+    }
+
+
 def handoff_por_config(
     conversation_id: str | int | None,
     *,
@@ -70,6 +104,7 @@ def _executar_ferramenta_transferir(estado: dict[str, Any], motivo: str) -> dict
     """Usa ferramenta cadastrada transferir_atendimento se existir."""
     try:
         from app.ferramentas import obter_ferramenta_por_key, registrar_chamada
+        from app.ferramentas_catalog import resolver_url_ferramenta
     except Exception:
         return None
 
@@ -83,19 +118,19 @@ def _executar_ferramenta_transferir(estado: dict[str, Any], motivo: str) -> dict
     if not tool:
         return None
 
+    settings = get_settings()
     cid = estado.get("conversation_id")
-    url = str(tool.get("webhook_url") or "").strip()
-    payload = {
-        "conversation_id": cid,
-        "motivo": motivo or "TRANSFERIR_HUMANO",
-        "id_cliente": estado.get("id_cliente"),
-        "telefone": estado.get("telefone"),
-        "fase": estado.get("fase"),
-    }
+    url = resolver_url_ferramenta(
+        "transferir_atendimento",
+        unidade_id=unidade_id,
+        fallback_env=settings.transfer_webhook_url,
+    )
+    payload = montar_payload_transferencia(estado, motivo)
 
     if url:
+        timeout = float(settings.transfer_webhook_timeout_seconds or 45.0)
         try:
-            with httpx.Client(timeout=20.0) as client:
+            with httpx.Client(timeout=timeout) as client:
                 resp = client.post(url, json=payload)
             ok = 200 <= resp.status_code < 300
             registrar_chamada(
@@ -119,7 +154,12 @@ def _executar_ferramenta_transferir(estado: dict[str, Any], motivo: str) -> dict
                 motivo=str(exc)[:300],
             )
             logger.warning("Webhook transferir falhou: %s", exc)
-            # cai no handoff nativo abaixo
+            return {
+                "ok": False,
+                "via": "ferramenta_webhook",
+                "ferramenta_id": tool.get("id"),
+                "motivo": str(exc)[:500],
+            }
 
     result = handoff_por_config(cid, motivo=motivo or "TRANSFERIR_HUMANO")
     try:

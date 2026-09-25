@@ -146,6 +146,10 @@ class Settings(BaseSettings):
     chatwoot_transfer_labels: str = "sofia_transferido"  # CSV de labels
     chatwoot_transfer_status: str = "open"  # open | pending | resolved | snoozed
 
+    # Transferência via n8n (ferramenta transferir_atendimento)
+    transfer_webhook_url: str = ""
+    transfer_webhook_timeout_seconds: float = 45.0
+
     # Entrada: closed | allowlist | open
     # allowlist = só SOFIA_ALLOWLIST_PHONES (teste sem Meta produção)
     sofia_inbound_mode: str = "allowlist"

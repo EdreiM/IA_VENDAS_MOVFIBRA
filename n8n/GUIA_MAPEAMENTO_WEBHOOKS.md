@@ -287,6 +287,53 @@ Extras opcionais para personalizar resposta.
 
 ---
 
+## 7) `transferir_atendimento_eva` → TRANSFERIR ATENDIMENTO
+
+**Quando:** Eva entra em `TRANSFERIR_HUMANO` (cliente pede humano, erro IXC, etc.).
+
+**Eva envia** (`montar_payload_transferencia`):
+
+| Campo | Uso no n8n |
+|-------|------------|
+| `conversation_id` | assign time + label Chatwoot |
+| `id_cliente`, `motivo` | referência / alerta |
+| `contexto` | `{ fase, aguardando, plano_confirmado, cadastro_completo, ixc_cliente_id, ... }` |
+| `nome`, `cpf`, `telefone`, `cidade`, `bairro` | alerta Evolution |
+| `plano_confirmado`, `cadastro_completo`, `ativado_ixc` | alerta |
+| `ixc_cliente_id`, `os_id`, `id_contrato_ixc` | INSERE ATENDIMENTO IXC |
+
+**Execute Workflow — inputs:**
+
+```
+id_cliente       = {{ $json.body.id_cliente || $json.id_cliente }}
+motivo           = {{ $json.body.motivo || $json.motivo }}
+contexto         = {{ $json.body.contexto || $json.contexto }}
+conversation_id  = {{ $json.body.conversation_id || $json.conversation_id }}
+nome             = {{ $json.body.nome || $json.nome }}
+ixc_cliente_id   = {{ $json.body.ixc_cliente_id || $json.ixc_cliente_id }}
+```
+
+**Resposta:**
+
+```json
+{ "resultado": "ok", "retorno": "sucesso" }
+```
+
+**Arquivos no repo:**
+
+| Arquivo | Uso |
+|---------|-----|
+| `n8n/transferir_atendimento_subfluxo.json` | Subfluxo (Chatwoot + IXC + Evolution) |
+| `n8n/transferir_webhook_entrada.json` | Webhook fino → Execute → Respond |
+| `n8n/montar_mensagem_transferencia.js` | Code node — alerta WhatsApp interno |
+| `n8n/TRANSFERIR_ATENDIMENTO.md` | Guia passo a passo |
+
+**Painel Eva:** Ferramentas → `transferir_atendimento` → URL do webhook.
+
+Com URL configurada, use `CHATWOOT_TRANSFER_ENABLED=false` para não duplicar assign.
+
+---
+
 ## 6) `PLANOS_SOFIA` (planos)
 
 **Sofia envia:**

@@ -1,0 +1,305 @@
+{
+  "name": "TRANSFERIR ATENDIMENTO — Eva (subfluxo)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "id_cliente" },
+            { "name": "motivo" },
+            { "name": "contexto" },
+            { "name": "conversation_id" },
+            { "name": "contact_id" },
+            { "name": "nome" },
+            { "name": "cpf" },
+            { "name": "telefone" },
+            { "name": "cidade" },
+            { "name": "bairro" },
+            { "name": "fase" },
+            { "name": "aguardando" },
+            { "name": "plano_confirmado" },
+            { "name": "cadastro_completo" },
+            { "name": "ixc_cliente_id" },
+            { "name": "id_contrato_ixc" },
+            { "name": "os_id" },
+            { "name": "ativado_ixc" }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-512, 0],
+      "id": "5bb5041d-41cd-42b3-9834-185e402fc47d",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "content": "## Atribui ao time vendas + label aguardando + IXC",
+        "width": 320
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [-64, -112],
+      "typeVersion": 1,
+      "id": "1f2b9677-6f6c-459b-a14d-813a57dcbca6",
+      "name": "Sticky Note Chatwoot"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.mov.pro.br/api/v1/accounts/2/conversations/{{ String($('When Executed by Another Workflow').item.json.conversation_id || '').replace(/\\n/g, '') }}/assignments",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{ $env.CHATWOOT_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "team_id",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [32, -16],
+      "id": "5c4d1585-a342-466f-9679-c49e8902a3ce",
+      "name": "Atribui ao time vendas"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chatwoot.mov.pro.br/api/v1/accounts/2/conversations/{{ String($('When Executed by Another Workflow').item.json.conversation_id || '').replace(/\\n/g, '') }}/labels",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_access_token",
+              "value": "={{ $env.CHATWOOT_API_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{ \"labels\": [\"aguardando\"] }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [336, -16],
+      "id": "fcdc28ef-2510-497e-a4e4-fcb6e81d59fc",
+      "name": "Insere_etiqueta"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "f7XrDvsswPYxcLs8",
+          "mode": "list",
+          "cachedResultName": "INSERE ATENDIMENTO IXC MOV FIBRA"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id_cliente": "={{ $('When Executed by Another Workflow').first().json.id_cliente }}",
+            "ixc_id_cliente": "={{ $('When Executed by Another Workflow').first().json.ixc_cliente_id || '' }}",
+            "nome": "={{ $('When Executed by Another Workflow').first().json.nome || '' }}",
+            "conversation_id": "={{ $('When Executed by Another Workflow').first().json.conversation_id || '' }}"
+          },
+          "matchingColumns": ["id_cliente"],
+          "schema": [
+            { "id": "id_cliente", "displayName": "id_cliente", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "ixc_id_cliente", "displayName": "ixc_id_cliente", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "nome", "displayName": "nome", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "conversation_id", "displayName": "conversation_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [560, -16],
+      "id": "cf582b88-e7d7-4c45-8962-8b37e185ef93",
+      "name": "Call INSERE ATENDIMENTO IXC"
+    },
+    {
+      "parameters": {
+        "content": "## Alerta WhatsApp interno (Evolution)",
+        "width": 280
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [96, 96],
+      "typeVersion": 1,
+      "id": "sticky-note-evo",
+      "name": "Sticky Note Evo"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a6ffad2f-8651-406d-ac09-bce79d08da3b",
+              "leftValue": "={{ $('When Executed by Another Workflow').item.json.id_cliente }}",
+              "rightValue": "559392219098@s.whatsapp.net",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-160, 192],
+      "id": "0a5052c1-cd0b-4f90-8980-f5f8507f821c",
+      "name": "If nao e numero teste"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Cole o conteúdo de n8n/montar_mensagem_transferencia.js\n * ou importe via arquivo no editor n8n.\n */\nconst trigger = $('When Executed by Another Workflow').first().json;\nconst src = { ...trigger, ...$input.first().json };\n\nconst motivo =\n  (src.motivo || src.contexto?.objetivo || '').trim() || 'não especificado';\n\nconst wa = String(src.id_cliente || '')\n  .replace('@s.whatsapp.net', '')\n  .replace('@c.us', '');\n\nconst fase = src.fase || src.contexto?.fase || 'desconhecida';\nconst aguardando = src.aguardando || src.contexto?.aguardando || '—';\nconst cadOk = Boolean(src.cadastro_completo ?? src.contexto?.cadastro_completo);\nconst ixc = src.ixc_cliente_id || src.ixc_id_cliente || src.contexto?.ixc_cliente_id || '';\nconst ativ = Boolean(src.ativado_ixc ?? src.contexto?.ativado_ixc);\n\nconst linhas = [\n  '🔔 Transferência de Atendimento',\n  '─────────────────────',\n  `👤 Cliente: ${src.nome || 'Não informado'}`,\n  `📱 WhatsApp: ${wa || src.telefone || '?'}`,\n];\n\nif (src.cpf) linhas.push(`📋 CPF: ${src.cpf}`);\n\nlinhas.push(\n  `📍 Localização: ${src.bairro || '?'}, ${src.cidade || '?'}`,\n  '─────────────────────',\n  `📌 Fase quando transferido: ${fase}`,\n  `⏳ Aguardando: ${aguardando}`,\n  `🎯 Motivo da transferência: ${motivo}`,\n  '─────────────────────',\n);\n\nif (src.plano_confirmado) linhas.push(`📦 Plano: ${src.plano_confirmado}`);\n\nlinhas.push(\n  `✅ Cadastro completo: ${cadOk ? 'sim' : 'não'}`,\n  `🏢 IXC cliente: ${ixc || 'pendente'}`,\n  `⚡ Ativado IXC: ${ativ ? 'sim' : 'não'}`,\n);\n\nreturn [{ json: { mensagem_transferencia: linhas.join('\\n') } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [144, 176],
+      "id": "96f6ede6-251c-470f-9636-a728df9dd94a",
+      "name": "Montar mensagem transferencia"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://evolutiongo.xmov.com.br/send/text",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.EVOLUTION_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "number",
+              "value": "={{ $env.EVOLUTION_ALERT_NUMBER || '9392095710' }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.mensagem_transferencia }}"
+            }
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 176],
+      "id": "a80ff662-5ada-40fb-8499-eb59294c9fad",
+      "name": "Evolution alerta interno",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [864, 160],
+      "id": "25b0acda-74c7-481c-a116-015798051fab",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [1136, 160],
+      "id": "52bb44f7-f0db-475c-9560-99e0515222e7",
+      "name": "Aggregate",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b132cbcf-15e4-4e48-8a06-09e1427118d6",
+              "name": "retorno",
+              "value": "sucesso",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1376, 160],
+      "id": "5a9c0579-c8f5-44ec-bb44-9aade7e1fbab",
+      "name": "Retorno sucesso"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          { "node": "If nao e numero teste", "type": "main", "index": 0 },
+          { "node": "Atribui ao time vendas", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Atribui ao time vendas": {
+      "main": [[{ "node": "Insere_etiqueta", "type": "main", "index": 0 }]]
+    },
+    "Insere_etiqueta": {
+      "main": [[{ "node": "Call INSERE ATENDIMENTO IXC", "type": "main", "index": 0 }]]
+    },
+    "Call INSERE ATENDIMENTO IXC": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 0 }]]
+    },
+    "If nao e numero teste": {
+      "main": [[{ "node": "Montar mensagem transferencia", "type": "main", "index": 0 }]]
+    },
+    "Montar mensagem transferencia": {
+      "main": [[{ "node": "Evolution alerta interno", "type": "main", "index": 0 }]]
+    },
+    "Evolution alerta interno": {
+      "main": [[{ "node": "Merge", "type": "main", "index": 1 }]]
+    },
+    "Merge": {
+      "main": [[{ "node": "Aggregate", "type": "main", "index": 0 }]]
+    },
+    "Aggregate": {
+      "main": [[{ "node": "Retorno sucesso", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "79075fb22e5045e1beb3493444de048310c5aee705e7f3d3f6b2ea7d89bc4b09"
+  }
+}

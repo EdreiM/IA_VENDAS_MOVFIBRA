@@ -369,6 +369,30 @@ def test_payload_imagem_plano_pronto_chatwoot() -> None:
     _assert(p["chatwoot_attachment_field"] == "attachments[]", p)
 
 
+def test_payload_transferencia_inclui_contexto() -> None:
+    from app.transfer_chatwoot import montar_payload_transferencia
+
+    estado = {
+        "id_cliente": "5593999999999@s.whatsapp.net",
+        "conversation_id": "18422",
+        "nome": "Maria Silva",
+        "fase": "cadastro",
+        "aguardando": "cpf",
+        "plano_confirmado": "MOV SUPER",
+        "cadastro_completo": False,
+        "ixc_cliente_id": "",
+        "ativado_ixc": False,
+        "cidade": "Santarem",
+        "bairro": "Centro",
+    }
+    p = montar_payload_transferencia(estado, "Cliente pediu humano")
+    _assert(p["motivo"] == "Cliente pediu humano", p)
+    _assert(p["conversation_id"] == "18422", p)
+    _assert(p["contexto"]["fase"] == "cadastro", p)
+    _assert(p["contexto"]["objetivo"] == "Cliente pediu humano", p)
+    _assert(p["transferido_humano"] is True, p)
+
+
 def test_termos_webhook_dispara_com_url_configurada() -> None:
     """Com TERMOS_PROVIDER=webhook, nunca simula envio local — POST no n8n."""
     from unittest.mock import MagicMock, patch

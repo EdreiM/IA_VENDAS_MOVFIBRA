@@ -44,5 +44,12 @@ Todas as rotas abaixo exigem `X-Admin-Token` se `ADMIN_API_TOKEN` estiver defini
 
 ## Automático na Eva
 
-Com `CHATWOOT_TRANSFER_ENABLED=true`, ao `TRANSFERIR_HUMANO` a Eva chama o handoff
-usando `CHATWOOT_TRANSFER_*` do `.env`.
+**Prioridade:**
+
+1. Ferramenta **transferir_atendimento** (painel ou `TRANSFER_WEBHOOK_URL`) → webhook n8n
+2. Se URL vazia: handoff nativo Chatwoot via ferramenta (fallback)
+3. Se ferramenta não existe: `CHATWOOT_TRANSFER_ENABLED=true` + `CHATWOOT_TRANSFER_*` do `.env`
+
+Com webhook n8n configurado, mantenha `CHATWOOT_TRANSFER_ENABLED=false` — o n8n faz assign/labels.
+
+Ver `n8n/TRANSFERIR_ATENDIMENTO.md`.

@@ -33,10 +33,12 @@ CATALOGO_FERRAMENTAS: list[dict[str, Any]] = [
             "(time/atendente/labels). Use quando o cliente pedir humano."
         ),
         "destaque": True,
-        "env_url": lambda s: "",
+        "env_url": lambda s: s.transfer_webhook_url,
         "parametros": [
             ("conversation_id", "texto", "ID da conversa no Chatwoot", True),
             ("motivo", "texto", "Motivo da transferência", False),
+            ("id_cliente", "texto", "JID/sessão WhatsApp", False),
+            ("contexto", "texto", "Snapshot resumido do estado (JSON)", False),
             ("assignee_id", "numero", "ID do atendente (opcional)", False),
             ("team_id", "numero", "ID do time (opcional)", False),
         ],
