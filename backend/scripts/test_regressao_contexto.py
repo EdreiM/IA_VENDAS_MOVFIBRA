@@ -369,6 +369,44 @@ def test_payload_imagem_plano_pronto_chatwoot() -> None:
     _assert(p["chatwoot_attachment_field"] == "attachments[]", p)
 
 
+def test_cidades_atendidas_nao_viram_bairro() -> None:
+    from types import SimpleNamespace
+
+    from app.localizacao_heuristica import (
+        aplicar_heuristica_localizacao,
+        classificar_token_unico,
+        extrair_par_cidade_bairro,
+    )
+
+    for cidade in (
+        "Altamira",
+        "Itaituba",
+        "Belterra",
+        "Mojuí dos Campos",
+        "Medicilândia",
+    ):
+        _assert(classificar_token_unico(cidade) == "cidade", cidade)
+
+    _assert(classificar_token_unico("Diamantino") == "bairro", "diamantino")
+
+    par = extrair_par_cidade_bairro("aqui no diamantino, santarem")
+    _assert(par is not None, par)
+    _assert(str(par["cidade"]).casefold().startswith("santar"), par)
+    _assert(str(par["bairro"]).casefold() == "diamantino", par)
+
+    dados = SimpleNamespace(cidade="", bairro="Santarem")
+    flags = aplicar_heuristica_localizacao(
+        mensagem="Santarem",
+        dados=dados,
+        estado={},
+        aguardando="localizacao",
+        fase="inicio",
+    )
+    _assert(flags["ajustou"] is True, flags)
+    _assert(str(dados.cidade).casefold().startswith("santar"), dados.cidade)
+    _assert(not dados.bairro, dados.bairro)
+
+
 def test_payload_transferencia_inclui_contexto() -> None:
     from app.transfer_chatwoot import montar_payload_transferencia
 
@@ -1241,6 +1279,8 @@ def main() -> None:
         test_cadastro_ok_dispara_enviar_termos,
         test_imagem_painel_com_conversation_id,
         test_payload_imagem_plano_pronto_chatwoot,
+        test_cidades_atendidas_nao_viram_bairro,
+        test_payload_transferencia_inclui_contexto,
         test_termos_webhook_dispara_com_url_configurada,
         test_termos_parcial_n8n_nao_assusta_cliente,
         test_termos_ok_nao_lista_planos,

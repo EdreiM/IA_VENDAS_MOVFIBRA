@@ -41,11 +41,35 @@ def _titulo(valor: str) -> str:
     return " ".join(p.capitalize() for p in v.split())
 
 
-CIDADES_CONHECIDAS = {
-    "santarem",
-    "santarem pa",
-    "maceio",
+# Cidades com cobertura MOV FIBRA (Pará) — nome normalizado → exibição
+CIDADES_ATENDIDAS_CANONICAS: dict[str, str] = {
+    "alenquer": "Alenquer",
+    "altamira": "Altamira",
+    "brasil novo": "Brasil Novo",
+    "itaituba": "Itaituba",
+    "medicilandia": "Medicilândia",
+    "ruropolis": "Rurópolis",
+    "santarem": "Santarém",
+    "belterra": "Belterra",
+    "mojui dos campos": "Mojuí dos Campos",
 }
+
+
+def _aliases_cidades_atendidas() -> set[str]:
+    aliases: set[str] = set()
+    for chave in CIDADES_ATENDIDAS_CANONICAS:
+        aliases.add(chave)
+        aliases.add(f"{chave} pa")
+    return aliases
+
+
+CIDADES_CONHECIDAS = _aliases_cidades_atendidas()
+
+
+def _canonical_cidade(norm: str) -> str:
+    chave = re.sub(r"\s+pa$", "", _norm(norm)).strip()
+    return CIDADES_ATENDIDAS_CANONICAS.get(chave, _titulo(norm))
+
 
 BAIRROS_CONHECIDOS = {
     "diamantino",
@@ -66,6 +90,8 @@ def _extrair_conhecido_em(texto: str, tipo: str) -> str | None:
     lista = CIDADES_CONHECIDAS if tipo == "cidade" else BAIRROS_CONHECIDOS
     for item in sorted(lista, key=len, reverse=True):
         if item == n or re.search(rf"\b{re.escape(item)}\b", n):
+            if tipo == "cidade":
+                return _canonical_cidade(item)
             return _titulo(item)
     return None
 
@@ -80,27 +106,32 @@ def _limpar_nome_local(nome: str, *, preferir: str | None = None) -> str:
         "",
         n,
     ).strip()
+    n = re.sub(
+        r"^(?:aqui|moro|estou|to|fico|sou)\s+(?:no|na|em|de)\s+",
+        "",
+        n,
+    ).strip()
     n = re.sub(r"^(?:o|a|de|do|da|que)\s+", "", n).strip()
 
     ordem_bairro = sorted(BAIRROS_CONHECIDOS, key=len, reverse=True)
     ordem_cidade = sorted(CIDADES_CONHECIDAS, key=len, reverse=True)
 
-    def _acha(lista: set[str] | list[str]) -> str | None:
+    def _acha(lista: set[str] | list[str], *, como_cidade: bool = False) -> str | None:
         for item in lista:
             if item == n or re.search(rf"\b{re.escape(item)}\b", n):
-                return _titulo(item)
+                return _canonical_cidade(item) if como_cidade else _titulo(item)
         return None
 
     if preferir == "cidade":
-        return _acha(ordem_cidade) or _titulo(n)
+        return _acha(ordem_cidade, como_cidade=True) or _titulo(n)
     if preferir == "bairro":
         return _acha(ordem_bairro) or _titulo(n)
 
     # genérico: cidade antes de bairro só se match exato de cidade
-    hit_c = _acha(ordem_cidade)
+    hit_c = _acha(ordem_cidade, como_cidade=True)
     hit_b = _acha(ordem_bairro)
     if hit_c and (not hit_b or _norm(hit_c) == n):
-        return hit_c
+        return _canonical_cidade(hit_c)
     if hit_b:
         return hit_b
     return _titulo(n)
@@ -179,15 +210,18 @@ def extrair_par_cidade_bairro(mensagem: str) -> dict[str, str] | None:
         if esq_cls == "bairro" and not dir_cls:
             cid = _extrair_conhecido_em(dir_raw, "cidade")
             if cid:
-                esq, dir_ = cid, esq
+                esq = cid
+                dir_ = _limpar_nome_local(esq_raw, preferir="bairro")
         elif esq_cls == "bairro" and dir_cls == "cidade":
-            esq, dir_ = dir_, esq
+            esq = _limpar_nome_local(dir_raw, preferir="cidade")
+            dir_ = _limpar_nome_local(esq_raw, preferir="bairro")
         elif esq_cls == "cidade" and dir_cls == "bairro":
             pass
         elif esq_cls == "bairro" and dir_cls != "cidade":
             cid = _extrair_conhecido_em(dir_raw, "cidade")
             if cid:
-                esq, dir_ = cid, esq
+                esq = cid
+                dir_ = _limpar_nome_local(esq_raw, preferir="bairro")
 
         if esq and dir_ and _norm(esq) != _norm(dir_):
             return {"cidade": esq, "bairro": dir_, "papel": "par"}
@@ -242,7 +276,7 @@ def extrair_clarificacao_localizacao(mensagem: str) -> dict[str, str] | None:
                 resto = n[len(c) :].strip()
                 if resto:
                     return {
-                        "cidade": _titulo(c),
+                        "cidade": _canonical_cidade(c),
                         "bairro": _limpar_nome_local(resto, preferir="bairro"),
                         "papel": "par",
                     }
@@ -255,10 +289,20 @@ def extrair_clarificacao_localizacao(mensagem: str) -> dict[str, str] | None:
 
 def classificar_token_unico(token: str) -> str | None:
     n = _norm(token)
-    if not n or "," in n or " e " in n or len(n.split()) > 3:
+    if not n or "," in n or " e " in n:
         return None
-    em_cidade = n in CIDADES_CONHECIDAS
+    if len(n.split()) > 4:
+        return None
+
+    chave = re.sub(r"\s+pa$", "", n).strip()
+    em_cidade = chave in CIDADES_ATENDIDAS_CANONICAS or n in CIDADES_CONHECIDAS
+    if not em_cidade:
+        em_cidade = bool(_extrair_conhecido_em(n, "cidade"))
+
     em_bairro = n in BAIRROS_CONHECIDOS
+    if not em_bairro:
+        em_bairro = bool(_extrair_conhecido_em(n, "bairro"))
+
     if em_bairro and not em_cidade:
         return "bairro"
     if em_cidade and not em_bairro:
@@ -361,5 +405,19 @@ def aplicar_heuristica_localizacao(
         else:
             dados.bairro = ""
         flags["ajustou"] = True
+
+    # Frase com cidade atendida + bairro conhecido (ex.: "aqui no diamantino, santarem")
+    if not flags["ajustou"]:
+        cid_frase = _extrair_conhecido_em(mensagem, "cidade")
+        bai_frase = _extrair_conhecido_em(mensagem, "bairro")
+        if cid_frase and bai_frase and _norm(cid_frase) != _norm(bai_frase):
+            dados.cidade = cid_frase
+            dados.bairro = bai_frase
+            flags["ajustou"] = True
+        elif cid_frase and classificar_token_unico(_texto(dados.bairro) or _texto(dados.cidade)) != "bairro":
+            if _texto(dados.bairro) and _norm(dados.bairro) == _norm(cid_frase):
+                dados.bairro = ""
+            dados.cidade = cid_frase
+            flags["ajustou"] = True
 
     return flags
