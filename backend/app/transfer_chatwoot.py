@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -27,10 +28,21 @@ def labels_do_env() -> list[str]:
     return [p.strip() for p in (settings.chatwoot_transfer_labels or "").split(",") if p.strip()]
 
 
-def montar_payload_transferencia(estado: dict[str, Any], motivo: str) -> dict[str, Any]:
+def _serializar_valor_n8n(valor: Any) -> str:
+    """Execute Workflow n8n (convertFieldsToString) exige strings nos inputs."""
+    if valor is None:
+        return ""
+    if isinstance(valor, bool):
+        return "true" if valor else "false"
+    if isinstance(valor, (dict, list)):
+        return json.dumps(valor, ensure_ascii=False)
+    return str(valor)
+
+
+def montar_payload_transferencia(estado: dict[str, Any], motivo: str) -> dict[str, str]:
     """
     Pacote enviado ao webhook n8n `transferir_atendimento_eva`.
-    Inclui snapshot completo + campo `contexto` resumido para o subfluxo.
+    Todos os valores são string — compatível com Execute Workflow + convertFieldsToString.
     """
     from app.webhook_payload import snapshot_cliente
 
@@ -51,7 +63,7 @@ def montar_payload_transferencia(estado: dict[str, Any], motivo: str) -> dict[st
         "agendamento_confirmado": snap.get("agendamento_confirmado"),
         "termos_enviados": bool(estado.get("termos_enviados")),
     }
-    return {
+    bruto: dict[str, Any] = {
         **snap,
         "motivo": motivo_txt,
         "contexto": ctx,
@@ -59,6 +71,7 @@ def montar_payload_transferencia(estado: dict[str, Any], motivo: str) -> dict[st
         "termos_enviados": bool(estado.get("termos_enviados")),
         "transferido_humano": True,
     }
+    return {k: _serializar_valor_n8n(v) for k, v in bruto.items()}
 
 
 def handoff_por_config(

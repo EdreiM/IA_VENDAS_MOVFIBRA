@@ -29,7 +29,7 @@
           "value": {
             "id_cliente": "={{ $json.body.id_cliente || $json.id_cliente }}",
             "motivo": "={{ $json.body.motivo || $json.motivo || 'TRANSFERIR_HUMANO' }}",
-            "contexto": "={{ JSON.stringify($json.body.contexto || $json.contexto || {}) }}",
+            "contexto": "={{ $json.body.contexto || $json.contexto || '{}' }}",
             "conversation_id": "={{ $json.body.conversation_id || $json.conversation_id }}",
             "contact_id": "={{ $json.body.contact_id || $json.contact_id || '' }}",
             "nome": "={{ $json.body.nome || $json.nome || '' }}",
@@ -40,14 +40,14 @@
             "fase": "={{ $json.body.fase || $json.fase || '' }}",
             "aguardando": "={{ $json.body.aguardando || $json.aguardando || '' }}",
             "plano_confirmado": "={{ $json.body.plano_confirmado || $json.plano_confirmado || '' }}",
-            "cadastro_completo": "={{ $json.body.cadastro_completo ?? $json.cadastro_completo ?? false }}",
+            "cadastro_completo": "={{ $json.body.cadastro_completo ?? $json.cadastro_completo ?? 'false' }}",
             "ixc_cliente_id": "={{ $json.body.ixc_cliente_id || $json.ixc_cliente_id || $json.body.ixc_id_cliente || $json.ixc_id_cliente || '' }}",
             "id_contrato_ixc": "={{ $json.body.id_contrato_ixc || $json.id_contrato_ixc || '' }}",
             "os_id": "={{ $json.body.os_id || $json.os_id || '' }}",
-            "ativado_ixc": "={{ $json.body.ativado_ixc ?? $json.ativado_ixc ?? false }}",
+            "ativado_ixc": "={{ $json.body.ativado_ixc ?? $json.ativado_ixc ?? 'false' }}",
             "buffer": "={{ $json.body.buffer || $json.buffer || '' }}",
-            "mensagens": "={{ JSON.stringify($json.body.mensagens || $json.mensagens || []) }}",
-            "total_mensagens": "={{ $json.body.total_mensagens ?? $json.total_mensagens ?? 0 }}"
+            "mensagens": "={{ $json.body.mensagens || $json.mensagens || '[]' }}",
+            "total_mensagens": "={{ $json.body.total_mensagens ?? $json.total_mensagens ?? '0' }}"
           },
           "matchingColumns": [],
           "schema": [

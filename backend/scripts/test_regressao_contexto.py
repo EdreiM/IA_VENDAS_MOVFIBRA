@@ -408,6 +408,8 @@ def test_cidades_atendidas_nao_viram_bairro() -> None:
 
 
 def test_payload_transferencia_inclui_contexto() -> None:
+    import json
+
     from app.transfer_chatwoot import montar_payload_transferencia
 
     estado = {
@@ -426,11 +428,14 @@ def test_payload_transferencia_inclui_contexto() -> None:
     p = montar_payload_transferencia(estado, "Cliente pediu humano")
     _assert(p["motivo"] == "Cliente pediu humano", p)
     _assert(p["conversation_id"] == "18422", p)
-    _assert(p["contexto"]["fase"] == "cadastro", p)
-    _assert(p["contexto"]["objetivo"] == "Cliente pediu humano", p)
-    _assert(p["transferido_humano"] is True, p)
-    _assert("buffer" in p, p)
-    _assert("mensagens" in p, p)
+    _assert(isinstance(p["contexto"], str), p)
+    ctx = json.loads(p["contexto"])
+    _assert(ctx["fase"] == "cadastro", ctx)
+    _assert(ctx["objetivo"] == "Cliente pediu humano", ctx)
+    _assert(p["transferido_humano"] == "true", p)
+    _assert(p["cadastro_completo"] == "false", p)
+    _assert(isinstance(p["mensagens"], str), p)
+    _assert(json.loads(p["mensagens"]) == [], p)
 
 
 def test_termos_webhook_dispara_com_url_configurada() -> None:

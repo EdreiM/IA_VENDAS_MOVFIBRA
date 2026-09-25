@@ -56,7 +56,9 @@ Campos principais (snapshot completo + extras):
 | `conversation_id` | `18422` | assign + labels Chatwoot |
 | `id_cliente` | `5593999999999@s.whatsapp.net` | referência / alerta |
 | `motivo` | `Cliente pediu humano` | mensagem interna |
-| `contexto` | `{ fase, aguardando, plano_confirmado, ... }` | resumo do estado |
+| `contexto` | JSON **string** `{ fase, aguardando, ... }` | resumo do estado |
+| `mensagens` | JSON **string** (array) | histórico para INSERE IXC |
+| `cadastro_completo`, `ativado_ixc` | `"true"` / `"false"` | strings (n8n Execute Workflow) |
 | `nome`, `cpf`, `telefone` | cadastro | alerta Evolution |
 | `cidade`, `bairro` | localização | alerta |
 | `plano_confirmado` | `MOV SUPER` | alerta |
