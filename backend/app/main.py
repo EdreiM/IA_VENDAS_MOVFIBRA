@@ -95,6 +95,8 @@ class ConfigIaIn(BaseModel):
     rag_provider: str = "webhook"
     rag_webhook_url: str = ""
     rag_webhook_token: str = ""
+    message_buffer_enabled: bool = True
+    message_buffer_seconds: float = 3.5
     unidade_id: int | None = None
 
 
@@ -442,7 +444,9 @@ def chat_endpoint(body: ChatIn):
                 contact_id=body.contact_id,
             )
 
-        if body.buffer and settings.message_buffer_enabled:
+        from app.ia_config import resolver_message_buffer_enabled
+
+        if body.buffer and resolver_message_buffer_enabled():
             result = processar_com_buffer(id_cliente, body.mensagem, _process)
         else:
             result = _process(id_cliente, body.mensagem)

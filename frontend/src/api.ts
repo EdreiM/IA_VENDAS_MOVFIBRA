@@ -322,6 +322,8 @@ export type ConfigIa = {
   rag_webhook_url: string;
   rag_webhook_token_mask: string;
   rag_webhook_token_configured: boolean;
+  message_buffer_enabled: boolean;
+  message_buffer_seconds: number;
 };
 
 export const fetchConfigIa = (unidade_id?: number) => {
@@ -341,6 +343,7 @@ export type ConfigChatwoot = {
   inbound_mode: string;
   allowlist_phones: string;
   buffer_enabled: boolean;
+  buffer_seconds: number;
   public_base_url: string;
   webhook_url: string;
   webhook_token_configured: boolean;

@@ -29,7 +29,7 @@
           "value": {
             "id_cliente": "={{ $json.body.id_cliente || $json.id_cliente }}",
             "motivo": "={{ $json.body.motivo || $json.motivo || 'TRANSFERIR_HUMANO' }}",
-            "contexto": "={{ $json.body.contexto || $json.contexto || {} }}",
+            "contexto": "={{ JSON.stringify($json.body.contexto || $json.contexto || {}) }}",
             "conversation_id": "={{ $json.body.conversation_id || $json.conversation_id }}",
             "contact_id": "={{ $json.body.contact_id || $json.contact_id || '' }}",
             "nome": "={{ $json.body.nome || $json.nome || '' }}",
@@ -46,14 +46,14 @@
             "os_id": "={{ $json.body.os_id || $json.os_id || '' }}",
             "ativado_ixc": "={{ $json.body.ativado_ixc ?? $json.ativado_ixc ?? false }}",
             "buffer": "={{ $json.body.buffer || $json.buffer || '' }}",
-            "mensagens": "={{ $json.body.mensagens || $json.mensagens || [] }}",
+            "mensagens": "={{ JSON.stringify($json.body.mensagens || $json.mensagens || []) }}",
             "total_mensagens": "={{ $json.body.total_mensagens ?? $json.total_mensagens ?? 0 }}"
           },
           "matchingColumns": [],
           "schema": [
             { "id": "id_cliente", "displayName": "id_cliente", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "motivo", "displayName": "motivo", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "contexto", "displayName": "contexto", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "object" },
+            { "id": "contexto", "displayName": "contexto", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "conversation_id", "displayName": "conversation_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "nome", "displayName": "nome", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
@@ -70,7 +70,7 @@
             { "id": "os_id", "displayName": "os_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "ativado_ixc", "displayName": "ativado_ixc", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "boolean" },
             { "id": "buffer", "displayName": "buffer", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "mensagens", "displayName": "mensagens", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "array" },
+            { "id": "mensagens", "displayName": "mensagens", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "total_mensagens", "displayName": "total_mensagens", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "number" }
           ],
           "attemptToConvertTypes": false,

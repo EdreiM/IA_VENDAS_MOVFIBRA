@@ -6,18 +6,30 @@
 const trigger = $('When Executed by Another Workflow').first().json;
 const src = { ...trigger, ...$input.first().json };
 
+function parseJsonField(value, fallback) {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    return fallback;
+  }
+}
+
+const contexto = parseJsonField(src.contexto, {});
+
 const motivo =
-  (src.motivo || src.contexto?.objetivo || '').trim() || 'não especificado';
+  (src.motivo || contexto.objetivo || '').trim() || 'não especificado';
 
 const wa = String(src.id_cliente || '')
   .replace('@s.whatsapp.net', '')
   .replace('@c.us', '');
 
-const fase = src.fase || src.contexto?.fase || 'desconhecida';
-const aguardando = src.aguardando || src.contexto?.aguardando || '—';
-const cadOk = Boolean(src.cadastro_completo ?? src.contexto?.cadastro_completo);
-const ixc = src.ixc_cliente_id || src.ixc_id_cliente || src.contexto?.ixc_cliente_id || '';
-const ativ = Boolean(src.ativado_ixc ?? src.contexto?.ativado_ixc);
+const fase = src.fase || contexto.fase || 'desconhecida';
+const aguardando = src.aguardando || contexto.aguardando || '—';
+const cadOk = Boolean(src.cadastro_completo ?? contexto.cadastro_completo);
+const ixc = src.ixc_cliente_id || src.ixc_id_cliente || contexto.ixc_cliente_id || '';
+const ativ = Boolean(src.ativado_ixc ?? contexto.ativado_ixc);
 
 const linhas = [
   '🔔 Transferência de Atendimento',

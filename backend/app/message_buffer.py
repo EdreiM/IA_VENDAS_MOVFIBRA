@@ -7,8 +7,6 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from app.config import get_settings
-
 logger = logging.getLogger(__name__)
 
 
@@ -47,13 +45,11 @@ def processar_com_buffer(
     Debounce: aguarda MESSAGE_BUFFER_SECONDS por novas mensagens
     e processa tudo junto em um único turno.
     """
-    settings = get_settings()
-    if not settings.message_buffer_enabled:
-        return process_fn(id_cliente, mensagem)
+    from app.ia_config import resolver_message_buffer_seconds
 
     buf = _get_buffer(id_cliente)
     evento = threading.Event()
-    segundos = max(0.5, float(settings.message_buffer_seconds))
+    segundos = resolver_message_buffer_seconds()
 
     with buf.lock:
         buf.messages.append(mensagem.strip())

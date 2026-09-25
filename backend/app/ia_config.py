@@ -91,6 +91,34 @@ def resolver_rag_webhook_token(*, unidade_id: int | None = None) -> str:
     return (get_settings().rag_webhook_token or "").strip()
 
 
+def _normalizar_buffer_seconds(valor: Any, *, unidade_id: int | None = None) -> float:
+    if valor is None or str(valor).strip() == "":
+        return resolver_message_buffer_seconds(unidade_id=unidade_id)
+    try:
+        return max(0.5, min(30.0, float(str(valor).replace(",", "."))))
+    except (TypeError, ValueError):
+        return resolver_message_buffer_seconds(unidade_id=unidade_id)
+
+
+def resolver_message_buffer_enabled(*, unidade_id: int | None = None) -> bool:
+    db = _cfg("message_buffer_enabled", "", unidade_id=unidade_id).lower()
+    if db in {"1", "true", "sim", "yes", "on"}:
+        return True
+    if db in {"0", "false", "nao", "não", "no", "off"}:
+        return False
+    return bool(get_settings().message_buffer_enabled)
+
+
+def resolver_message_buffer_seconds(*, unidade_id: int | None = None) -> float:
+    raw = _cfg("message_buffer_seconds", "", unidade_id=unidade_id).strip()
+    if raw:
+        try:
+            return max(0.5, min(30.0, float(raw.replace(",", "."))))
+        except ValueError:
+            pass
+    return max(0.5, float(get_settings().message_buffer_seconds or 3.5))
+
+
 def resolver_rag_provider(*, unidade_id: int | None = None) -> str:
     """
     Fonte da verdade: painel.
@@ -130,11 +158,15 @@ def obter_config_ia(*, unidade_id: int | None = None) -> dict[str, Any]:
         "rag_webhook_url": rag_url,
         "rag_webhook_token_mask": _mask(rag_token) if rag_token else "",
         "rag_webhook_token_configured": bool(rag_token),
+        "message_buffer_enabled": resolver_message_buffer_enabled(unidade_id=unidade_id),
+        "message_buffer_seconds": resolver_message_buffer_seconds(unidade_id=unidade_id),
         "env_fallback": {
             "llm_provider": settings.llm_provider,
             "openai_model": settings.openai_model,
             "openai_configured": bool((settings.openai_api_key or "").strip()),
             "rag_webhook_url": settings.rag_webhook_url or "",
+            "message_buffer_enabled": settings.message_buffer_enabled,
+            "message_buffer_seconds": settings.message_buffer_seconds,
         },
     }
 
@@ -155,6 +187,8 @@ def salvar_config_ia(dados: dict[str, Any], *, unidade_id: int | None = None) ->
         "llm_temperature": str(dados.get("llm_temperature") if dados.get("llm_temperature") is not None else "0.3"),
         "rag_provider": rag_provider,
         "rag_webhook_url": rag_url,
+        "message_buffer_enabled": "1" if dados.get("message_buffer_enabled") else "0",
+        "message_buffer_seconds": str(_normalizar_buffer_seconds(dados.get("message_buffer_seconds"), unidade_id=unidade_id)),
     }
     for k, v in plain.items():
         admin_store.set_config(k, v, unidade_id=unidade_id)

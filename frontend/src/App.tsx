@@ -284,6 +284,8 @@ export default function App() {
     rag_provider: "webhook",
     rag_webhook_url: "",
     rag_webhook_token: "",
+    message_buffer_enabled: true,
+    message_buffer_seconds: 3.5,
   });
   const [iaMasks, setIaMasks] = useState({
     openai: "",
@@ -309,6 +311,7 @@ export default function App() {
     token_configured: false,
     api_mask: "",
     api_configured: false,
+    buffer_seconds: 3.5,
   });
   const [inboxes, setInboxes] = useState<Option[]>([]);
   const [cwTestPayload, setCwTestPayload] = useState("");
@@ -456,6 +459,8 @@ export default function App() {
       rag_provider: c.rag_provider || "webhook",
       rag_webhook_url: c.rag_webhook_url || "",
       rag_webhook_token: "",
+      message_buffer_enabled: c.message_buffer_enabled !== false,
+      message_buffer_seconds: Number(c.message_buffer_seconds ?? 3.5),
     });
     setIaMasks({
       openai: c.openai_api_key_mask || "",
@@ -494,6 +499,7 @@ export default function App() {
       token_configured: !!cfg.webhook_token_configured,
       api_mask: cfg.chatwoot_api_token_mask || "",
       api_configured: !!cfg.chatwoot_api_configured,
+      buffer_seconds: Number(cfg.buffer_seconds ?? 3.5),
     });
     try {
       const inb = await fetchInboxes();
@@ -856,6 +862,8 @@ export default function App() {
         llm_temperature: Number(saved.llm_temperature ?? 0.3),
         rag_provider: saved.rag_provider || "webhook",
         rag_webhook_url: saved.rag_webhook_url || "",
+        message_buffer_enabled: saved.message_buffer_enabled !== false,
+        message_buffer_seconds: Number(saved.message_buffer_seconds ?? 3.5),
       }));
       setIaMasks({
         openai: saved.openai_api_key_mask || "",
@@ -2198,6 +2206,46 @@ export default function App() {
                 Pode usar emoji nas respostas
               </label>
 
+              <div className="config-box span2">
+                <strong>Fila de mensagens</strong>
+                <small className="field-hint">
+                  Quando o cliente manda várias mensagens seguidas, a Eva espera o tempo abaixo
+                  após a última antes de responder (debounce). Vale para o endpoint{" "}
+                  <code>/chat</code> com <code>buffer: true</code> e para o webhook Chatwoot
+                  direto quando o agrupamento estiver ligado na aba Chatwoot.
+                </small>
+                <div className="form-grid" style={{ marginTop: "0.75rem" }}>
+                  <label className="check span2">
+                    <input
+                      type="checkbox"
+                      checked={iaForm.message_buffer_enabled}
+                      onChange={(e) =>
+                        setIaForm({ ...iaForm, message_buffer_enabled: e.target.checked })
+                      }
+                    />
+                    Agrupar mensagens rápidas antes de processar
+                  </label>
+                  <label>
+                    Tempo de espera (segundos)
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0.5"
+                      max="30"
+                      value={iaForm.message_buffer_seconds}
+                      disabled={!iaForm.message_buffer_enabled}
+                      onChange={(e) =>
+                        setIaForm({
+                          ...iaForm,
+                          message_buffer_seconds: Number(e.target.value),
+                        })
+                      }
+                    />
+                    <small className="field-hint">Mín. 0,5s · máx. 30s · padrão 3,5s</small>
+                  </label>
+                </div>
+              </div>
+
               <label>
                 Provedor
                 <select
@@ -2480,7 +2528,8 @@ export default function App() {
                   checked={cwForm.buffer_enabled}
                   onChange={(e) => setCwForm({ ...cwForm, buffer_enabled: e.target.checked })}
                 />
-                Agrupar mensagens rápidas (debounce ~3,5s antes de responder)
+                Agrupar mensagens no webhook Chatwoot (usa tempo da Config IA:{" "}
+                {cwMeta.buffer_seconds}s)
               </label>
 
               <div className="actions span2">

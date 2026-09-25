@@ -63,6 +63,12 @@ def resolver_allowlist_phones(*, unidade_id: int | None = None) -> str:
     return (get_settings().sofia_allowlist_phones or "").strip()
 
 
+def resolver_buffer_seconds(*, unidade_id: int | None = None) -> float:
+    from app.ia_config import resolver_message_buffer_seconds
+
+    return resolver_message_buffer_seconds(unidade_id=unidade_id)
+
+
 def resolver_buffer_enabled(*, unidade_id: int | None = None) -> bool:
     db = _cfg("chatwoot_buffer_enabled", "", unidade_id=unidade_id).lower()
     if db in {"1", "true", "sim", "yes", "on"}:
@@ -130,6 +136,7 @@ def obter_config_chatwoot(*, unidade_id: int | None = None) -> dict[str, Any]:
         "inbound_mode": resolver_inbound_mode(unidade_id=unidade_id),
         "allowlist_phones": resolver_allowlist_phones(unidade_id=unidade_id),
         "buffer_enabled": resolver_buffer_enabled(unidade_id=unidade_id),
+        "buffer_seconds": resolver_buffer_seconds(unidade_id=unidade_id),
         "public_base_url": resolver_public_base_url(unidade_id=unidade_id),
         "webhook_url": resolver_webhook_url(unidade_id=unidade_id),
         "webhook_token_configured": bool(token),
@@ -144,6 +151,7 @@ def obter_config_chatwoot(*, unidade_id: int | None = None) -> dict[str, Any]:
             "inbound_mode": settings.sofia_inbound_mode,
             "allowlist_phones": settings.sofia_allowlist_phones or "",
             "buffer_enabled": settings.chatwoot_buffer_enabled,
+            "message_buffer_seconds": settings.message_buffer_seconds,
             "public_base_url": settings.public_base_url or "",
         },
     }
