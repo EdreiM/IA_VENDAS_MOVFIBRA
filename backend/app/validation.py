@@ -29,6 +29,44 @@ def rua_parece_eco_nome(rua: str, nome: str) -> bool:
     return bool(r and n and r == n)
 
 
+_CHAVES_RUA_INVALIDA = (
+    "plano",
+    "planos",
+    "combo",
+    " mov ",
+    "mov ",
+    "infinity",
+    "essencial",
+    "flex",
+    "super",
+    "mais barato",
+    "mais barata",
+    "mais caro",
+    "mais forte",
+    "outro plano",
+    "outros planos",
+    "quero um",
+    "trocar de plano",
+    "mudar de plano",
+    "opcoes",
+    "opcao",
+    "mensalidade",
+    "preco",
+    "quanto custa",
+    "instalar",
+    "instalacao",
+    "taxa",
+)
+
+
+def rua_parece_frase_invalida(rua: str) -> bool:
+    """Frase conversacional/planos gravada como logradouro."""
+    t = _normalizar_nome(rua)
+    if not t or len(t.split()) < 3:
+        return False
+    return any(k in t for k in _CHAVES_RUA_INVALIDA)
+
+
 def validar_campo(campo: str, valor: str, *, nome_cliente: str = "") -> str | None:
     """
     Retorna motivo amigável se inválido, ou None se ok.
@@ -78,6 +116,8 @@ def validar_campo(campo: str, valor: str, *, nome_cliente: str = "") -> str | No
             return "preciso do nome da rua"
         if rua_parece_eco_nome(v, nome_cliente):
             return "preciso do nome da rua (logradouro), não o seu nome"
+        if rua_parece_frase_invalida(v):
+            return "preciso do nome da rua (logradouro), não uma pergunta ou pedido de plano"
         return None
 
     if campo == "numero":

@@ -18,12 +18,14 @@ from app.models import Evento
 from app.parser import (
     eh_aceite_termos_explicito,
     eh_confirmacao,
+    eh_mensagem_sobre_planos,
     eh_pedido_lista_completa_planos,
     eh_pergunta_cobertura_informativa,
     eh_pergunta_mudanca_endereco,
     parse_interpretacao,
     tem_duvida_informativa,
 )
+from app.validation import rua_parece_frase_invalida
 from app.plans import resolver_plano
 from app.response import gerar_resposta
 from app.resolver import resolver
@@ -686,6 +688,59 @@ def test_fluxo_edrei_rua_nao_vai_pro_nome() -> None:
     _assert(str(estado3.get("bairro") or "").casefold() == "diamantino", f"bairro={estado3.get('bairro')}")
 
 
+def test_correcao_rua_natural_confirmacao_dados() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "confirmacao_dados",
+        "nome": "Edrei testes",
+        "cpf": "60421079096",
+        "email": "edreitestes@gmail.com",
+        "telefone": "93992219098",
+        "data_nascimento": "16/08/2000",
+        "cep": "68020000",
+        "rua": "Tem Qual Outros Planos Ai Quero Um Mais Barato",
+        "numero": "12",
+        "plano_confirmado": "MOV FLEX",
+        "cidade": "Santarem",
+        "bairro": "Diamantino",
+        "ultimo_topico": "instalacao",
+    }
+    i = parse_interpretacao(
+        _raw({"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.8}),
+        "A rua é sergio henn",
+        estado,
+    )
+    _assert("sergio" in (i.dados.rua or "").casefold(), f"rua={i.dados.rua}")
+    _assert("rua" in i.campos_corrigidos, i.campos_corrigidos)
+    _assert(Evento.CORRECAO_DADO.value in i.eventos, i.eventos)
+    _assert(Evento.PERGUNTA.value not in i.eventos, i.eventos)
+
+    dec = _decidir_sem_executar(
+        estado,
+        "A rua é sergio henn",
+        {
+            "eventos": ["CORRECAO_DADO", "DADO_INFORMADO"],
+            "dados": {"rua": "sergio henn"},
+            "campos_corrigidos": ["rua"],
+        },
+    )
+    _assert(
+        dec.objetivo_resposta == "CONFIRMAR_DADOS_CADASTRO",
+        dec.objetivo_resposta,
+    )
+    _assert(
+        str((dec.atualizar_dados or {}).get("rua") or "").casefold() == "sergio henn",
+        dec.atualizar_dados,
+    )
+
+    dec2 = _decidir_sem_executar(
+        estado,
+        "A rua ta errada",
+        {"eventos": ["CORRECAO_DADO", "NEGACAO"], "dados": {"rua": ""}, "campos_corrigidos": ["rua"]},
+    )
+    _assert(dec2.objetivo_resposta == "PEDIR_CORRECAO_RUA", dec2.objetivo_resposta)
+
+
 def test_correcao_rotulada_confirmacao_dados() -> None:
     estado = {
         "fase": "cadastro",
@@ -840,6 +895,55 @@ def test_cadastro_nao_repete_nem_troca_nome_pela_rua() -> None:
     _assert("número" in msg.casefold() or "numero" in msg.casefold(), msg)
 
 
+def test_plano_no_meio_do_cadastro_nao_vai_para_rua() -> None:
+    msg = "tem qual outros planos ai quero um mais barato"
+    _assert(eh_mensagem_sobre_planos(msg), msg)
+    _assert(
+        rua_parece_frase_invalida("Tem Qual Outros Planos Ai Quero Um Mais Barato"),
+        "rua invalida",
+    )
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "telefone",
+        "plano_confirmado": "MOV INFINITY",
+        "nome": "Edrei testes",
+        "cpf": "60421079096",
+        "email": "edreitestes@gmail.com",
+    }
+    raw = _raw({"eventos": ["PEDIU_TROCAR_PLANO"], "dados": {}, "confianca": 0.9})
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(not i.dados.rua, f"rua={i.dados.rua}")
+    _assert(
+        Evento.PEDIU_TROCAR_PLANO.value in i.eventos
+        or Evento.PLANO_INFORMADO.value in i.eventos,
+        i.eventos,
+    )
+
+    dec = _decidir_sem_executar(
+        {
+            **estado,
+            "telefone": "93992219098",
+            "data_nascimento": "16/08/2000",
+            "cep": "68020000",
+            "aguardando": "rua",
+        },
+        "sergio henn",
+        {"eventos": ["DADO_INFORMADO"], "dados": {"rua": "sergio henn"}},
+    )
+    _assert(str((dec.atualizar_dados or {}).get("rua") or "") == "sergio henn", dec.atualizar_dados)
+
+    dec_plano = _decidir_sem_executar(
+        {**estado, "aguardando": "telefone"},
+        msg,
+        {
+            "eventos": ["PEDIU_TROCAR_PLANO", "PLANO_INFORMADO"],
+            "dados": {"rua": msg, "plano": msg},
+        },
+    )
+    dados = dec_plano.atualizar_dados or {}
+    _assert(not dados.get("rua"), f"rua indevida={dados.get('rua')}")
+
+
 def test_pedido_lista_completa_planos() -> None:
     for msg in (
         "Quais os outros",
@@ -884,6 +988,8 @@ def test_listar_todos_quando_pediu_outras_opcoes() -> None:
 
 def main() -> None:
     tests = [
+        test_correcao_rua_natural_confirmacao_dados,
+        test_plano_no_meio_do_cadastro_nao_vai_para_rua,
         test_pedido_lista_completa_planos,
         test_mais_forte_resolve_premium,
         test_listar_todos_quando_pediu_outras_opcoes,

@@ -703,7 +703,7 @@ def _extrair_nome_livre(bruto: str) -> str:
     return ""
 
 
-def _split_rua_numero(bruto: str) -> tuple[str, str]:
+def _split_rua_numero(bruto: str, *, aguardando: str = "") -> tuple[str, str]:
     principal = _parte_principal_dado(bruto).strip()
     if re.fullmatch(r"\d+[A-Za-z]?", principal):
         return "", principal
@@ -714,7 +714,12 @@ def _split_rua_numero(bruto: str) -> tuple[str, str]:
     )
     if m and len(m.group("rua").strip()) >= 3:
         return m.group("rua").strip(" ,"), m.group("num")
-    if len(principal) >= 3 and not _parece_cpf_cnpj("", principal):
+    if (
+        aguardando == "rua"
+        and len(principal) >= 3
+        and not _parece_cpf_cnpj("", principal)
+        and not eh_mensagem_sobre_planos(normalizar_texto(principal), principal)
+    ):
         return principal[:160], ""
     return "", ""
 
@@ -752,18 +757,28 @@ def _extrair_rua_rotulo(bruto: str) -> str:
 
 
 def _extrair_correcoes_rotuladas(msg_bruto: str) -> dict[str, str]:
-    """Correções explícitas no resumo ('Rua: X', 'Pode colocar o bairro: Y')."""
+    """Correções no resumo ('Rua: X', 'A rua é X', 'Pode colocar o bairro: Y')."""
     bruto = texto(msg_bruto)
     if not bruto:
         return {}
     padroes: tuple[tuple[str, str], ...] = (
         ("rua", r"(?i)\bru[aá]\s*[:\-]\s*(.+?)\s*$"),
+        ("rua", r"(?i)\b(?:a|minha|o)\s+ru[aá]\s*(?:é|e|eh)\s+(.+?)\s*$"),
+        ("rua", r"(?i)\b(?:na verdade|corrigindo)[,:\s]+(?:a\s+)?ru[aá]\s*(?:é|e|eh)?\s*(.+?)\s*$"),
         ("bairro", r"(?i)(?:pode\s+colocar\s+(?:o\s+)?bairro|bairro)\s*[:\-]\s*(.+?)\s*$"),
+        ("bairro", r"(?i)\b(?:o|meu)\s+bairro\s*(?:é|e|eh)\s+(.+?)\s*$"),
         ("email", r"(?i)e-?mail\s*[:\-]\s*(\S+@\S+\.\S+)"),
+        ("email", r"(?i)\b(?:o|meu)\s+e?-?mail\s*(?:é|e|eh)\s+(\S+@\S+\.\S+)"),
         ("telefone", r"(?i)telefone\s*[:\-]\s*([\d\s().+-]{8,})"),
+        ("telefone", r"(?i)\b(?:o|meu)\s+telefone\s*(?:é|e|eh)\s+([\d\s().+-]{8,})"),
         ("cep", r"(?i)cep\s*[:\-]\s*(\d{5}[\s-]?\d{3}|\d{8})"),
+        ("cep", r"(?i)\b(?:o|meu)\s+cep\s*(?:é|e|eh)\s+(\d{5}[\s-]?\d{3}|\d{8})"),
         ("nome", r"(?i)nome\s*[:\-]\s*(.+?)\s*$"),
+        ("nome", r"(?i)\b(?:o|meu)\s+nome\s*(?:é|e|eh)\s+(.+?)\s*$"),
         ("cpf", r"(?i)cpf\s*[:\-]\s*([\d.\-/]{11,18})"),
+        ("cpf", r"(?i)\b(?:o|meu)\s+cpf\s*(?:é|e|eh)\s+([\d.\-/]{11,18})"),
+        ("numero", r"(?i)\b(?:o|meu)\s+n[uú]mero\s*(?:é|e|eh)\s+(\d+[A-Za-z]?)\s*$"),
+        ("data_nascimento", r"(?i)\b(?:minha|a)\s+data\s*(?:de nascimento)?\s*(?:é|e|eh)\s+(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4})"),
     )
     out: dict[str, str] = {}
     for campo, pat in padroes:
@@ -780,6 +795,57 @@ def _extrair_correcoes_rotuladas(msg_bruto: str) -> dict[str, str]:
         if val:
             out[campo] = val
     return out
+
+
+_CAMPOS_RESUMO_ERRO: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("rua", (r"(?i)\b(?:a\s+)?ru[aá]\s*(?:ta|esta|está)\s*(?:errad|incorret)", r"(?i)\bru[aá]\s+(?:errad|incorret|ta errad)")),
+    ("nome", (r"(?i)\b(?:o|meu)\s+nome\s*(?:ta|esta|está)\s*(?:errad|incorret)", r"(?i)\bnome\s+(?:errad|incorret)")),
+    ("email", (r"(?i)\b(?:o|meu)\s+e?-?mail\s*(?:ta|esta|está)\s*(?:errad|incorret)", r"(?i)\bemail\s+(?:errad|incorret)")),
+    ("telefone", (r"(?i)\b(?:o|meu)\s+telefone\s*(?:ta|esta|está)\s*(?:errad|incorret)", r"(?i)\btelefone\s+(?:errad|incorret)")),
+    ("cep", (r"(?i)\b(?:o|meu)\s+cep\s*(?:ta|esta|está)\s*(?:errad|incorret)", r"(?i)\bcep\s+(?:errad|incorret)")),
+    ("numero", (r"(?i)\b(?:o|meu)\s+n[uú]mero\s*(?:ta|esta|está)\s*(?:errad|incorret)", r"(?i)\bn[uú]mero\s+(?:errad|incorret)")),
+    ("bairro", (r"(?i)\b(?:o|meu)\s+bairro\s*(?:ta|esta|está)\s*(?:errad|incorret)", r"(?i)\bbairro\s+(?:errad|incorret)")),
+)
+
+
+def detectar_campo_incorreto_resumo(msg: str) -> str | None:
+    """Cliente diz que um dado do resumo está errado, sem informar o valor novo."""
+    bruto = texto(msg)
+    if not bruto or _extrair_correcoes_rotuladas(bruto):
+        return None
+    for campo, padroes in _CAMPOS_RESUMO_ERRO:
+        if any(re.search(p, bruto) for p in padroes):
+            return campo
+    return None
+
+
+def eh_mensagem_correcao_cadastro(msg: str, msg_bruto: str = "") -> bool:
+    """Correção de dado cadastral — não é pergunta sobre instalação/plano."""
+    bruto = texto(msg_bruto or msg)
+    if not bruto:
+        return False
+    if _extrair_correcoes_rotuladas(bruto):
+        return True
+    if detectar_campo_incorreto_resumo(bruto):
+        return True
+    t = normalizar_texto(bruto)
+    if any(
+        p in t
+        for p in (
+            "corrigir o",
+            "corrigir a",
+            "corrigir meu",
+            "corrigir minha",
+            "errei o",
+            "errei a",
+            "errei meu",
+            "na verdade o",
+            "na verdade a",
+            "na verdade meu",
+        )
+    ):
+        return any(c in t for c in ("rua", "nome", "email", "telefone", "cep", "numero", "bairro", "cpf"))
+    return False
 
 
 def _extrair_telefone_em_segmentos(bruto: str) -> str:
@@ -808,17 +874,57 @@ def _parece_data_nascimento_msg(bruto: str) -> bool:
     )
 
 
-def _mensagem_tem_sinal_endereco(bruto: str) -> bool:
+_CHAVES_MENSAGEM_PLANO = (
+    "plano",
+    "planos",
+    "combo",
+    " mov ",
+    "mov ",
+    "infinity",
+    "essencial",
+    "flex",
+    "super",
+    "mais barato",
+    "mais barata",
+    "mais caro",
+    "mais forte",
+    "outro plano",
+    "outros planos",
+    "quero um",
+    "trocar de plano",
+    "mudar de plano",
+    "opcoes",
+    "opcao",
+    "mensalidade",
+    "preco",
+    "quanto custa",
+    "instalar",
+    "instalacao",
+    "taxa",
+)
+
+
+def eh_mensagem_sobre_planos(msg: str, msg_bruto: str = "") -> bool:
+    t = normalizar_texto(msg_bruto or msg)
+    if not t:
+        return False
+    if any(k in t for k in _CHAVES_MENSAGEM_PLANO):
+        return True
+    return any(p in t for p in PEDIDOS_LISTAR_PLANOS) or any(
+        p in t for p in PEDIDOS_ALTERNATIVA if len(p) >= 8
+    )
+
+
+def _mensagem_tem_sinal_endereco(bruto: str, *, aguardando: str = "") -> bool:
+    if eh_mensagem_sobre_planos("", bruto):
+        return False
     if _extrair_rua_rotulo(bruto):
         return True
     if re.search(r"(?i)\bru[aá]\b", bruto or ""):
         return True
-    for seg in _segmentos_mensagem(bruto):
-        if _parece_data_nascimento_msg(seg) or "@" in seg:
-            continue
-        if re.fullmatch(r"\d{8,}", re.sub(r"\D", "", seg)):
-            continue
-        if re.search(r"[A-Za-zÀ-ÿ]{3,}", seg):
+    if aguardando == "rua":
+        principal = _parte_principal_dado(bruto).strip()
+        if len(principal) >= 3 and re.search(r"[A-Za-zÀ-ÿ]{3,}", principal):
             return True
     return False
 
@@ -861,7 +967,9 @@ def _texto_parece_apenas_dado_cadastro(msg_bruto: str, aguardando: str) -> bool:
         "telefone": lambda b: bool(_extrair_telefone_em_segmentos(b)),
         "data_nascimento": lambda b: bool(_extrair_data_nascimento(b)),
         "cep": lambda b: bool(_extrair_cep_rotulo(b) or _extrair_cep(b)),
-        "rua": lambda b: bool(_extrair_rua_rotulo(b) or _mensagem_tem_sinal_endereco(b)),
+        "rua": lambda b: bool(
+            _extrair_rua_rotulo(b) or _mensagem_tem_sinal_endereco(b, aguardando="rua")
+        ),
         "numero": lambda b: bool(_extrair_numero_endereco(b)),
     }
     fn = checks.get(aguardando)
@@ -895,7 +1003,12 @@ def _sanitizar_ecos_cadastro(
     nome_estado: str = "",
 ) -> None:
     """Remove rua/número fantasma (eco do LLM ou dia da data de nascimento)."""
+    from app.validation import rua_parece_frase_invalida
+
     nome_cliente = normalizar_texto(nome_estado)
+    if dados.rua and rua_parece_frase_invalida(dados.rua):
+        if not _extrair_rua_rotulo(msg_bruto):
+            dados.rua = ""
     if dados.rua and nome_cliente and normalizar_texto(dados.rua) == nome_cliente:
         if not _extrair_rua_rotulo(msg_bruto):
             dados.rua = ""
@@ -918,13 +1031,15 @@ def sanitizar_dados_cadastro(
 ) -> dict[str, Any]:
     """Versão dict para a state machine."""
     from app.models import DadosExtraidos
-    from app.validation import rua_parece_eco_nome
+    from app.validation import rua_parece_eco_nome, rua_parece_frase_invalida
 
     d = DadosExtraidos(**{k: dados.get(k, "") for k in CAMPOS_DADOS if k in dados})
     aguardando = texto(estado.get("aguardando"))
     _limpar_ecos_estado(d, estado, msg, aguardando)
     _sanitizar_ecos_cadastro(d, msg, str(estado.get("nome") or ""))
     nome_ref = str(estado.get("nome") or d.nome or "")
+    if rua_parece_frase_invalida(d.rua) and not _extrair_rua_rotulo(msg):
+        d.rua = ""
     if rua_parece_eco_nome(d.rua, nome_ref) and not _extrair_rua_rotulo(msg):
         d.rua = ""
     out = dict(dados)
@@ -993,8 +1108,15 @@ def _aplicar_extracao_campo_pendente(
         if cep:
             dados.cep = cep
 
+    if eh_mensagem_sobre_planos(msg, bruto):
+        dados.rua = ""
+        dados.numero = ""
+        campos_alvo.discard("rua")
+        campos_alvo.discard("numero")
+
     if ("rua" in campos_alvo or "numero" in campos_alvo) and not duvida:
-        if aguardando in {"rua", "numero"} or _mensagem_tem_sinal_endereco(bruto):
+        sinal_endereco = _mensagem_tem_sinal_endereco(bruto, aguardando=aguardando)
+        if aguardando in {"rua", "numero"} or sinal_endereco:
             if "rua" in campos_alvo and not dados.rua:
                 rua_lbl = _extrair_rua_rotulo(bruto)
                 if rua_lbl:
@@ -1011,8 +1133,8 @@ def _aplicar_extracao_campo_pendente(
                     if num and len(re.sub(r"\D", "", num)) <= 5:
                         dados.numero = num
                         break
-            if _mensagem_tem_sinal_endereco(bruto):
-                rua, num = _split_rua_numero(bruto)
+            if sinal_endereco:
+                rua, num = _split_rua_numero(bruto, aguardando=aguardando)
                 if "rua" in campos_alvo and rua and not dados.rua:
                     dados.rua = rua
                 if "numero" in campos_alvo and num and not dados.numero:
@@ -1306,7 +1428,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         dados.plano = ""
         pergunta = ""
 
-    if fase == "vendas" and (
+    if fase in {"vendas", "cadastro"} and (
         any(p in msg for p in PEDIDOS_LISTAR_PLANOS) or eh_pedido_lista_completa_planos(msg)
     ):
         eventos = [e for e in eventos if e not in {Evento.PLANO_INFORMADO.value, Evento.OUTRO.value, Evento.PERGUNTA.value}]
@@ -1325,7 +1447,11 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
 
     # "com dois roteadores" / "mais barato" → resolve plano (não trata só como chat)
     if (
-        (aguardando_plano or (fase == "vendas" and estado.get("tem_cobertura") is True))
+        (
+            aguardando_plano
+            or (fase == "vendas" and estado.get("tem_cobertura") is True)
+            or (fase == "cadastro" and estado.get("plano_confirmado"))
+        )
         and any(k in msg for k in INTENCAO_PLANO_KEYWORDS)
         and msg not in CONFIRMACOES_GENERICAS
         and not eh_confirmacao(msg)
@@ -1363,6 +1489,8 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
                 not in {
                     Evento.CONFIRMACAO.value,
                     Evento.NEGACAO.value,
+                    Evento.PERGUNTA.value,
+                    Evento.OUTRO.value,
                 }
             ]
             for campo, valor in correcoes_msg.items():
@@ -1375,6 +1503,27 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             if Evento.DADO_INFORMADO.value not in eventos:
                 eventos.append(Evento.DADO_INFORMADO.value)
             pergunta = ""
+        else:
+            campo_errado = detectar_campo_incorreto_resumo(msg_bruto)
+            if campo_errado:
+                eventos = [
+                    e
+                    for e in eventos
+                    if e
+                    not in {
+                        Evento.CONFIRMACAO.value,
+                        Evento.PERGUNTA.value,
+                        Evento.OUTRO.value,
+                    }
+                ]
+                setattr(dados, campo_errado, "")
+                if campo_errado not in campos_corrigidos:
+                    campos_corrigidos.append(campo_errado)
+                if Evento.CORRECAO_DADO.value not in eventos:
+                    eventos.append(Evento.CORRECAO_DADO.value)
+                if Evento.NEGACAO.value not in eventos:
+                    eventos.append(Evento.NEGACAO.value)
+                pergunta = ""
 
     # Confirmação do resumo cadastral (+ dúvida opcional na mesma mensagem)
     if fase == "cadastro" and aguardando == "confirmacao_dados" and eh_confirmacao(msg):
@@ -1620,6 +1769,15 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         if not pergunta:
             pergunta = extrair_parte_pergunta(msg_bruto, msg) or msg_bruto.strip()
 
+    if fase == "cadastro" and (
+        eh_mensagem_sobre_planos(msg, msg_bruto)
+        or Evento.PEDIU_TROCAR_PLANO.value in eventos
+        or Evento.PLANO_INFORMADO.value in eventos
+    ):
+        for campo in ("rua", "numero", "cep", "nome", "cpf", "email", "telefone", "data_nascimento"):
+            if campo != aguardando:
+                setattr(dados, campo, "")
+
     # Extração determinística do campo pendente (LLM falhou ou veio dado+pergunta)
     if fase == "cadastro" and aguardando_cadastro:
         _aplicar_extracao_campo_pendente(
@@ -1702,6 +1860,10 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         if valor_pendente and Evento.DADO_INFORMADO.value in eventos:
             eventos = [e for e in eventos if e not in {Evento.PERGUNTA.value, Evento.OUTRO.value}]
             pergunta = ""
+
+    if Evento.CORRECAO_DADO.value in eventos or eh_mensagem_correcao_cadastro(msg, msg_bruto):
+        eventos = [e for e in eventos if e not in {Evento.PERGUNTA.value, Evento.OUTRO.value}]
+        pergunta = ""
 
     # Pergunta com "?" — LLM não deve marcar CONFIRMACAO ("pode instalar amanhã?")
     if (

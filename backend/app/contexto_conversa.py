@@ -198,6 +198,18 @@ def enriquecer_pergunta(
     Ex.: 'quanto que paga?' + topico cancelamento → pergunta sobre multa.
     """
     bruto = (pergunta or mensagem or "").strip()
+    try:
+        from app.parser import eh_mensagem_correcao_cadastro
+
+        if eh_mensagem_correcao_cadastro(bruto, bruto):
+            return {
+                "pergunta": bruto,
+                "topico": None,
+                "mensagem_original": bruto,
+                "era_followup": False,
+            }
+    except Exception:
+        pass
     topico = detectar_topico(bruto) or ultimo_topico or topico_do_historico(historico)
 
     pergunta_final = bruto

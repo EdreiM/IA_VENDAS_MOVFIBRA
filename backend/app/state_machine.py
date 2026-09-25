@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from app.models import Decisao
-from app.validation import rua_parece_eco_nome, validar_campo
+from app.validation import rua_parece_eco_nome, rua_parece_frase_invalida, validar_campo
 
 TENTATIVAS_MAX = 3
 
@@ -66,6 +66,8 @@ def _campo_ok(estado: dict[str, Any], dados: dict[str, Any], campo: str) -> bool
             return False
         nome_ref = _texto(dados.get("nome") or estado.get("nome"))
         if rua_parece_eco_nome(val, nome_ref):
+            return False
+        if rua_parece_frase_invalida(val):
             return False
         return True
     return bool(_texto(dados.get(campo) or estado.get(campo)))
@@ -417,7 +419,8 @@ def _decisao_retomar_cadastro(
     d = dict(dados)
     d["limpar_desvio"] = True
     nome_ref = _texto(d.get("nome") or estado.get("nome"))
-    if rua_parece_eco_nome(_texto(d.get("rua") or estado.get("rua")), nome_ref):
+    rua_val = _texto(d.get("rua") or estado.get("rua"))
+    if rua_parece_eco_nome(rua_val, nome_ref) or rua_parece_frase_invalida(rua_val):
         d["rua"] = ""
     faltando = _proximo_cadastro(estado, d)
     ctx = {
@@ -1046,7 +1049,52 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             "FASE_CADASTRO",
         )
 
-    # Cliente disse que algo está errado no resumo
+    # Correções no resumo cadastral — antes de negacao/perguntas genéricas
+    if fase == "cadastro" and aguardando == "confirmacao_dados":
+        from app.parser import detectar_campo_incorreto_resumo
+
+        campo_err = detectar_campo_incorreto_resumo(msg_cliente)
+        if campo_err and not _texto(dados_base.get(campo_err)):
+            d = dict(dados_base)
+            d[campo_err] = ""
+            return dec(
+                "RESPONDER",
+                f"PEDIR_CORRECAO_{campo_err.upper()}",
+                "cadastro",
+                campo_err,
+                d,
+                f"Cliente indicou {campo_err} incorreto no resumo",
+                "GLOBAL_DADOS",
+                contexto={
+                    "pendente": campo_err,
+                    "campo_invalido": campo_err,
+                    "motivo_validacao": f"Sem problemas — me passa o {campo_err} correto",
+                },
+            )
+
+        campos_resumo = list(cadastro.get("campos_informados") or [])
+        if correcoes or campos_resumo:
+            d = dict(estado)
+            for k, v in dados_base.items():
+                if _texto(v):
+                    d[k] = v
+            d["limpar_desvio"] = True
+            return Decisao(
+                acao="RESPONDER",
+                objetivo_resposta="CONFIRMAR_DADOS_CADASTRO",
+                fase="cadastro",
+                aguardando="confirmacao_dados",
+                atualizar_dados=d,
+                contexto_resposta={
+                    "campos_anotados": campos_resumo,
+                    "campos_corrigidos": correcoes,
+                    "pendente": "confirmacao_dados",
+                },
+                motivo="Correção no resumo cadastral — reexibir resumo",
+                prioridade="CADASTRO",
+            )
+
+    # Cliente disse que algo está errado no resumo (sem dizer qual)
     if (
         fase == "cadastro"
         and aguardando == "confirmacao_dados"
@@ -1465,103 +1513,105 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
 
     # Em cadastro: "quanto paga?" no tópico cancelamento ≠ preço do plano
     if flags.get("tem_pergunta") and fase == "cadastro":
-        topico = str(resolucao.get("topico_contexto") or "")
         from app.parser import (
             PERGUNTAS_PRECO,
+            eh_mensagem_correcao_cadastro,
             eh_pergunta_custo_instalacao,
             eh_pergunta_instalacao,
             normalizar_texto,
         )
 
-        texto_q = normalizar_texto(
-            str(resolucao.get("mensagem") or resolucao.get("pergunta_original") or "")
-        )
-        msg_bruta = str(resolucao.get("mensagem") or resolucao.get("pergunta_original") or "")
-        campos_info = list((resolucao.get("dados") or {}).get("campos_informados") or [])
-        anotados = [c for c in campos_info if c != "cpf"]
-        pendente_ef = _pendente_cadastro_apos_anotacao(estado, dados_base, aguardando, anotados)
-        ctx_perg = {
-            "pendente": pendente_ef,
-            "topico_contexto": topico,
-            "pergunta_original": resolucao.get("pergunta_original") or "",
-            "campos_anotados": anotados,
-        }
-        if topico == "mudanca_endereco" or eh_pergunta_mudanca_endereco(msg_cliente):
-            d = dict(dados_base)
-            return dec(
-                "RESPONDER",
-                "RESPONDER_PERGUNTA_E_RETOMAR",
-                fase,
-                pendente_ef,
-                d,
-                "Pergunta sobre mudança de endereço pós-contratação",
-                "GLOBAL_PERGUNTA",
-                pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
-                contexto={**ctx_perg, "topico_contexto": "mudanca_endereco"},
+        if not eh_mensagem_correcao_cadastro(msg_cliente):
+            topico = str(resolucao.get("topico_contexto") or "")
+            texto_q = normalizar_texto(
+                str(resolucao.get("mensagem") or resolucao.get("pergunta_original") or "")
             )
-        if topico == "instalacao" or eh_pergunta_instalacao(
-            texto_q, msg_bruta, topico=topico
-        ):
-            d = dict(dados_base)
-            return dec(
-                "RESPONDER",
-                "INFORMAR_INSTALACAO_E_RETOMAR",
-                fase,
-                pendente_ef,
-                d,
-                "Pergunta sobre instalação/agendamento durante cadastro",
-                "GLOBAL_PERGUNTA",
-                contexto={
-                    **ctx_perg,
-                    "topico_contexto": "instalacao",
-                    "pendente": pendente_ef,
-                    "pergunta_custo_instalacao": eh_pergunta_custo_instalacao(
-                        texto_q, msg_bruta
-                    ),
-                    "plano_nome": _texto(
-                        estado.get("plano_confirmado")
-                        or estado.get("plano_em_negociacao")
-                        or estado.get("plano_apresentado")
-                    ),
-                },
-            )
-        if topico == "cancelamento" or (
-            any(
-                p in texto_q
-                for p in ("cancelar", "cancelamento", "multa", "fidelidade")
-            )
-            or (
-                "taxa" in texto_q
-                and not eh_pergunta_instalacao(texto_q, msg_bruta, topico=topico)
-            )
-        ):
-            d = dict(dados_base)
-            return dec(
-                "RESPONDER",
-                "RESPONDER_PERGUNTA_E_RETOMAR",
-                fase,
-                pendente_ef,
-                d,
-                "Pergunta sobre cancelamento/multa",
-                "GLOBAL_PERGUNTA",
-                pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
-                contexto={**ctx_perg, "topico_contexto": "cancelamento"},
-            )
-        if topico == "beneficio_plano" or any(
-            k in texto_q for k in ("roteador", "direito", "comodato", "disney", "mesh", "inclui")
-        ):
-            d = dict(dados_base)
-            return dec(
-                "RESPONDER",
-                "RESPONDER_PERGUNTA_E_RETOMAR",
-                fase,
-                pendente_ef,
-                d,
-                "Pergunta sobre benefícios/equipamentos",
-                "GLOBAL_PERGUNTA",
-                pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
-                contexto={**ctx_perg, "topico_contexto": "beneficio_plano"},
-            )
+            msg_bruta = str(resolucao.get("mensagem") or resolucao.get("pergunta_original") or "")
+            campos_info = list((resolucao.get("dados") or {}).get("campos_informados") or [])
+            anotados = [c for c in campos_info if c != "cpf"]
+            pendente_ef = _pendente_cadastro_apos_anotacao(estado, dados_base, aguardando, anotados)
+            ctx_perg = {
+                "pendente": pendente_ef,
+                "topico_contexto": topico,
+                "pergunta_original": resolucao.get("pergunta_original") or "",
+                "campos_anotados": anotados,
+            }
+            if topico == "mudanca_endereco" or eh_pergunta_mudanca_endereco(msg_cliente):
+                d = dict(dados_base)
+                return dec(
+                    "RESPONDER",
+                    "RESPONDER_PERGUNTA_E_RETOMAR",
+                    fase,
+                    pendente_ef,
+                    d,
+                    "Pergunta sobre mudança de endereço pós-contratação",
+                    "GLOBAL_PERGUNTA",
+                    pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
+                    contexto={**ctx_perg, "topico_contexto": "mudanca_endereco"},
+                )
+            if topico == "instalacao" or eh_pergunta_instalacao(
+                texto_q, msg_bruta, topico=topico
+            ):
+                d = dict(dados_base)
+                return dec(
+                    "RESPONDER",
+                    "INFORMAR_INSTALACAO_E_RETOMAR",
+                    fase,
+                    pendente_ef,
+                    d,
+                    "Pergunta sobre instalação/agendamento durante cadastro",
+                    "GLOBAL_PERGUNTA",
+                    contexto={
+                        **ctx_perg,
+                        "topico_contexto": "instalacao",
+                        "pendente": pendente_ef,
+                        "pergunta_custo_instalacao": eh_pergunta_custo_instalacao(
+                            texto_q, msg_bruta
+                        ),
+                        "plano_nome": _texto(
+                            estado.get("plano_confirmado")
+                            or estado.get("plano_em_negociacao")
+                            or estado.get("plano_apresentado")
+                        ),
+                    },
+                )
+            if topico == "cancelamento" or (
+                any(
+                    p in texto_q
+                    for p in ("cancelar", "cancelamento", "multa", "fidelidade")
+                )
+                or (
+                    "taxa" in texto_q
+                    and not eh_pergunta_instalacao(texto_q, msg_bruta, topico=topico)
+                )
+            ):
+                d = dict(dados_base)
+                return dec(
+                    "RESPONDER",
+                    "RESPONDER_PERGUNTA_E_RETOMAR",
+                    fase,
+                    pendente_ef,
+                    d,
+                    "Pergunta sobre cancelamento/multa",
+                    "GLOBAL_PERGUNTA",
+                    pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
+                    contexto={**ctx_perg, "topico_contexto": "cancelamento"},
+                )
+            if topico == "beneficio_plano" or any(
+                k in texto_q for k in ("roteador", "direito", "comodato", "disney", "mesh", "inclui")
+            ):
+                d = dict(dados_base)
+                return dec(
+                    "RESPONDER",
+                    "RESPONDER_PERGUNTA_E_RETOMAR",
+                    fase,
+                    pendente_ef,
+                    d,
+                    "Pergunta sobre benefícios/equipamentos",
+                    "GLOBAL_PERGUNTA",
+                    pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
+                    contexto={**ctx_perg, "topico_contexto": "beneficio_plano"},
+                )
 
     # Pergunta durante agendamento (antes de processar horário)
     if flags.get("tem_pergunta") and fase == "agendamento":
