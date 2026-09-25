@@ -77,7 +77,6 @@ CATALOGO_PLANOS: list[dict[str, Any]] = [
             "mesh",
             "prime",
             "faixa_139",
-            "combo_internet_chip",
             "promo_inicial",
         ],
     },
@@ -154,7 +153,7 @@ CATALOGO_PLANOS: list[dict[str, Any]] = [
         "condicao_valor_pontualidade": (
             "Pagando até o vencimento, a mensalidade fica por R$ 119,00."
         ),
-        "tags": ["super", "combo", "pontualidade", "faixa_139", "combo_internet_chip"],
+        "tags": ["super", "combo", "pontualidade", "faixa_139"],
     },
     {
         "id": 1185,
@@ -284,7 +283,6 @@ CATALOGO_PLANOS: list[dict[str, Any]] = [
             "prime",
             "economico",
             "poucos_dispositivos",
-            "combo_internet_chip",
         ],
     },
     {

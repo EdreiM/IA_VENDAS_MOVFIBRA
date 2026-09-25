@@ -323,16 +323,29 @@ def _fmt_preco_bolha(valor: Any) -> str:
     return _fmt_preco(n)
 
 
+def _plano_tem_chip(plano: dict[str, Any]) -> bool:
+    """Só planos com linha móvel/chip de verdade (ex.: COMBO TOTAL 12GB/22GB)."""
+    tags = {str(t).casefold() for t in (plano.get("tags") or [])}
+    if tags.intersection({"chip", "chip_12gb", "chip_22gb"}):
+        return True
+    blob = " ".join(
+        str(plano.get(campo) or "")
+        for campo in ("beneficios", "descricao", "nome")
+    ).casefold()
+    return any(
+        p in blob
+        for p in (
+            "chip incluso",
+            "chip com",
+            "linha movel",
+            "celular incluso",
+            "gb de internet movel",
+        )
+    )
+
+
 def _titulo_categoria_plano(plano: dict[str, Any]) -> str:
-    tags = [str(t).casefold() for t in (plano.get("tags") or [])]
-    blob = " ".join(tags)
-    nome = str(plano.get("nome") or "").casefold()
-    if (
-        "combo" in blob
-        or "chip" in blob
-        or "combo_internet_chip" in blob
-        or "chip" in nome
-    ):
+    if _plano_tem_chip(plano):
         return "📶 INTERNET + CHIP"
     return "📶 INTERNET + BENEFÍCIOS"
 

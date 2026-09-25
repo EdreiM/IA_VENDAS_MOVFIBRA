@@ -991,6 +991,27 @@ def test_plano_no_meio_do_cadastro_nao_vai_para_rua() -> None:
     _assert(not dados.get("rua"), f"rua indevida={dados.get('rua')}")
 
 
+def test_titulo_categoria_sem_chip_indevido() -> None:
+    from app.vendas_mensagens import _titulo_categoria_plano
+
+    flex = {"nome": "MOV FLEX", "tags": ["flex", "pontualidade"], "beneficios": "Internet ilimitada"}
+    super_ = {"nome": "MOV SUPER", "tags": ["super", "combo", "pontualidade"], "beneficios": "Internet ilimitada"}
+    super_plus = {
+        "nome": "MOV SUPER+",
+        "tags": ["super_plus", "combo", "mesh"],
+        "beneficios": "Internet ilimitada\nRepetidor Mesh",
+    }
+    combo = {
+        "nome": "MOV COMBO TOTAL 22GB",
+        "tags": ["combo", "chip_22gb", "chip"],
+        "beneficios": "Chip com 22 GB\nLigações ilimitadas",
+    }
+    _assert(_titulo_categoria_plano(flex) == "📶 INTERNET + BENEFÍCIOS", flex)
+    _assert(_titulo_categoria_plano(super_) == "📶 INTERNET + BENEFÍCIOS", super_)
+    _assert(_titulo_categoria_plano(super_plus) == "📶 INTERNET + BENEFÍCIOS", super_plus)
+    _assert(_titulo_categoria_plano(combo) == "📶 INTERNET + CHIP", combo)
+
+
 def test_mostre_os_planos_dispara_lista_completa() -> None:
     estado = {
         "fase": "vendas",
@@ -1116,6 +1137,7 @@ def main() -> None:
     tests = [
         test_correcao_rua_natural_confirmacao_dados,
         test_plano_no_meio_do_cadastro_nao_vai_para_rua,
+        test_titulo_categoria_sem_chip_indevido,
         test_mostre_os_planos_dispara_lista_completa,
         test_pedido_planos_com_desconto_lista_filtrada,
         test_sim_apos_oferta_desconto_lista_planos,
