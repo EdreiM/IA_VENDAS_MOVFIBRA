@@ -1072,13 +1072,13 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                 },
             )
 
-        campos_resumo = list(cadastro.get("campos_informados") or [])
-        if correcoes or campos_resumo:
+        if correcoes:
             d = dict(estado)
             for k, v in dados_base.items():
                 if _texto(v):
                     d[k] = v
             d["limpar_desvio"] = True
+            campos_corrigidos_ctx = list(correcoes)
             return Decisao(
                 acao="RESPONDER",
                 objetivo_resposta="CONFIRMAR_DADOS_CADASTRO",
@@ -1086,8 +1086,8 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                 aguardando="confirmacao_dados",
                 atualizar_dados=d,
                 contexto_resposta={
-                    "campos_anotados": campos_resumo,
-                    "campos_corrigidos": correcoes,
+                    "campos_anotados": campos_corrigidos_ctx,
+                    "campos_corrigidos": campos_corrigidos_ctx,
                     "pendente": "confirmacao_dados",
                 },
                 motivo="Correção no resumo cadastral — reexibir resumo",

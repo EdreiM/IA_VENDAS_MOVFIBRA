@@ -531,9 +531,56 @@ def test_confirmacao_dados_chama_cadastro() -> None:
         },
         "confianca": 0.8,
     }
-    for msg in ("Sim", "Tá certo", "Está tudo certo"):
+    for msg in ("Sim", "Tá", "Tá certo", "Está tudo certo"):
         dec = _decidir_sem_executar(estado, msg, eco)
         _assert(dec.acao == "CADASTRAR_IXC", f"{msg} → {dec.acao} {dec.objetivo_resposta}")
+
+
+def test_cadastro_webhook_dispara_com_url_no_painel_mesmo_provider_mock() -> None:
+    """URL cadastrada no painel deve disparar n8n mesmo com CADASTRO_PROVIDER=mock."""
+    from unittest.mock import MagicMock, patch
+
+    from app.cadastro_ixc import cadastrar_cliente
+
+    estado = {
+        "id_cliente": "teste-local",
+        "conversation_id": "3075",
+        "nome": "Edrei testes",
+        "cpf": "60421079096",
+        "email": "edreitestes@gmail.com",
+        "telefone": "93992219098",
+        "plano_confirmado_id": "1180",
+    }
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {
+        "resultado": "ok",
+        "ixc_cliente_id": "83458",
+        "id_contrato_ixc": "92405",
+        "os_id": "111",
+        "motivo": "Cadastro concluído",
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("app.integrations.cadastro_webhook.httpx.Client") as mock_client:
+        inst = mock_client.return_value.__enter__.return_value
+        inst.post.return_value = mock_resp
+        with patch("app.cadastro_ixc.get_settings") as mock_settings:
+            s = mock_settings.return_value
+            s.cadastro_provider = "mock"
+            s.cadastro_webhook_url = ""
+            s.cadastro_webhook_token = ""
+            s.cadastro_timeout_seconds = 90
+        with patch(
+            "app.cadastro_ixc._url_cadastro",
+            return_value="https://n8n2.mov.pro.br/webhook/cadastrar_cliente_sofia",
+        ):
+            out = cadastrar_cliente(estado)
+
+    _assert(out.get("ok") is True, out)
+    _assert(out.get("id_cliente_ixc") == "83458", out)
+    inst.post.assert_called_once()
+    args, kwargs = inst.post.call_args
+    _assert("cadastrar_cliente_sofia" in args[0], args[0])
 
 
 def test_cadastro_multiplos_campos_anticipados() -> None:
@@ -1012,6 +1059,7 @@ def main() -> None:
         test_data_nascimento_extracao,
         test_cadastro_pede_em_pares,
         test_confirmacao_dados_chama_cadastro,
+        test_cadastro_webhook_dispara_com_url_no_painel_mesmo_provider_mock,
         test_cadastro_multiplos_campos_anticipados,
         test_cadastro_nao_repete_nem_troca_nome_pela_rua,
         test_nome_com_interrogacao_nao_e_duvida,

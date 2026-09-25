@@ -36,6 +36,12 @@ services:
       GOOGLE_MAPS_API_KEY: ""
       IXC_USER: ""
       IXC_PASSWORD: ""
+      # Ferramentas n8n — URLs também podem vir do painel (aba Ferramentas)
+      CADASTRO_PROVIDER: webhook
+      TERMOS_PROVIDER: webhook
+      ATIVACAO_PROVIDER: webhook
+      AGENDA_PROVIDER: webhook
+      CPF_PROVIDER: ixc
     volumes:
       - iavendas_uploads:/app/uploads
     ports:

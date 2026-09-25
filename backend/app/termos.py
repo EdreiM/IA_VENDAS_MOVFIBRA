@@ -50,9 +50,9 @@ def enviar_termos(estado: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "resultado": "ok",
-        "audio_enviado": True,
-        "termo_enviado": True,
-        "motivo": "Termos mock local",
+        "audio_enviado": False,
+        "termo_enviado": False,
+        "motivo": "Termos mock local (sem webhook)",
         "provider": "mock",
         "erro": False,
     }

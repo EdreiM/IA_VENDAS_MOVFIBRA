@@ -46,6 +46,10 @@ CONFIRMACOES_GENERICAS = {
     "pode confirmar",
     "pode cadastrar",
     "pode seguir",
+    "ta",
+    "tá",
+    "ta sim",
+    "tá sim",
     "aceito",
     "aceita",
     "concordo",
@@ -559,7 +563,7 @@ def eh_confirmacao(msg: str) -> bool:
     if "?" in bruto:
         return False
     primeira = t.split()[0] if t.split() else ""
-    return primeira in {"sim", "confirmo", "ok", "blz", "beleza", "fechado", "fechou"}
+    return primeira in {"sim", "ta", "confirmo", "ok", "blz", "beleza", "fechado", "fechou"}
 
 
 def eh_aceite_termos_explicito(msg: str) -> bool:

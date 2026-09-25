@@ -56,23 +56,39 @@ def _dados_ixc_direto(estado: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _url_cadastro(unidade_id: int | None = None) -> str:
+    from app.ferramentas_catalog import resolver_url_ferramenta
+
+    settings = get_settings()
+    return resolver_url_ferramenta(
+        "cadastrar_cliente",
+        unidade_id=unidade_id,
+        fallback_env=settings.cadastro_webhook_url,
+    ).strip()
+
+
 def cadastrar_cliente(estado: dict[str, Any]) -> dict[str, Any]:
     """Executa cadastro (mock, webhook n8n ou IXC direto)."""
     settings = get_settings()
     provider = (settings.cadastro_provider or "mock").lower()
+    uid = None
+    try:
+        if estado.get("unidade_id") is not None:
+            uid = int(estado["unidade_id"])
+    except (TypeError, ValueError):
+        uid = None
+
+    url = _url_cadastro(uid)
+    usar_webhook = bool(url) or provider == "webhook"
 
     try:
-        if provider == "mock":
-            return _resultado(
-                ok=True,
-                erro=False,
-                motivo="Cadastro registrado (mock local)",
-                id_cliente_ixc="mock",
-                os_id="mock",
-                id_contrato_ixc="mock",
-            )
-
-        if provider == "webhook":
+        if usar_webhook:
+            if not url:
+                return _resultado(
+                    ok=False,
+                    erro=True,
+                    motivo="cadastrar_cliente sem webhook — cadastre no painel Ferramentas",
+                )
             resp = cadastrar_cliente_webhook(estado)
             if resp.get("ja_cadastrado"):
                 return _resultado(
@@ -112,6 +128,16 @@ def cadastrar_cliente(estado: dict[str, Any]) -> dict[str, Any]:
                 erro=False,
                 motivo=resp.get("motivo") or "Cliente cadastrado no IXC",
                 id_cliente_ixc=str(resp.get("id") or ""),
+            )
+
+        if provider == "mock":
+            return _resultado(
+                ok=True,
+                erro=False,
+                motivo="Cadastro registrado (mock local)",
+                id_cliente_ixc="mock",
+                os_id="mock",
+                id_contrato_ixc="mock",
             )
 
         return _resultado(
