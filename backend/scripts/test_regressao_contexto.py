@@ -20,8 +20,10 @@ from app.parser import (
     eh_confirmacao,
     eh_mensagem_sobre_planos,
     eh_pedido_lista_completa_planos,
+    eh_pedido_plano_promocional,
     eh_pergunta_cobertura_informativa,
     eh_pergunta_mudanca_endereco,
+    eh_pergunta_plano_por_preco,
     parse_interpretacao,
     tem_duvida_informativa,
 )
@@ -1087,6 +1089,59 @@ def test_mais_forte_resolve_premium() -> None:
     _assert(r["plano"]["nome"] == "INFINITY", r)
 
 
+def test_quero_na_promocao_nao_confirma_plano_atual() -> None:
+    """'Quero um na promoção' após MOV SUPER não deve avançar para cadastro."""
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "tem_cobertura": True,
+        "plano_em_negociacao": "MOV SUPER",
+        "plano_em_negociacao_id": 1209,
+        "plano_apresentado": "MOV SUPER",
+        "plano_apresentado_id": 1209,
+    }
+    msg = "Quero um na promoção"
+    _assert(eh_pedido_plano_promocional(msg), msg)
+    _assert(not eh_confirmacao(msg), msg)
+    raw = _raw({"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.9})
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(Evento.CONFIRMACAO.value not in i.eventos, f"eventos={i.eventos}")
+    _assert(Evento.PEDIU_TROCAR_PLANO.value in i.eventos, f"eventos={i.eventos}")
+    dec = _decidir_sem_executar(estado, msg, {"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.9})
+    _assert(dec.acao == "RESOLVER_PLANO", f"acao={dec.acao} obj={dec.objetivo_resposta}")
+    _assert(dec.aguardando != "nome", f"aguardando={dec.aguardando}")
+
+
+def test_qual_o_de_6950_nao_trata_como_escolha() -> None:
+    """'Qual o de 69,50?' após lista — identifica plano, não 'anotei a troca'."""
+    msg = "Qual o de 69,50?"
+    _assert(eh_pergunta_plano_por_preco(msg), msg)
+    _assert(not eh_confirmacao(msg), msg)
+    estado = {
+        "fase": "vendas",
+        "aguardando": "lista_planos",
+        "tem_cobertura": True,
+        "fase_anterior": "cadastro",
+        "aguardando_anterior": "nome",
+        "plano_em_negociacao": "MOV FLEX",
+        "plano_em_negociacao_id": 1214,
+    }
+    raw = _raw({"eventos": ["PLANO_INFORMADO", "PERGUNTA"], "dados": {"plano": "69"}, "confianca": 0.9})
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(Evento.PERGUNTA.value in i.eventos, f"eventos={i.eventos}")
+    _assert(Evento.PLANO_INFORMADO.value not in i.eventos, f"eventos={i.eventos}")
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {"eventos": ["PLANO_INFORMADO"], "dados": {"plano": "69"}, "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_DETALHES_PLANO", dec.objetivo_resposta)
+    _assert((dec.contexto_resposta or {}).get("identificacao_por_preco") is True, dec.contexto_resposta)
+    txt = gerar_resposta(dec, {**estado, **(dec.contexto_resposta or {})})
+    _assert("anotei a troca" not in txt.casefold(), txt)
+    _assert("esse valor é do" in txt.casefold() or "mov super+" in txt.casefold(), txt)
+
+
 def test_resolver_plano_preco_promocional_6950() -> None:
     planos = [
         {
@@ -1143,6 +1198,8 @@ def main() -> None:
         test_sim_apos_oferta_desconto_lista_planos,
         test_pedido_lista_completa_planos,
         test_mais_forte_resolve_premium,
+        test_quero_na_promocao_nao_confirma_plano_atual,
+        test_qual_o_de_6950_nao_trata_como_escolha,
         test_resolver_plano_preco_promocional_6950,
         test_listar_todos_quando_pediu_outras_opcoes,
         test_confirmacoes_typo,

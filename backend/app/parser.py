@@ -419,6 +419,28 @@ def eh_pedido_planos_com_desconto(msg: str) -> bool:
     return bool(re.search(r"\b(desconto|promocao|promo)\b", n))
 
 
+def eh_pedido_plano_promocional(msg: str) -> bool:
+    """Cliente quer o plano promocional (ex.: 50% nos 3 primeiros meses), não confirmar o atual."""
+    n = normalizar_texto(msg)
+    if not n:
+        return False
+    if re.search(r"\b(quero|queria|preciso|gostaria)\b", n) and re.search(
+        r"\b(promocao|promo)\b", n
+    ):
+        return True
+    return any(
+        p in n
+        for p in (
+            "um na promocao",
+            "na promocao",
+            "o da promocao",
+            "o promocional",
+            "plano promocional",
+            "plano da promocao",
+        )
+    )
+
+
 def cliente_confirmou_ver_planos_desconto(msg: str, ultima_eva: str) -> bool:
     """'Sim' após Eva oferecer mostrar planos com desconto."""
     if not eh_confirmacao(msg):
@@ -1294,6 +1316,44 @@ def eh_pergunta_detalhe_plano(msg: str, msg_bruto: str = "") -> bool:
     return any(p in t for p in PERGUNTAS_DETALHE_PLANO)
 
 
+def _precos_na_mensagem(msg: str, *, minimo: float = 30) -> list[float]:
+    nums = re.findall(r"\d+(?:[.,]\d{1,2})?", str(msg or ""))
+    out: list[float] = []
+    for n in nums:
+        try:
+            v = float(n.replace(",", "."))
+        except ValueError:
+            continue
+        if v >= minimo:
+            out.append(v)
+    return out
+
+
+def eh_pergunta_plano_por_preco(msg: str, msg_bruto: str = "") -> bool:
+    """'Qual o de 69,50?' — identifica plano pelo valor, não escolha."""
+    bruto = texto(msg_bruto or msg)
+    t = normalizar_texto(bruto)
+    if not t or not _precos_na_mensagem(t):
+        return False
+    if eh_confirmacao(t):
+        return False
+    if re.match(r"^(quero|queria|preciso|gostaria|vou de|fecho com|fico com)\b", t):
+        return False
+    if "?" in bruto or t.startswith("qual ") or t.startswith("quais "):
+        return True
+    return any(
+        p in t
+        for p in (
+            "qual o de",
+            "qual e o de",
+            "qual plano e",
+            "qual deles",
+            "qual desses",
+            "qual tem o",
+        )
+    )
+
+
 def eh_pergunta_custo_instalacao(msg: str, msg_bruto: str = "") -> bool:
     """Pergunta se instalação é grátis, tem taxa ou quanto custa."""
     t = normalizar_texto(msg_bruto or msg)
@@ -1465,6 +1525,27 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             setattr(dados, campo, str(estado.get(campo)))
             pergunta = ""
 
+    # Pedido de promo/desconto ≠ confirmação do plano apresentado
+    if aguardando_plano and (
+        eh_pedido_plano_promocional(msg) or eh_pedido_planos_com_desconto(msg)
+    ):
+        eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
+        if Evento.PEDIU_TROCAR_PLANO.value not in eventos:
+            eventos.append(Evento.PEDIU_TROCAR_PLANO.value)
+        if eh_pedido_plano_promocional(msg):
+            eventos = [
+                e
+                for e in eventos
+                if e not in {Evento.NEGACAO.value, Evento.OUTRO.value}
+            ]
+            if Evento.PLANO_INFORMADO.value not in eventos:
+                eventos.append(Evento.PLANO_INFORMADO.value)
+            if not dados.plano:
+                dados.plano = msg_bruto[:160]
+        else:
+            dados.plano = ""
+        pergunta = ""
+
     if aguardando_plano and (eh_confirmacao(msg) or msg == "quero"):
         eventos = [e for e in eventos if e not in {Evento.PLANO_INFORMADO.value, Evento.PEDIU_TROCAR_PLANO.value, Evento.NEGACAO.value}]
         if Evento.CONFIRMACAO.value not in eventos:
@@ -1517,6 +1598,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         and not eh_confirmacao(msg)
         and not any(p in msg for p in PERGUNTAS_PRECO)
         and not eh_pergunta_detalhe_plano(msg, msg_bruto)
+        and not eh_pergunta_plano_por_preco(msg, msg_bruto)
         and not eh_pergunta_instalacao(msg, msg_bruto)
         and not any(p in msg for p in PEDIDOS_ALTERNATIVA if len(p) >= 8)
         and not any(p in msg for p in PEDIDOS_LISTAR_PLANOS)
@@ -1641,8 +1723,11 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         campos_corrigidos = []
         pergunta = ""
 
-    # "O que tem no SUPER+?" — mantém referência do plano, mas é PERGUNTA (não escolha)
-    if (aguardando_plano or fase == "vendas") and eh_pergunta_detalhe_plano(msg, msg_bruto):
+    # "O que tem no SUPER+?" / "Qual o de 69,50?" — PERGUNTA (não escolha de plano)
+    if (aguardando_plano or fase == "vendas") and (
+        eh_pergunta_detalhe_plano(msg, msg_bruto)
+        or eh_pergunta_plano_por_preco(msg, msg_bruto)
+    ):
         eventos = [
             e
             for e in eventos
@@ -1652,6 +1737,8 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             eventos.append(Evento.PERGUNTA.value)
         if not pergunta:
             pergunta = texto(msg_bruto) or msg
+        if eh_pergunta_plano_por_preco(msg, msg_bruto):
+            dados.plano = ""
         # Mantém dados.plano se já detectou o nome (contexto); não força escolha
 
     # E-mail antecipado ou em mensagem partida ("meu email" + "x@gmail.com")
@@ -1930,6 +2017,14 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         Evento.CONFIRMACAO.value in eventos
         and not eh_confirmacao(msg)
         and (tem_duvida or "?" in msg_bruto)
+    ):
+        eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
+
+    # LLM pode marcar CONFIRMACAO em pedido de promo/desconto ("quero um na promoção")
+    if (
+        Evento.CONFIRMACAO.value in eventos
+        and aguardando_plano
+        and (eh_pedido_plano_promocional(msg) or eh_pedido_planos_com_desconto(msg))
     ):
         eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
 

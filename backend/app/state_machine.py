@@ -1111,6 +1111,79 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             "FASE_CADASTRO",
         )
 
+    # Promo/desconto/lista — antes de tratar como confirmação de plano
+    from app.parser import (
+        cliente_confirmou_ver_planos_desconto,
+        eh_pedido_lista_completa_planos,
+        eh_pedido_plano_promocional,
+        eh_pedido_planos_com_desconto,
+        normalizar_texto,
+    )
+
+    msg_n_plano = normalizar_texto(str(resolucao.get("mensagem") or ""))
+    pediu_lista_completa = eh_pedido_lista_completa_planos(msg_n_plano)
+    pediu_planos_desconto = eh_pedido_planos_com_desconto(msg_n_plano) or (
+        flags.get("confirmacao")
+        and cliente_confirmou_ver_planos_desconto(
+            msg_n_plano, str(estado.get("ultima_mensagem_sofia") or "")
+        )
+    )
+    pediu_listar_todos = (
+        plano.get("pediu_troca_declarada")
+        and (flags.get("tem_pergunta") or pediu_lista_completa)
+        and fase == "vendas"
+    ) or (pediu_lista_completa and fase == "vendas" and estado.get("tem_cobertura") is True)
+
+    if (
+        fase == "vendas"
+        and aguardando == "confirmacao_plano"
+        and estado.get("tem_cobertura") is True
+        and eh_pedido_plano_promocional(msg_n_plano)
+    ):
+        d = _salvar_desvio_cadastro(estado, dict(dados_base))
+        d.pop("invalidar_plano", None)
+        d["limpar_plano_em_negociacao"] = True
+        return dec(
+            "RESOLVER_PLANO",
+            None,
+            "vendas",
+            "resultado_plano",
+            d,
+            "Cliente pediu plano promocional",
+            "GLOBAL_PLANO",
+            contexto={"referencia_plano": msg_n_plano},
+        )
+
+    if (
+        fase == "vendas"
+        and estado.get("tem_cobertura") is True
+        and pediu_planos_desconto
+        and not pediu_lista_completa
+        and not eh_pedido_plano_promocional(msg_n_plano)
+    ):
+        return dec(
+            "LISTAR_TODOS_PLANOS",
+            None,
+            "vendas",
+            "lista_planos",
+            dict(dados_base),
+            "Cliente pediu planos com desconto/promoção",
+            "GLOBAL_PLANO",
+            contexto={"lista_completa": True, "filtro": "desconto"},
+        )
+
+    if pediu_listar_todos and estado.get("tem_cobertura") is True:
+        return dec(
+            "LISTAR_TODOS_PLANOS",
+            None,
+            "vendas",
+            "lista_planos",
+            dict(dados_base),
+            "Cliente pediu lista completa de planos",
+            "GLOBAL_PLANO",
+            contexto={"lista_completa": True},
+        )
+
     # Confirmação de plano (vendas) — com retorno ao cadastro se houver desvio
     if (
         fase == "vendas"
@@ -1270,57 +1343,6 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             "FASE_VENDAS",
         )
 
-    # Trocar plano sem citar qual — ou listar TODOS os planos
-    from app.parser import (
-        cliente_confirmou_ver_planos_desconto,
-        eh_pedido_lista_completa_planos,
-        eh_pedido_planos_com_desconto,
-        normalizar_texto,
-    )
-
-    msg_n = normalizar_texto(str(resolucao.get("mensagem") or ""))
-    pediu_lista_completa = eh_pedido_lista_completa_planos(msg_n)
-    pediu_planos_desconto = eh_pedido_planos_com_desconto(msg_n) or (
-        flags.get("confirmacao")
-        and cliente_confirmou_ver_planos_desconto(
-            msg_n, str(estado.get("ultima_mensagem_sofia") or "")
-        )
-    )
-    pediu_listar_todos = (
-        plano.get("pediu_troca_declarada")
-        and (flags.get("tem_pergunta") or pediu_lista_completa)
-        and fase == "vendas"
-    ) or (pediu_lista_completa and fase == "vendas" and estado.get("tem_cobertura") is True)
-
-    if (
-        fase == "vendas"
-        and estado.get("tem_cobertura") is True
-        and pediu_planos_desconto
-        and not pediu_lista_completa
-    ):
-        return dec(
-            "LISTAR_TODOS_PLANOS",
-            None,
-            "vendas",
-            "lista_planos",
-            dict(dados_base),
-            "Cliente pediu planos com desconto/promoção",
-            "GLOBAL_PLANO",
-            contexto={"lista_completa": True, "filtro": "desconto"},
-        )
-
-    if pediu_listar_todos and estado.get("tem_cobertura") is True:
-        return dec(
-            "LISTAR_TODOS_PLANOS",
-            None,
-            "vendas",
-            "lista_planos",
-            dict(dados_base),
-            "Cliente pediu lista completa de planos",
-            "GLOBAL_PLANO",
-            contexto={"lista_completa": True},
-        )
-
     if plano.get("pediu_troca_declarada") and not plano.get("informado"):
         if estado.get("tem_cobertura") is True:
             d = _salvar_desvio_cadastro(estado, dados_base)
@@ -1345,17 +1367,25 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             "GLOBAL_PLANO",
         )
 
-    # "O que tem nesse plano?" — detalhes/benefícios (antes de tratar como escolha)
+    # "O que tem nesse plano?" / "Qual o de 69,50?" — antes de tratar como escolha
     if flags.get("tem_pergunta") and fase == "vendas":
-        from app.parser import eh_pergunta_detalhe_plano, normalizar_texto
+        from app.parser import (
+            eh_pergunta_detalhe_plano,
+            eh_pergunta_plano_por_preco,
+            normalizar_texto,
+        )
 
+        msg_bruta_det = str(
+            resolucao.get("mensagem") or resolucao.get("pergunta_original") or ""
+        )
         texto_det = normalizar_texto(
             str(resolucao.get("mensagem") or resolucao.get("pergunta") or "")
         )
-        if eh_pergunta_detalhe_plano(texto_det):
-            ref = _texto(plano.get("valor")) or _texto(resolucao.get("pergunta")) or ""
-            if not ref:
-                ref = _texto(resolucao.get("mensagem") or "")
+        identificacao_preco = eh_pergunta_plano_por_preco(texto_det, msg_bruta_det)
+        if eh_pergunta_detalhe_plano(texto_det) or identificacao_preco:
+            ref = _texto(resolucao.get("pergunta")) or _texto(resolucao.get("mensagem")) or ""
+            if not identificacao_preco:
+                ref = _texto(plano.get("valor")) or ref
             d = dict(dados_base)
             plano_ctx: dict[str, Any] = {}
             aguard = aguardando or "confirmacao_plano"
@@ -1395,18 +1425,24 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                         "GLOBAL_PERGUNTA",
                         contexto={"candidatos": resolvido.get("candidatos") or []},
                     )
+            motivo = (
+                "Pergunta para identificar plano por preço"
+                if identificacao_preco
+                else "Pergunta sobre o que inclui o plano"
+            )
             return dec(
                 "RESPONDER",
                 "INFORMAR_DETALHES_PLANO",
                 "vendas",
                 aguard,
                 d,
-                "Pergunta sobre o que inclui o plano",
+                motivo,
                 "GLOBAL_PERGUNTA",
                 contexto={
                     "pendente": aguard,
                     "referencia_plano": ref,
                     "plano": plano_ctx,
+                    "identificacao_por_preco": identificacao_preco,
                 },
             )
 
@@ -2551,6 +2587,24 @@ def decidir_plano_resolvido(resultado: dict[str, Any], estado: dict[str, Any] | 
             "tentativas_plano_invalido": 0,
             **desvio,
         }
+        from app.parser import eh_pergunta_plano_por_preco
+
+        if eh_pergunta_plano_por_preco(referencia, referencia):
+            return Decisao(
+                acao="RESPONDER",
+                objetivo_resposta="INFORMAR_DETALHES_PLANO",
+                fase="vendas",
+                aguardando="confirmacao_plano",
+                atualizar_dados=dados,
+                contexto_resposta={
+                    "plano": p,
+                    "referencia_plano": referencia,
+                    "identificacao_por_preco": True,
+                    "pendente": "confirmacao_plano",
+                },
+                motivo="Plano identificado por preço — aguardar escolha",
+                prioridade="PLANO",
+            )
         objetivo = (
             "APRESENTAR_TROCA_PLANO_E_CONFIRMAR"
             if desvio.get("fase_anterior") == "cadastro"

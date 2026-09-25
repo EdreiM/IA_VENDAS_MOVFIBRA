@@ -38,6 +38,7 @@ from app.vendas_mensagens import (
     apresentar_planos_como_sugestao,
     confirmar_plano_escolhido,
     esclarecer_plano_ambiguo,
+    identificar_plano_por_preco,
     informar_detalhes_plano,
     informar_plano_nao_encontrado,
     informar_planos_por_beneficio,
@@ -419,6 +420,8 @@ def gerar_resposta(
                 cands = list(resolvido.get("candidatos") or [])
                 if cands:
                     return esclarecer_plano_ambiguo(cands)
+        if ctx.get("identificacao_por_preco"):
+            return identificar_plano_por_preco(plano if isinstance(plano, dict) else {})
         return informar_detalhes_plano(plano if isinstance(plano, dict) else {})
 
     if decisao.objetivo_resposta == "APRESENTAR_PLANO_INICIAL":

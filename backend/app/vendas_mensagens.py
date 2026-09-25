@@ -531,6 +531,20 @@ def informar_detalhes_plano(plano: dict[str, Any] | None = None) -> str:
     )
 
 
+def identificar_plano_por_preco(plano: dict[str, Any] | None = None) -> str:
+    """Resposta a 'Qual o de 69,50?' — apresenta o plano sem tratar como escolha."""
+    plano = plano or {}
+    if not plano.get("nome"):
+        return (
+            "Me diz qual valor você viu na lista que eu te mostro qual plano é."
+        )
+    return formatar_oferta_plano(
+        plano,
+        intro=f"Esse valor é do *{plano.get('nome')}*:",
+        cta="Quer seguir com esse ou prefere outra opção?",
+    )
+
+
 def planos_com_desconto_especial(planos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Planos com pontualidade ou promo nos primeiros meses (ex.: SUPER+ R$ 69,50)."""
     out: list[dict[str, Any]] = []

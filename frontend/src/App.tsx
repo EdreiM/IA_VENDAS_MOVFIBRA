@@ -60,19 +60,7 @@ import {
   uploadPlanoImagem,
   upsertPromocao,
 } from "./api";
-
-type Tab =
-  | "chat"
-  | "metricas"
-  | "conversas"
-  | "clientes"
-  | "planos"
-  | "promocoes"
-  | "config"
-  | "integracao"
-  | "cobertura"
-  | "ferramentas"
-  | "unidades";
+import { NAV_GROUPS, PageHeader, Tab, ToastStack } from "./ui";
 
 type Option = { id: number; label: string };
 
@@ -190,19 +178,17 @@ function rotuloCliente(c: { nome?: string | null; telefone?: string | null; id_c
   return (c.nome || "").trim() || (c.telefone || "").trim() || c.id_cliente;
 }
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "chat", label: "Simulador" },
-  { id: "metricas", label: "Métricas" },
-  { id: "conversas", label: "Conversas" },
-  { id: "clientes", label: "Clientes" },
-  { id: "planos", label: "Planos" },
-  { id: "promocoes", label: "Promoções" },
-  { id: "config", label: "Config IA" },
-  { id: "integracao", label: "Chatwoot" },
-  { id: "cobertura", label: "Viabilidade" },
-  { id: "ferramentas", label: "Ferramentas" },
-  { id: "unidades", label: "Unidades" },
-];
+const EMPTY_PLANO: Partial<Plano> = {
+  nome: "",
+  valor: 0,
+  ativo: true,
+  ordem: 100,
+  imagem_url: "",
+  descricao: "",
+  beneficios: "",
+  valor_pontualidade: null,
+  condicao_valor_pontualidade: "",
+};
 
 const emptyTool = (): Omit<Ferramenta, "id" | "chamadas_sucesso"> => ({
   tool_key: "",
@@ -274,6 +260,7 @@ export default function App() {
     imagem_url: "",
   });
   const [editPlanoId, setEditPlanoId] = useState<number | null>(null);
+  const [planoEditorOpen, setPlanoEditorOpen] = useState(false);
   const [planoImagemFile, setPlanoImagemFile] = useState<File | null>(null);
   const [planoImagemPreview, setPlanoImagemPreview] = useState("");
 
@@ -354,6 +341,7 @@ export default function App() {
   const [tools, setTools] = useState<Ferramenta[]>([]);
   const [toolForm, setToolForm] = useState(emptyTool());
   const [editToolId, setEditToolId] = useState<number | null>(null);
+  const [toolEditorOpen, setToolEditorOpen] = useState(false);
 
   const [novaUnidade, setNovaUnidade] = useState({ codigo: "", nome: "" });
 
@@ -645,6 +633,48 @@ export default function App() {
     [funil],
   );
 
+  useEffect(() => {
+    if (!okMsg) return;
+    const t = window.setTimeout(() => setOkMsg(""), 4500);
+    return () => window.clearTimeout(t);
+  }, [okMsg]);
+
+  function resetPlanoForm() {
+    setEditPlanoId(null);
+    setPlanoEditorOpen(false);
+    setPlanoForm({ ...EMPTY_PLANO });
+    setPlanoImagemFile(null);
+    setPlanoImagemPreview("");
+  }
+
+  function openCreatePlano() {
+    setEditPlanoId(null);
+    setPlanoForm({ ...EMPTY_PLANO });
+    setPlanoImagemFile(null);
+    setPlanoImagemPreview("");
+    setPlanoEditorOpen(true);
+  }
+
+  function openEditPlano(p: Plano) {
+    setEditPlanoId(p.id);
+    setPlanoForm(p);
+    setPlanoImagemFile(null);
+    setPlanoImagemPreview("");
+    setPlanoEditorOpen(true);
+  }
+
+  function resetToolForm() {
+    setEditToolId(null);
+    setToolEditorOpen(false);
+    setToolForm(emptyTool());
+  }
+
+  function openCreateTool() {
+    setEditToolId(null);
+    setToolForm(emptyTool());
+    setToolEditorOpen(true);
+  }
+
   const conversasFiltradas = useMemo(() => {
     const q = convBusca.trim().toLowerCase();
     if (!q) return conversas;
@@ -780,10 +810,7 @@ export default function App() {
       if (planoImagemFile) {
         saved = await uploadPlanoImagem(saved.id, planoImagemFile);
       }
-      setEditPlanoId(null);
-      setPlanoForm({ nome: "", valor: 0, ativo: true, ordem: 100, imagem_url: "" });
-      setPlanoImagemFile(null);
-      setPlanoImagemPreview("");
+      resetPlanoForm();
       setOkMsg("Plano salvo");
       await refreshPlanos();
     } catch (err) {
@@ -969,8 +996,7 @@ export default function App() {
       };
       if (editToolId) await updateFerramenta(editToolId, body);
       else await createFerramenta(body);
-      setEditToolId(null);
-      setToolForm(emptyTool());
+      resetToolForm();
       setOkMsg("Ferramenta salva");
       await refreshTools();
     } catch (err) {
@@ -991,6 +1017,7 @@ export default function App() {
       ativo: t.ativo,
       parametros: t.parametros || [],
     });
+    setToolEditorOpen(true);
   }
 
   async function saveUnidade(e: FormEvent) {
@@ -1135,15 +1162,22 @@ export default function App() {
           </div>
         </div>
         <nav>
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={tab === t.id ? "nav-item active" : "nav-item"}
-              onClick={() => setTab(t.id)}
-            >
-              {t.label}
-            </button>
+          {NAV_GROUPS.map((group) => (
+            <div key={group.title} className="nav-group">
+              <p className="nav-group-title">{group.title}</p>
+              <div className="nav-group-items">
+                {group.tabs.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={tab === t.id ? "nav-item active" : "nav-item"}
+                    onClick={() => setTab(t.id)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
         <div className="sidebar-foot">
@@ -1161,8 +1195,8 @@ export default function App() {
             </button>
           </div>
           <div className="top-filters">
-            <label>
-              Unidade
+            <label className="filter-unidade">
+              <span className="filter-label">Unidade</span>
               <select
                 value={unidadeFiltro}
                 onChange={(e) =>
@@ -1184,24 +1218,22 @@ export default function App() {
         </header>
 
         {error ? <div className="alert bad">{error}</div> : null}
-        {okMsg ? (
-          <div className="alert ok" onClick={() => setOkMsg("")}>
-            {okMsg}
-          </div>
-        ) : null}
+        <ToastStack message={okMsg} onDismiss={() => setOkMsg("")} />
 
         {tab === "chat" && (
           <section className="panel chat-panel">
             <div className="chat-layout">
               <div className="chat-main">
-                <div className="row-head">
-                  <div>
-                    <h1>Simulador</h1>
-                    <p className="muted" style={{ margin: 0 }}>
-                      Simule uma conversa com a Eva (como no WhatsApp).
-                    </p>
-                  </div>
-                  <div className="chat-toolbar">
+                <PageHeader
+                  title="Simulador"
+                  subtitle="Simule uma conversa com a Eva, como no WhatsApp."
+                  action={
+                    <button type="button" className="ghost" onClick={() => void reiniciarChat()}>
+                      Reiniciar conversa
+                    </button>
+                  }
+                />
+                <div className="chat-toolbar">
                     <label className="chat-id">
                       id_cliente
                       <input
@@ -1219,11 +1251,7 @@ export default function App() {
                         title="Obrigatório para enviar termos/áudio via n8n"
                       />
                     </label>
-                    <button type="button" className="ghost" onClick={() => void reiniciarChat()}>
-                      Reiniciar
-                    </button>
                   </div>
-                </div>
                 <div className="chat-estado">Estado: {chatEstado}</div>
                 <div className="chat-log">
                   {chatMsgs.map((m, i) => (
@@ -1305,77 +1333,82 @@ export default function App() {
 
         {tab === "metricas" && (
           <section className="panel">
-            <h1>Métricas</h1>
-            <p className="muted">Visão do funil e desempenho operacional.</p>
-            <div className="cards">
-              <div className="stat">
-                <span>Conversas</span>
-                <strong>{resumo?.conversas ?? "—"}</strong>
+            <PageHeader
+              title="Métricas"
+              subtitle="Indicadores essenciais do funil comercial e desempenho operacional da Eva."
+            />
+            <div className="metrics-hero">
+              <div className="stat-hero">
+                <span className="stat-hero-label">Conversas</span>
+                <strong className="stat-hero-value">{resumo?.conversas ?? "—"}</strong>
+                <span className="stat-hero-hint">Total no período</span>
               </div>
-              <div className="stat">
-                <span>Com IA</span>
-                <strong>{resumo?.com_ia ?? "—"}</strong>
+              <div className="stat-hero">
+                <span className="stat-hero-label">Com IA</span>
+                <strong className="stat-hero-value">{resumo?.com_ia ?? "—"}</strong>
+                <span className="stat-hero-hint">Atendidas pela Eva</span>
               </div>
-              <div className="stat">
-                <span>Transferidos</span>
-                <strong>{resumo?.transferidos_humano ?? "—"}</strong>
+              <div className="stat-hero">
+                <span className="stat-hero-label">Transferidos</span>
+                <strong className="stat-hero-value">{resumo?.transferidos_humano ?? "—"}</strong>
+                <span className="stat-hero-hint">Handoff humano</span>
               </div>
-              <div className="stat">
-                <span>Agendamentos</span>
-                <strong>{resumo?.agendamentos_confirmados ?? "—"}</strong>
+              <div className="stat-hero">
+                <span className="stat-hero-label">Agendamentos</span>
+                <strong className="stat-hero-value">{resumo?.agendamentos_confirmados ?? "—"}</strong>
+                <span className="stat-hero-hint">Instalações confirmadas</span>
               </div>
-              <div className="stat">
+            </div>
+            <div className="metrics-secondary">
+              <div className="stat-compact">
                 <span>Cobertura</span>
                 <strong>{resumo?.com_cobertura ?? "—"}</strong>
               </div>
-              <div className="stat">
+              <div className="stat-compact">
                 <span>Mensagens</span>
                 <strong>{resumo?.mensagens ?? "—"}</strong>
               </div>
+              {(resumo?.ferramentas_destaque || []).map((f) => (
+                <div className="stat-compact" key={f.id}>
+                  <span>{f.nome}</span>
+                  <strong>{f.chamadas_sucesso}</strong>
+                </div>
+              ))}
             </div>
-            {(resumo?.ferramentas_destaque || []).length > 0 && (
-              <div className="cards tools-stats">
-                {resumo!.ferramentas_destaque!.map((f) => (
-                  <div className="stat" key={f.id}>
-                    <span>{f.nome}</span>
-                    <strong>{f.chamadas_sucesso}</strong>
-                    <small>sucessos</small>
+            <div className="funil-section">
+              <h2>Funil comercial</h2>
+              <div className="funil">
+                {(funil?.etapas || []).map((e) => (
+                  <div key={e.fase} className="funil-row">
+                    <span>{e.fase}</span>
+                    <div className="bar-wrap">
+                      <div
+                        className="bar"
+                        style={{ width: `${Math.round((e.quantidade / maxFunil) * 100)}%` }}
+                      />
+                    </div>
+                    <strong>{e.quantidade}</strong>
                   </div>
                 ))}
               </div>
-            )}
-            <h2>Funil</h2>
-            <div className="funil">
-              {(funil?.etapas || []).map((e) => (
-                <div key={e.fase} className="funil-row">
-                  <span>{e.fase}</span>
-                  <div className="bar-wrap">
-                    <div
-                      className="bar"
-                      style={{ width: `${Math.round((e.quantidade / maxFunil) * 100)}%` }}
-                    />
-                  </div>
-                  <strong>{e.quantidade}</strong>
-                </div>
-              ))}
             </div>
           </section>
         )}
 
         {tab === "conversas" && (
           <section className="panel conv-panel">
-            <div className="row-head">
-              <div>
-                <h1>Conversas</h1>
-                <p className="muted">Histórico e intervenção humana</p>
-              </div>
+            <PageHeader
+              title="Conversas"
+              subtitle="Histórico de atendimentos, mensagens e handoff para equipe humana."
+              action={
               <select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value)}>
                 <option value="">Todos status</option>
                 <option value="com_ia">Com IA</option>
                 <option value="transferido">Transferido</option>
                 <option value="finalizado">Finalizado</option>
               </select>
-            </div>
+              }
+            />
 
             <div className="conv-layout">
               <aside className="conv-list">
@@ -1555,11 +1588,10 @@ export default function App() {
 
         {tab === "clientes" && (
           <section className="panel clientes-panel">
-            <h1>Clientes</h1>
-            <p className="muted">
-              Cadastro estruturado de cada cliente — a IA grava aqui o que aprende na conversa
-              (nome, CPF, endereço, plano, etc.).
-            </p>
+            <PageHeader
+              title="Clientes"
+              subtitle="Cadastro estruturado — a Eva grava nome, CPF, endereço, plano e dados operacionais durante a conversa."
+            />
             <div className="clientes-layout">
               <aside className="clientes-list">
                 <form className="clientes-search" onSubmit={(e) => void buscarClientes(e)}>
@@ -1802,11 +1834,112 @@ export default function App() {
 
         {tab === "planos" && (
           <section className="panel">
-            <h1>Planos</h1>
-            <p className="muted">
-              Catálogo da Eva · a IA usa estes planos (não o webhook). Marque o plano inicial.
-            </p>
-            <form className="form-grid" onSubmit={savePlano}>
+            <PageHeader
+              title="Planos"
+              subtitle="Catálogo comercial usado pela Eva nas conversas. Defina qual plano a IA apresenta primeiro."
+              action={
+                !planoEditorOpen ? (
+                  <button type="button" onClick={openCreatePlano}>
+                    Criar plano
+                  </button>
+                ) : null
+              }
+            />
+            <div className={`page-split${planoEditorOpen ? " has-editor" : ""}`}>
+              <div className="page-split-main">
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Plano</th>
+                        <th>Valor</th>
+                        <th>Status</th>
+                        <th>Imagem</th>
+                        <th aria-label="Ações" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {planos.map((p) => (
+                        <tr key={p.id}>
+                          <td>
+                            <strong>{p.nome}</strong>
+                            {!p.ativo ? (
+                              <span className="tool-tag" style={{ marginLeft: 8 }}>
+                                Inativo
+                              </span>
+                            ) : null}
+                          </td>
+                          <td>
+                            R$ {Number(p.valor).toFixed(2)}
+                            {p.valor_pontualidade != null
+                              ? ` · pont. R$ ${Number(p.valor_pontualidade).toFixed(2)}`
+                              : ""}
+                          </td>
+                          <td>
+                            {p.destaque ? (
+                              <span className="plano-inicial-badge">★ Plano inicial</span>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td>
+                            {p.imagem_url ? (
+                              <img className="plano-thumb-sm" src={p.imagem_url} alt={p.nome} />
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td className="row-actions">
+                            {!p.destaque ? (
+                              <button
+                                type="button"
+                                className="ghost"
+                                onClick={async () => {
+                                  try {
+                                    await setPlanoInicial(p.id);
+                                    setOkMsg(`${p.nome} definido como plano inicial`);
+                                    await refreshPlanos();
+                                  } catch (err) {
+                                    setError(err instanceof Error ? err.message : String(err));
+                                  }
+                                }}
+                              >
+                                Definir inicial
+                              </button>
+                            ) : null}
+                            <button type="button" className="ghost" onClick={() => openEditPlano(p)}>
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost danger"
+                              onClick={() =>
+                                void deletePlano(p.id).then(refreshPlanos).catch((err) =>
+                                  setError(err instanceof Error ? err.message : String(err)),
+                                )
+                              }
+                            >
+                              Excluir
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {planoEditorOpen ? (
+                <aside className="editor-panel">
+                  <div className="editor-panel-head">
+                    <h2>{editPlanoId ? "Editar plano" : "Novo plano"}</h2>
+                    <button type="button" className="ghost" onClick={resetPlanoForm}>
+                      Fechar
+                    </button>
+                  </div>
+                  <form className="form-grid" onSubmit={savePlano}>
+                    <div className="form-section span2">
+                      <p className="form-section-title">Identificação e preço</p>
               <label>
                 Nome
                 <input
@@ -1854,6 +1987,9 @@ export default function App() {
                   onChange={(e) => setPlanoForm({ ...planoForm, modalidade: e.target.value })}
                 />
               </label>
+                    </div>
+                    <div className="form-section span2">
+                      <p className="form-section-title">Apresentação comercial</p>
               <label className="span2">
                 Imagem do plano (PNG)
                 <input
@@ -1904,6 +2040,9 @@ export default function App() {
                   placeholder="Pagando até o vencimento…"
                 />
               </label>
+                    </div>
+                    <div className="form-section span2">
+                      <p className="form-section-title">Publicação</p>
               <label>
                 Ordem
                 <input
@@ -1929,118 +2068,25 @@ export default function App() {
                 Plano inicial (IA apresenta primeiro)
               </label>
               <div className="actions span2">
-                <button type="submit">{editPlanoId ? "Atualizar" : "Criar plano"}</button>
-                {editPlanoId ? (
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => {
-                      setEditPlanoId(null);
-                      setPlanoForm({
-                        nome: "",
-                        valor: 0,
-                        ativo: true,
-                        ordem: 100,
-                        imagem_url: "",
-                        descricao: "",
-                        beneficios: "",
-                        valor_pontualidade: null,
-                        condicao_valor_pontualidade: "",
-                      });
-                      setPlanoImagemFile(null);
-                      setPlanoImagemPreview("");
-                    }}
-                  >
-                    Cancelar
-                  </button>
-                ) : null}
+                <button type="submit">{editPlanoId ? "Salvar alterações" : "Criar plano"}</button>
+                <button type="button" className="ghost" onClick={resetPlanoForm}>
+                  Cancelar
+                </button>
               </div>
-            </form>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Nome</th>
-                    <th>Valor</th>
-                    <th>Inicial</th>
-                    <th>Img</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {planos.map((p) => (
-                    <tr key={p.id}>
-                      <td>
-                        {p.nome}
-                        {!p.ativo ? " (inativo)" : ""}
-                      </td>
-                      <td>
-                        R$ {Number(p.valor).toFixed(2)}
-                        {p.valor_pontualidade != null
-                          ? ` · pont. R$ ${Number(p.valor_pontualidade).toFixed(2)}`
-                          : ""}
-                      </td>
-                      <td>{p.destaque ? "★ sim" : "—"}</td>
-                      <td>
-                        {p.imagem_url ? (
-                          <img className="plano-thumb-sm" src={p.imagem_url} alt={p.nome} />
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="row-actions">
-                        {!p.destaque ? (
-                          <button
-                            type="button"
-                            className="ghost"
-                            onClick={async () => {
-                              try {
-                                await setPlanoInicial(p.id);
-                                setOkMsg(`${p.nome} definido como plano inicial`);
-                                await refreshPlanos();
-                              } catch (err) {
-                                setError(err instanceof Error ? err.message : String(err));
-                              }
-                            }}
-                          >
-                            Definir inicial
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="ghost"
-                          onClick={() => {
-                            setEditPlanoId(p.id);
-                            setPlanoForm(p);
-                            setPlanoImagemFile(null);
-                            setPlanoImagemPreview("");
-                          }}
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost danger"
-                          onClick={() =>
-                            void deletePlano(p.id).then(refreshPlanos).catch((err) =>
-                              setError(err instanceof Error ? err.message : String(err)),
-                            )
-                          }
-                        >
-                          Excluir
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                    </div>
+                  </form>
+                </aside>
+              ) : null}
             </div>
           </section>
         )}
 
         {tab === "promocoes" && (
           <section className="panel">
-            <h1>Promoções</h1>
+            <PageHeader
+              title="Promoções"
+              subtitle="Códigos promocionais vinculados ao catálogo e à unidade selecionada."
+            />
             <form className="form-grid" onSubmit={savePromo}>
               <label>
                 Código
@@ -2123,10 +2169,10 @@ export default function App() {
 
         {tab === "config" && (
           <section className="panel">
-            <h1>Configurações IA</h1>
-            <p className="muted">
-              Motor OpenAI, identidade e chaves. Escopo: {uid ? `unidade #${uid}` : "global"}.
-            </p>
+            <PageHeader
+              title="Config IA"
+              subtitle={`Motor OpenAI, identidade e chaves. Escopo: ${uid ? `unidade #${uid}` : "global"}.`}
+            />
             <form className="form-grid config-ia" onSubmit={saveConfig}>
               <label className="span2">
                 Nome da IA
@@ -2280,11 +2326,10 @@ export default function App() {
 
         {tab === "integracao" && (
           <section className="panel">
-            <h1>Integração Chatwoot</h1>
-            <p className="muted">
-              Receba mensagens do WhatsApp (Meta) direto do Chatwoot, filtre pela caixa de entrada da
-              IA e responda pela ferramenta <code>enviar_mensagem</code>.
-            </p>
+            <PageHeader
+              title="Chatwoot"
+              subtitle="Webhook de entrada, caixa da IA e URL pública da API para o Chatwoot enviar mensagens."
+            />
 
             <div className="config-box" style={{ marginBottom: "1rem" }}>
               <strong>Status</strong>
@@ -2464,8 +2509,8 @@ export default function App() {
                   style={{
                     marginTop: "0.75rem",
                     padding: "0.75rem",
-                    background: "var(--surface-2, #1a1a1a)",
-                    borderRadius: "6px",
+                    background: "var(--surface-elevated)",
+                    borderRadius: "var(--radius-sm)",
                     overflow: "auto",
                     fontSize: "0.85rem",
                   }}
@@ -2479,33 +2524,49 @@ export default function App() {
 
         {tab === "cobertura" && (
           <section className="panel">
-            <h1>Viabilidade / Cobertura</h1>
-            <p className="muted">
-              Credenciais para consultar cobertura: <strong>Google Maps</strong> (endereço em texto) e{" "}
-              <strong>IXC</strong> (viabilidade técnica). Pin GPS usa IXC direto; Google só enriquece
-              cidade/bairro quando configurado.
-            </p>
+            <PageHeader
+              title="Viabilidade"
+              subtitle="Configure IXC e Google Maps para consulta de cobertura. Pin GPS usa IXC; texto de endereço usa Google quando disponível."
+            />
+            <div className="viab-sections">
+              <div className="config-box">
+                <strong>Status da integração</strong>
+                <div className="viab-status-grid">
+                  <div className="viab-status-item">
+                    <label>Modo</label>
+                    <strong>
+                      <span className="badge badge-com_ia">IXC + Google Maps</span>
+                    </strong>
+                  </div>
+                  <div className={`viab-status-item${cobMeta.pronta ? " is-ok" : " is-warn"}`}>
+                    <label>Pronto para atender</label>
+                    <strong>
+                      {cobMeta.pronta ? (
+                        <span className="badge badge-com_ia">Sim — configurado</span>
+                      ) : (
+                        <span className="badge badge-finalizado">Falta configurar</span>
+                      )}
+                    </strong>
+                  </div>
+                  <div className={`viab-status-item${cobMeta.ixc_user_configured && cobMeta.ixc_pass_configured ? " is-ok" : " is-warn"}`}>
+                    <label>IXC</label>
+                    <strong>{cobMeta.ixc_user_configured && cobMeta.ixc_pass_configured ? "Credenciais OK" : "Pendente"}</strong>
+                  </div>
+                  <div className={`viab-status-item${cobMeta.google_configured ? " is-ok" : ""}`}>
+                    <label>Google Maps</label>
+                    <strong>{cobMeta.google_configured ? "Chave configurada" : "Opcional (texto)"}</strong>
+                  </div>
+                </div>
+                {!cobMeta.pronta && cobMeta.faltando.length > 0 ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    Faltando: {cobMeta.faltando.join(", ")}
+                  </p>
+                ) : null}
+              </div>
 
-            <div className="config-box" style={{ marginBottom: "1rem" }}>
-              <strong>Status</strong>
-              <ul className="muted" style={{ margin: "0.5rem 0 0", paddingLeft: "1.2rem" }}>
-                <li>
-                  Modo: <span className="badge badge-com_ia">IXC + Google Maps</span>
-                </li>
-                <li>
-                  Pronto para atender:{" "}
-                  {cobMeta.pronta ? (
-                    <span className="badge badge-com_ia">Sim</span>
-                  ) : (
-                    <span className="badge badge-finalizado">Falta configurar</span>
-                  )}
-                </li>
-                {!cobMeta.pronta && cobMeta.faltando.length > 0 && (
-                  <li>Faltando: {cobMeta.faltando.join(", ")}</li>
-                )}
-              </ul>
-            </div>
-
+              <div className="config-box">
+                <strong>Credenciais</strong>
+                <p className="form-section-desc">Deixe em branco campos de senha/chave para manter o valor atual.</p>
             <form className="form-grid config-ia" onSubmit={saveCobertura}>
               <label className="span2">
                 URL base IXC
@@ -2571,14 +2632,15 @@ export default function App() {
               </label>
 
               <div className="actions span2">
-                <button type="submit">Salvar</button>
+                <button type="submit">Salvar credenciais</button>
               </div>
             </form>
+              </div>
 
-            <div className="config-box" style={{ marginTop: "1.5rem" }}>
+              <div className="config-box">
               <strong>Testar consulta</strong>
-              <p className="muted" style={{ marginTop: "0.35rem" }}>
-                Usa as credenciais salvas — não passa pelo LLM.
+              <p className="form-section-desc">
+                Simula a consulta com as credenciais salvas — não passa pelo LLM.
               </p>
               <div className="form-grid config-ia" style={{ marginTop: "0.75rem" }}>
                 <label>
@@ -2614,8 +2676,8 @@ export default function App() {
                   style={{
                     marginTop: "0.75rem",
                     padding: "0.75rem",
-                    background: "var(--surface-2, #1a1a1a)",
-                    borderRadius: "6px",
+                    background: "var(--surface-elevated)",
+                    borderRadius: "var(--radius-sm)",
                     overflow: "auto",
                     fontSize: "0.85rem",
                   }}
@@ -2624,14 +2686,71 @@ export default function App() {
                 </pre>
               )}
             </div>
+            </div>
           </section>
         )}
 
         {tab === "ferramentas" && (
           <section className="panel tool-panel">
-            <div className="tool-layout">
-              <form className="tool-form" onSubmit={saveTool}>
-                <h1>{editToolId ? "Editar ferramenta" : "Criar ferramenta"}</h1>
+            <PageHeader
+              title="Ferramentas"
+              subtitle="Webhooks e integrações que a Eva pode chamar durante o atendimento (cadastro, termos, transferência, etc.)."
+              action={
+                !toolEditorOpen ? (
+                  <button type="button" onClick={openCreateTool}>
+                    Nova ferramenta
+                  </button>
+                ) : null
+              }
+            />
+            <div className={`page-split${toolEditorOpen ? " has-editor" : ""}`}>
+              <div className="page-split-main tool-list">
+                {tools.length === 0 ? (
+                  <p className="muted">Nenhuma ferramenta cadastrada.</p>
+                ) : null}
+                {tools.map((t) => (
+                  <div className="tool-card" key={t.id}>
+                    <div>
+                      <strong>{t.nome}</strong>
+                      <small>{t.tool_key}</small>
+                      <p>{t.descricao || "Sem descrição"}</p>
+                      <div className="tool-card-meta">
+                        <span className="tool-tag">{t.parametros?.length || 0} parâmetros</span>
+                        <span className="tool-tag">{t.chamadas_sucesso} sucessos</span>
+                        {t.destaque_dashboard ? <span className="tool-tag">Destaque</span> : null}
+                        {!t.ativo ? <span className="tool-tag">Inativa</span> : null}
+                        {t.integracao === "unidade" ? <span className="tool-tag">Por unidade</span> : null}
+                      </div>
+                    </div>
+                    <div className="tool-card-actions">
+                      <button type="button" className="ghost" onClick={() => editTool(t)}>
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost danger"
+                        onClick={() =>
+                          void deleteFerramenta(t.id).then(refreshTools).catch((err) =>
+                            setError(err instanceof Error ? err.message : String(err)),
+                          )
+                        }
+                      >
+                        Excluir
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {toolEditorOpen ? (
+                <aside className="editor-panel">
+                  <div className="editor-panel-head">
+                    <h2>{editToolId ? "Editar ferramenta" : "Nova ferramenta"}</h2>
+                    <button type="button" className="ghost" onClick={resetToolForm}>
+                      Fechar
+                    </button>
+                  </div>
+              <form className="tool-form" onSubmit={saveTool} style={{ background: "transparent", border: 0, padding: 0, boxShadow: "none" }}>
                 <div className="seg">
                   <button
                     type="button"
@@ -2764,62 +2883,24 @@ export default function App() {
                 ))}
 
                 <div className="actions">
-                  <button type="submit">{editToolId ? "Atualizar" : "Criar ferramenta"}</button>
-                  {editToolId ? (
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => {
-                        setEditToolId(null);
-                        setToolForm(emptyTool());
-                      }}
-                    >
-                      Cancelar
-                    </button>
-                  ) : null}
+                  <button type="submit">{editToolId ? "Salvar alterações" : "Criar ferramenta"}</button>
+                  <button type="button" className="ghost" onClick={resetToolForm}>
+                    Cancelar
+                  </button>
                 </div>
               </form>
-
-              <div className="tool-list">
-                <h2>Cadastradas</h2>
-                {tools.map((t) => (
-                  <div className="tool-card" key={t.id}>
-                    <div>
-                      <strong>{t.nome}</strong>
-                      <small>{t.tool_key}</small>
-                      <p>{t.descricao || "Sem descrição"}</p>
-                      <small>
-                        {t.parametros?.length || 0} params · {t.chamadas_sucesso} sucessos
-                        {t.destaque_dashboard ? " · destaque" : ""}
-                      </small>
-                    </div>
-                    <div className="row-actions">
-                      <button type="button" className="ghost" onClick={() => editTool(t)}>
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        className="ghost danger"
-                        onClick={() =>
-                          void deleteFerramenta(t.id).then(refreshTools).catch((err) =>
-                            setError(err instanceof Error ? err.message : String(err)),
-                          )
-                        }
-                      >
-                        Excluir
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                </aside>
+              ) : null}
             </div>
           </section>
         )}
 
         {tab === "unidades" && (
           <section className="panel">
-            <h1>Unidades</h1>
-            <p className="muted">Filiais / cidades operacionais.</p>
+            <PageHeader
+              title="Unidades"
+              subtitle="Filiais e cidades operacionais — filtram dados e configurações por escopo."
+            />
             <form className="form-grid narrow" onSubmit={saveUnidade}>
               <label>
                 Código
