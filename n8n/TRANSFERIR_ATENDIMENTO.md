@@ -107,6 +107,23 @@ Campos principais (snapshot completo + extras):
 
 ---
 
+## Nó Call INSERE ATENDIMENTO IXC (dentro do subfluxo)
+
+A Eva envia `mensagens` como **JSON string**. O INSERE V4 exige **array**.
+
+No nó **Call INSERE ATENDIMENTO IXC**:
+
+- **convertFieldsToString:** `false` (senão o array vira string de novo)
+- **mensagens:**
+
+```
+={{ (() => { const m = $('When Executed by Another Workflow').first().json.mensagens; if (Array.isArray(m)) return m; try { return JSON.parse(m || '[]'); } catch { return []; } })() }}
+```
+
+Schema do campo `mensagens`: tipo **array** (não string).
+
+---
+
 ## Nó Code — mensagem interna
 
 Arquivo: `n8n/montar_mensagem_transferencia.js`
