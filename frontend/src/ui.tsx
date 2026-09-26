@@ -65,6 +65,12 @@ export function PageHeader({
   );
 }
 
+export function confirmarExclusao(item: string, consequencia: string): boolean {
+  return window.confirm(
+    `Tem certeza que deseja excluir ${item}?\n\n${consequencia}`,
+  );
+}
+
 export function ToastStack({
   message,
   onDismiss,

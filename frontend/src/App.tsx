@@ -60,7 +60,7 @@ import {
   uploadPlanoImagem,
   upsertPromocao,
 } from "./api";
-import { NAV_GROUPS, PageHeader, Tab, ToastStack } from "./ui";
+import { NAV_GROUPS, PageHeader, Tab, ToastStack, confirmarExclusao } from "./ui";
 
 type Option = { id: number; label: string };
 
@@ -761,10 +761,14 @@ export default function App() {
   async function deletarConversaSelecionada() {
     if (!sel) return;
     const rotulo = sel.nome || sel.telefone || sel.id_cliente;
-    const ok = window.confirm(
-      `Tem certeza que deseja excluir a conversa de "${rotulo}"?\n\nIsso apaga o histórico, estado e turnos. Não pode ser desfeito.`,
-    );
-    if (!ok) return;
+    if (
+      !confirmarExclusao(
+        `a conversa de "${rotulo}"`,
+        "Isso apaga o histórico, estado e turnos. Não pode ser desfeito.",
+      )
+    ) {
+      return;
+    }
     setError("");
     try {
       await deleteConversa(sel.id_cliente);
@@ -773,6 +777,69 @@ export default function App() {
       setMensagensConv([]);
       setOkMsg("Conversa excluída");
       await refreshConversas();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function deletarPlanoConfirmado(plano: Plano) {
+    const rotulo = plano.nome?.trim() || `plano #${plano.id}`;
+    if (
+      !confirmarExclusao(
+        `o plano "${rotulo}"`,
+        "Ele será removido do catálogo e a Eva não poderá mais oferecê-lo. Não pode ser desfeito.",
+      )
+    ) {
+      return;
+    }
+    setError("");
+    try {
+      await deletePlano(plano.id);
+      if (editPlanoId === plano.id) resetPlanoForm();
+      setOkMsg("Plano excluído");
+      await refreshPlanos();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function deletarPromocaoConfirmada(promo: Promocao) {
+    const rotulo = promo.titulo?.trim() || promo.codigo?.trim() || `promoção #${promo.id}`;
+    if (
+      !confirmarExclusao(
+        `a promoção "${rotulo}"`,
+        "Ela será removida permanentemente do sistema. Não pode ser desfeito.",
+      )
+    ) {
+      return;
+    }
+    setError("");
+    try {
+      await deletePromocao(promo.id);
+      setOkMsg("Promoção excluída");
+      await refreshPromos();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function deletarFerramentaConfirmada(ferramenta: Ferramenta) {
+    const rotulo =
+      ferramenta.nome?.trim() || ferramenta.tool_key?.trim() || `ferramenta #${ferramenta.id}`;
+    if (
+      !confirmarExclusao(
+        `a ferramenta "${rotulo}"`,
+        "Ela será removida e deixará de estar disponível para a Eva. Não pode ser desfeito.",
+      )
+    ) {
+      return;
+    }
+    setError("");
+    try {
+      await deleteFerramenta(ferramenta.id);
+      if (editToolId === ferramenta.id) resetToolForm();
+      setOkMsg("Ferramenta excluída");
+      await refreshTools();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -1921,11 +1988,7 @@ export default function App() {
                             <button
                               type="button"
                               className="ghost danger"
-                              onClick={() =>
-                                void deletePlano(p.id).then(refreshPlanos).catch((err) =>
-                                  setError(err instanceof Error ? err.message : String(err)),
-                                )
-                              }
+                              onClick={() => void deletarPlanoConfirmado(p)}
                             >
                               Excluir
                             </button>
@@ -2158,11 +2221,7 @@ export default function App() {
                         <button
                           type="button"
                           className="ghost danger"
-                          onClick={() =>
-                            void deletePromocao(p.id).then(refreshPromos).catch((err) =>
-                              setError(err instanceof Error ? err.message : String(err)),
-                            )
-                          }
+                          onClick={() => void deletarPromocaoConfirmada(p)}
                         >
                           Excluir
                         </button>
@@ -2778,11 +2837,7 @@ export default function App() {
                       <button
                         type="button"
                         className="ghost danger"
-                        onClick={() =>
-                          void deleteFerramenta(t.id).then(refreshTools).catch((err) =>
-                            setError(err instanceof Error ? err.message : String(err)),
-                          )
-                        }
+                        onClick={() => void deletarFerramentaConfirmada(t)}
                       >
                         Excluir
                       </button>
