@@ -20,7 +20,9 @@ from app.parser import (
     eh_confirmacao,
     eh_mensagem_sobre_planos,
     eh_pedido_lista_completa_planos,
+    eh_esclarecimento_promo_plano,
     eh_pedido_plano_promocional,
+    eh_pedido_planos_com_desconto,
     eh_pergunta_cobertura_informativa,
     eh_pergunta_mudanca_endereco,
     eh_pergunta_plano_por_preco,
@@ -1100,6 +1102,49 @@ def test_mostre_os_planos_dispara_lista_completa() -> None:
         _assert(dec.acao == "LISTAR_TODOS_PLANOS", f"{msg} → {dec.acao}")
 
 
+def test_esclarecimento_promo_nao_lista_planos() -> None:
+    """'Ah é só nos 3 primeiros meses' — confirma promo, não relista catálogo."""
+    msg = "Ah é só nos 3 primeiros meses"
+    _assert(eh_esclarecimento_promo_plano(msg), msg)
+    _assert(not eh_pedido_planos_com_desconto(msg), msg)
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "tem_cobertura": True,
+        "plano_em_negociacao": "MOV SUPER+",
+        "plano_em_negociacao_id": 1212,
+        "plano_apresentado": "MOV SUPER+",
+        "plano_apresentado_id": 1212,
+    }
+    raw = _raw({"eventos": ["PEDIU_TROCAR_PLANO"], "dados": {}, "confianca": 0.9})
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(Evento.PERGUNTA.value in i.eventos, f"eventos={i.eventos}")
+    _assert(Evento.PEDIU_TROCAR_PLANO.value not in i.eventos, f"eventos={i.eventos}")
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.acao == "RESPONDER", dec.acao)
+    _assert(dec.objetivo_resposta == "ESCLARECER_PROMO_PLANO", dec.objetivo_resposta)
+    _assert(dec.acao != "LISTAR_TODOS_PLANOS", dec.acao)
+    dec.contexto_resposta = {
+        **(dec.contexto_resposta or {}),
+        "plano": {
+            "id": 1212,
+            "nome": "MOV SUPER+",
+            "valor": 139.0,
+            "descricao": "Nos 3 primeiros meses, a mensalidade fica por apenas R$ 69,50",
+            "beneficios": "50% de desconto nos 3 primeiros meses (R$ 69,50)",
+            "tags": ["promo_inicial"],
+        },
+    }
+    txt = gerar_resposta(dec, estado)
+    _assert("somente nos 3 primeiros meses" in txt.casefold(), txt)
+    _assert("69,50" in txt or "69.50" in txt, txt)
+    _assert("qual desses" not in txt.casefold(), txt)
+
+
 def test_pedido_planos_com_desconto_lista_filtrada() -> None:
     estado = {
         "fase": "vendas",
@@ -1263,6 +1308,7 @@ def main() -> None:
         test_plano_no_meio_do_cadastro_nao_vai_para_rua,
         test_titulo_categoria_sem_chip_indevido,
         test_mostre_os_planos_dispara_lista_completa,
+        test_esclarecimento_promo_nao_lista_planos,
         test_pedido_planos_com_desconto_lista_filtrada,
         test_sim_apos_oferta_desconto_lista_planos,
         test_pedido_lista_completa_planos,

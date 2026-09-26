@@ -38,6 +38,7 @@ from app.vendas_mensagens import (
     apresentar_planos_como_sugestao,
     confirmar_plano_escolhido,
     esclarecer_plano_ambiguo,
+    esclarecer_promocao_plano,
     identificar_plano_por_preco,
     informar_detalhes_plano,
     informar_plano_nao_encontrado,
@@ -396,6 +397,9 @@ def gerar_resposta(
     if decisao.objetivo_resposta == "ESCLARECER_PLANO_AMBIGUO":
         ctx = decisao.contexto_resposta or {}
         return esclarecer_plano_ambiguo(list(ctx.get("candidatos") or []))
+
+    if decisao.objetivo_resposta == "ESCLARECER_PROMO_PLANO":
+        return esclarecer_promocao_plano(_plano_do_estado(estado, decisao.contexto_resposta or {}))
 
     if decisao.objetivo_resposta == "INFORMAR_DETALHES_PLANO":
         ctx = decisao.contexto_resposta or {}

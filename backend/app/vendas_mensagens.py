@@ -635,6 +635,71 @@ def esclarecer_plano_ambiguo(candidatos: list[dict[str, Any]]) -> str:
     return "\n\n".join(bolhas_planos_candidatos(candidatos))
 
 
+def _info_promo_inicial_plano(plano: dict[str, Any]) -> dict[str, Any] | None:
+    tags = {str(t).casefold() for t in (plano.get("tags") or [])}
+    blob = f"{plano.get('descricao') or ''} {plano.get('beneficios') or ''}"
+    blob_low = blob.casefold()
+    if "promo_inicial" not in tags and not any(
+        k in blob_low for k in ("primeiros meses", "50%", "desconto nos 3")
+    ):
+        return None
+    try:
+        valor_cheio = float(plano.get("valor") or 0)
+    except (TypeError, ValueError):
+        valor_cheio = 0.0
+    promo: float | None = None
+    for n in re.findall(r"\d+(?:[.,]\d{1,2})?", blob):
+        try:
+            v = float(n.replace(",", "."))
+        except ValueError:
+            continue
+        if v < 30:
+            continue
+        if valor_cheio > 0 and v >= valor_cheio:
+            continue
+        if promo is None or v < promo:
+            promo = v
+    meses = 3
+    m = re.search(r"(\d+)\s*primeiros?\s*meses?", blob_low)
+    if m:
+        try:
+            meses = int(m.group(1))
+        except ValueError:
+            meses = 3
+    if promo is None and valor_cheio <= 0:
+        return None
+    return {"promo": promo, "valor_cheio": valor_cheio, "meses": meses}
+
+
+def esclarecer_promocao_plano(plano: dict[str, Any] | None = None) -> str:
+    """Resposta a 'Ah é só nos 3 primeiros meses?' — confirma promo do plano em foco."""
+    plano = plano or {}
+    nome = str(plano.get("nome") or "esse plano").strip() or "esse plano"
+    info = _info_promo_inicial_plano(plano)
+    if info and info.get("promo") and info.get("valor_cheio"):
+        promo_fmt = _fmt_preco(info["promo"])
+        cheio_fmt = _fmt_preco(info["valor_cheio"])
+        meses = int(info.get("meses") or 3)
+        return (
+            f"Isso mesmo! No *{nome}*, o desconto vale *somente nos {meses} primeiros meses* — "
+            f"a mensalidade fica {promo_fmt} nesse período. "
+            f"A partir do {meses + 1}º mês, volta para {cheio_fmt}/mês.\n\n"
+            "Quer confirmar esse plano?"
+        )
+    pont = plano.get("valor_pontualidade")
+    if pont is not None and str(pont).strip() != "" and plano.get("valor"):
+        return (
+            f"No *{nome}*, o valor promocional de pontualidade vale enquanto você pagar "
+            f"até o vencimento — a mensalidade fica {_fmt_preco(pont)} em dia, "
+            f"ou {_fmt_preco(plano.get('valor'))} sem o desconto.\n\n"
+            "Quer confirmar esse plano?"
+        )
+    return (
+        f"Sobre o *{nome}*: a condição promocional tem prazo definido na oferta que te mostrei. "
+        "Quer seguir com esse plano ou prefere ver outra opção?"
+    )
+
+
 def responder_sem_base_rag(pendente: str = "") -> str:
     retomada = ""
     mapa = {

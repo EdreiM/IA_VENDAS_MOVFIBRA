@@ -409,8 +409,51 @@ _CHAVES_PEDIDO_PLANOS_DESCONTO = (
 )
 
 
+def eh_esclarecimento_promo_plano(msg: str) -> bool:
+    """
+    Dúvida sobre a promo do plano em foco — ex.: 'Ah é só nos 3 primeiros meses'.
+    Não é pedido de lista de planos com desconto.
+    """
+    n = normalizar_texto(msg)
+    if not n:
+        return False
+    if re.search(
+        r"\b(quero|queria|preciso|gostaria|mostra|mostre|lista|listar|quais|tem algum|que tem|me mostra)\b",
+        n,
+    ):
+        return False
+    if any(
+        p in n
+        for p in (
+            "so nos",
+            "e so nos",
+            "somente nos",
+            "ah e so",
+            "ah, e so",
+            "so por",
+            "depois fica",
+            "depois volta",
+            "e depois",
+            "apos os",
+            "no quarto mes",
+            "a partir do",
+            "volta para",
+            "volta pro",
+        )
+    ):
+        return True
+    if "primeiros meses" in n and len(n.split()) <= 12:
+        return True
+    if re.search(r"\b(desconto|promocao|promo)\b", n) and len(n.split()) <= 8:
+        if not re.search(r"\b(quero|mostra|lista|quais|tem)\b", n):
+            return True
+    return False
+
+
 def eh_pedido_planos_com_desconto(msg: str) -> bool:
     """Cliente quer planos com pontualidade ou promo (ex.: 50% nos 3 primeiros meses)."""
+    if eh_esclarecimento_promo_plano(msg):
+        return False
     n = normalizar_texto(msg)
     if not n:
         return False
@@ -1525,8 +1568,27 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             setattr(dados, campo, str(estado.get(campo)))
             pergunta = ""
 
+    # Esclarecimento sobre promo do plano em foco — não relistar catálogo
+    if aguardando_plano and eh_esclarecimento_promo_plano(msg):
+        eventos = [
+            e
+            for e in eventos
+            if e
+            not in {
+                Evento.CONFIRMACAO.value,
+                Evento.PEDIU_TROCAR_PLANO.value,
+                Evento.PLANO_INFORMADO.value,
+                Evento.NEGACAO.value,
+            }
+        ]
+        if Evento.PERGUNTA.value not in eventos:
+            eventos.append(Evento.PERGUNTA.value)
+        if not pergunta:
+            pergunta = msg_bruto.strip()
+        dados.plano = ""
+
     # Pedido de promo/desconto ≠ confirmação do plano apresentado
-    if aguardando_plano and (
+    elif aguardando_plano and (
         eh_pedido_plano_promocional(msg) or eh_pedido_planos_com_desconto(msg)
     ):
         eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]

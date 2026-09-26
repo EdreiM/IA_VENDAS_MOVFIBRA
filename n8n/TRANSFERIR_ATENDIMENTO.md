@@ -109,18 +109,24 @@ Campos principais (snapshot completo + extras):
 
 ## Nó Call INSERE ATENDIMENTO IXC (dentro do subfluxo)
 
-A Eva envia `mensagens` como **JSON string**. O INSERE V4 exige **array**.
+No n8n 2.15 o Execute Workflow **sempre stringifica** arrays — não há toggle
+`convertFieldsToString`. Por isso `mensagens` trafega como **string JSON** até o INSERE V4.
 
-No nó **Call INSERE ATENDIMENTO IXC**:
-
-- **convertFieldsToString:** `false` (senão o array vira string de novo)
-- **mensagens:**
+**Call INSERE ATENDIMENTO IXC** — mapeamento:
 
 ```
-={{ (() => { const m = $('When Executed by Another Workflow').first().json.mensagens; if (Array.isArray(m)) return m; try { return JSON.parse(m || '[]'); } catch { return []; } })() }}
+mensagens = {{ $('When Executed by Another Workflow').first().json.mensagens || '[]' }}
 ```
 
-Schema do campo `mensagens`: tipo **array** (não string).
+Schema do campo `mensagens`: tipo **string** (não array).
+
+**INSERE ATENDIMENTO V4** — trigger:
+
+- Troque `mensagens` de `array` para **string** (ou remova o type array)
+- Cole no **primeiro nó Code** após o trigger: `n8n/parse_mensagens_insere.js`
+- Esse Code faz `JSON.parse` e repassa `mensagens` como array pro resto do fluxo
+
+O campo `buffer` já vai como string e serve para o HTML/PDF mesmo sem parse.
 
 ---
 

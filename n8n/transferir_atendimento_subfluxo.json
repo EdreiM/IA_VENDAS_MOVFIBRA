@@ -116,7 +116,7 @@
             "ixc_id_cliente": "={{ $('When Executed by Another Workflow').first().json.ixc_cliente_id || $('When Executed by Another Workflow').first().json.ixc_id_cliente || '' }}",
             "nome": "={{ $('When Executed by Another Workflow').first().json.nome || '' }}",
             "buffer": "={{ $('When Executed by Another Workflow').first().json.buffer || ('Transferência Eva — ' + ($('When Executed by Another Workflow').first().json.motivo || 'TRANSFERIR_HUMANO')) }}",
-            "mensagens": "={{ (() => { const m = $('When Executed by Another Workflow').first().json.mensagens; if (Array.isArray(m)) return m; try { return JSON.parse(m || '[]'); } catch { return []; } })() }}"
+            "mensagens": "={{ $('When Executed by Another Workflow').first().json.mensagens || '[]' }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -124,10 +124,10 @@
             { "id": "ixc_id_cliente", "displayName": "ixc_id_cliente", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "nome", "displayName": "nome", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "buffer", "displayName": "buffer", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "mensagens", "displayName": "mensagens", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "array" }
+            { "id": "mensagens", "displayName": "mensagens", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
           ],
           "attemptToConvertTypes": false,
-          "convertFieldsToString": false
+          "convertFieldsToString": true
         },
         "options": {}
       },

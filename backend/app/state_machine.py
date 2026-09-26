@@ -1114,6 +1114,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     # Promo/desconto/lista — antes de tratar como confirmação de plano
     from app.parser import (
         cliente_confirmou_ver_planos_desconto,
+        eh_esclarecimento_promo_plano,
         eh_pedido_lista_completa_planos,
         eh_pedido_plano_promocional,
         eh_pedido_planos_com_desconto,
@@ -1152,6 +1153,28 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             "Cliente pediu plano promocional",
             "GLOBAL_PLANO",
             contexto={"referencia_plano": msg_n_plano},
+        )
+
+    if (
+        fase == "vendas"
+        and estado.get("tem_cobertura") is True
+        and eh_esclarecimento_promo_plano(msg_n_plano)
+        and (
+            estado.get("plano_em_negociacao")
+            or estado.get("plano_apresentado")
+            or estado.get("plano_confirmado")
+        )
+    ):
+        aguard_promo = aguardando or "confirmacao_plano"
+        return dec(
+            "RESPONDER",
+            "ESCLARECER_PROMO_PLANO",
+            "vendas",
+            aguard_promo,
+            dict(dados_base),
+            "Cliente esclarece dúvida sobre promo do plano em negociação",
+            "GLOBAL_PERGUNTA",
+            contexto={"pendente": aguard_promo},
         )
 
     if (
