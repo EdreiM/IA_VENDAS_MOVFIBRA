@@ -1086,14 +1086,19 @@ def admin_sync_catalogo_ferramentas(
     authorization: str | None = Header(default=None),
     x_admin_token: str | None = Header(default=None),
 ):
-    """Garante no painel todas as ferramentas do catálogo (URLs do .env se vazias)."""
+    """Garante ferramentas do catálogo no painel — nunca sobrescreve URLs já configuradas."""
     _exigir_admin(authorization, x_admin_token)
-    from app.ferramentas_catalog import seed_ferramentas_do_catalogo
+    from app.ferramentas_catalog import (
+        seed_ferramentas_do_catalogo,
+        sincronizar_persistencia_urls_ferramentas,
+    )
 
     criadas = seed_ferramentas_do_catalogo()
+    persistencia = sincronizar_persistencia_urls_ferramentas()
     return {
         "ok": True,
         "criadas": criadas,
+        "persistencia": persistencia,
         "items": ferramentas_mod.listar_ferramentas(),
     }
 

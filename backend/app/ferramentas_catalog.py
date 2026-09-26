@@ -149,13 +149,37 @@ CATALOGO_FERRAMENTAS: list[dict[str, Any]] = [
 ]
 
 
+def chave_backup_url_ferramenta(tool_key: str) -> str:
+    return f"ferramenta_webhook_url_{tool_key}"
+
+
+def ler_backup_url_ferramenta(tool_key: str, *, unidade_id: int | None = None) -> str:
+    """Backup operacional em sofia_config — sobrevive a redeploys e recriação de linhas."""
+    if unidade_id is not None:
+        return ""
+    from app import admin_store
+
+    return admin_store.get_config(chave_backup_url_ferramenta(tool_key), "").strip()
+
+
+def gravar_backup_url_ferramenta(tool_key: str, url: str, *, unidade_id: int | None = None) -> None:
+    if unidade_id is not None:
+        return
+    u = (url or "").strip()
+    if not u:
+        return
+    from app import admin_store
+
+    admin_store.set_config(chave_backup_url_ferramenta(tool_key), u, unidade_id=None)
+
+
 def resolver_url_ferramenta(
     tool_key: str,
     *,
     unidade_id: int | None = None,
     fallback_env: str = "",
 ) -> str:
-    """URL cadastrada no painel (ativa) tem prioridade; senão fallback do .env."""
+    """Painel → backup sofia_config → .env (nunca apaga URL já configurada)."""
     try:
         from app.ferramentas import obter_ferramenta_por_key
 
@@ -166,6 +190,9 @@ def resolver_url_ferramenta(
                 return url
     except Exception:
         pass
+    backup = ler_backup_url_ferramenta(tool_key, unidade_id=unidade_id)
+    if backup:
+        return backup
     return (fallback_env or "").strip()
 
 
@@ -190,12 +217,51 @@ def resolver_token_ferramenta(
     return (fallback_env or "").strip()
 
 
+def _ler_backup_url_sql(cur: Any, tool_key: str) -> str:
+    cur.execute(
+        """
+        SELECT valor FROM sofia_config
+        WHERE chave = %s AND unidade_id IS NULL
+        LIMIT 1
+        """,
+        (chave_backup_url_ferramenta(tool_key),),
+    )
+    row = cur.fetchone()
+    return str(row["valor"]).strip() if row else ""
+
+
+def sincronizar_persistencia_urls_ferramentas() -> dict[str, int]:
+    """
+    Backup/restaura URLs das ferramentas globais em sofia_config.
+    Chamado no startup — configuração do painel não se perde entre deploys.
+    """
+    from app.ferramentas import atualizar_ferramenta, listar_ferramentas
+
+    backupados = 0
+    restaurados = 0
+    for tool in listar_ferramentas():
+        if tool.get("unidade_id") is not None:
+            continue
+        key = str(tool.get("tool_key") or "").strip()
+        if not key:
+            continue
+        url = str(tool.get("webhook_url") or "").strip()
+        backup = ler_backup_url_ferramenta(key)
+        if url:
+            if url != backup:
+                gravar_backup_url_ferramenta(key, url)
+                backupados += 1
+        elif backup:
+            atualizar_ferramenta(int(tool["id"]), {"webhook_url": backup})
+            restaurados += 1
+    return {"backupados": backupados, "restaurados": restaurados}
+
+
 def seed_ferramentas_do_catalogo(cur: Any | None = None) -> int:
     """
     Garante que todas as ferramentas do catálogo existam no painel.
-    - Cria se não existir.
-    - Se existir com webhook_url vazio, preenche com .env.
-    - Nunca sobrescreve URL já editada no painel.
+    - Cria se não existir (URL: .env → backup sofia_config → vazio).
+    - Registro existente: não altera webhook_url nem metadados (painel é fonte da verdade).
     """
     settings = get_settings()
     own_conn = cur is None
@@ -214,14 +280,9 @@ def seed_ferramentas_do_catalogo(cur: Any | None = None) -> int:
             env_url = str(item["env_url"](settings) or "").strip()
 
             if row:
-                fid = int(row["id"])
-                atual_url = str(row["webhook_url"] or "").strip()
-                if not atual_url and env_url:
-                    c.execute(
-                        "UPDATE ferramentas SET webhook_url = %s, updated_at = %s WHERE id = %s",
-                        (env_url, now, fid),
-                    )
                 continue
+
+            url_inicial = env_url or _ler_backup_url_sql(c, key)
 
             c.execute(
                 """
@@ -236,7 +297,7 @@ def seed_ferramentas_do_catalogo(cur: Any | None = None) -> int:
                     key,
                     item["nome"],
                     item["descricao"],
-                    env_url,
+                    url_inicial,
                     1 if item.get("destaque") else 0,
                     now,
                     now,

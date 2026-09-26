@@ -470,14 +470,20 @@ export default function App() {
   }, [uid]);
 
   const refreshTools = useCallback(async () => {
+    const t = await fetchFerramentas(uid);
+    setTools(t.items || []);
+  }, [uid]);
+
+  const syncToolsCatalog = useCallback(async () => {
+    setError("");
     try {
       const synced = await syncCatalogoFerramentas();
       setTools(synced.items || []);
-    } catch {
-      const t = await fetchFerramentas(uid);
-      setTools(t.items || []);
+      setOkMsg("Catálogo sincronizado (ferramentas novas adicionadas; URLs existentes preservadas).");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
-  }, [uid]);
+  }, []);
 
   const refreshIntegracao = useCallback(async () => {
     const cfg = await fetchConfigChatwoot(uid);
@@ -2802,12 +2808,17 @@ export default function App() {
           <section className="panel tool-panel">
             <PageHeader
               title="Ferramentas"
-              subtitle="Webhooks e integrações que a Eva pode chamar durante o atendimento (cadastro, termos, transferência, etc.)."
+              subtitle="Webhooks e integrações que a Eva pode chamar durante o atendimento (cadastro, termos, transferência, etc.). URLs salvas aqui persistem entre deploys."
               action={
                 !toolEditorOpen ? (
-                  <button type="button" onClick={openCreateTool}>
-                    Nova ferramenta
-                  </button>
+                  <>
+                    <button type="button" className="ghost" onClick={() => void syncToolsCatalog()}>
+                      Sincronizar catálogo
+                    </button>
+                    <button type="button" onClick={openCreateTool}>
+                      Nova ferramenta
+                    </button>
+                  </>
                 ) : null
               }
             />

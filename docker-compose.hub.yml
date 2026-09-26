@@ -36,11 +36,21 @@ services:
       GOOGLE_MAPS_API_KEY: ""
       IXC_USER: ""
       IXC_PASSWORD: ""
-      # Ferramentas n8n — URLs também podem vir do painel (aba Ferramentas)
+      # Ferramentas n8n — fallback .env; painel (PostgreSQL) prevalece e persiste entre deploys
       CADASTRO_PROVIDER: webhook
+      CADASTRO_WEBHOOK_URL: https://n8n2.mov.pro.br/webhook/cadastrar_cliente_sofia
       TERMOS_PROVIDER: webhook
+      TERMOS_WEBHOOK_URL: https://n8n2.mov.pro.br/webhook/enviar_termos_sofia
       ATIVACAO_PROVIDER: webhook
+      ATIVACAO_WEBHOOK_URL: https://n8n2.mov.pro.br/webhook/ativar_cliente_sofia
       AGENDA_PROVIDER: webhook
+      AGENDA_WEBHOOK_URL: https://n8n2.mov.pro.br/webhook/buscar_horarios_agenda_sofia
+      AGENDA_INSERIR_WEBHOOK_URL: https://n8n2.mov.pro.br/webhook/inserir_agendamento_sofia
+      CHATWOOT_MSG_WEBHOOK_URL: https://n8n2.mov.pro.br/webhook/enviar_mensagem_sofia
+      TRANSFER_WEBHOOK_URL: https://n8n2.mov.pro.br/webhook/transferir_atendimento_sofia
+      RAG_WEBHOOK_URL: https://n8n2.mov.pro.br/webhook/consultar_rag_sofia
+      IMAGEM_PLANO_WEBHOOK_URL: https://n8n2.mov.pro.br/webhook/enviar_imagem_plano_sofia
+      ENCERRAR_WEBHOOK_URL: https://n8n2.mov.pro.br/webhook/encerrar_atendimento_sofia
       CPF_PROVIDER: ixc
     volumes:
       - iavendas_uploads:/app/uploads

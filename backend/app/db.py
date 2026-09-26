@@ -338,9 +338,14 @@ def init_schema() -> None:
             from app.planos_catalog_seed import seed_planos_do_catalogo
 
             seed_planos_do_catalogo(cur)
-            from app.ferramentas_catalog import seed_ferramentas_do_catalogo
+            from app.ferramentas_catalog import (
+                seed_ferramentas_do_catalogo,
+                sincronizar_persistencia_urls_ferramentas,
+            )
 
             seed_ferramentas_do_catalogo(cur)
+
+    sincronizar_persistencia_urls_ferramentas()
 
 
 def _colunas_existentes(cur: Any, tabela: str) -> set[str]:

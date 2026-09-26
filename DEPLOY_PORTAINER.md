@@ -89,7 +89,11 @@ DOCKERHUB_USER=edreimp
 
 - **Config IA** → `OPENAI_API_KEY`, modelo
 - **Chatwoot** → `PUBLIC_BASE_URL`, inbox, allowlist
-- **Ferramentas** → webhooks n8n
+- **Ferramentas** → webhooks n8n (opcional se já estiverem no compose; URLs salvas **persistem** no PostgreSQL)
+
+> **Importante:** credenciais, webhooks e planos ficam no volume `iavendas_pg_data`.
+> **Pull and redeploy** da API **não apaga** o que foi configurado no painel.
+> Só perde config se recriar o volume do Postgres ou apagar a stack sem backup.
 
 ---
 

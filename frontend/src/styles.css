@@ -1371,6 +1371,10 @@ button.chip:hover:not(:disabled) {
 
 .page-header-action {
   flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .page-split {

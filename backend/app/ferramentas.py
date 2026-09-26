@@ -131,6 +131,7 @@ def _salvar_parametros(cur: Any, ferramenta_id: int, parametros: list[dict[str, 
 
 def criar_ferramenta(payload: dict[str, Any]) -> dict[str, Any]:
     now = _now()
+    webhook_url = str(payload.get("webhook_url") or "").strip()
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -146,7 +147,7 @@ def criar_ferramenta(payload: dict[str, Any]) -> dict[str, Any]:
                     str(payload["tool_key"]).strip(),
                     str(payload["nome"]).strip(),
                     str(payload.get("descricao") or ""),
-                    str(payload.get("webhook_url") or ""),
+                    webhook_url,
                     str(payload.get("integracao") or "global"),
                     payload.get("unidade_id"),
                     1 if payload.get("destaque_dashboard") else 0,
@@ -159,7 +160,12 @@ def criar_ferramenta(payload: dict[str, Any]) -> dict[str, Any]:
             fid = int(row["id"])
             _salvar_parametros(cur, fid, list(payload.get("parametros") or []))
             cur.execute("SELECT * FROM ferramentas WHERE id = %s", (fid,))
-            return _row_to_tool(cur, cur.fetchone())
+            tool = _row_to_tool(cur, cur.fetchone())
+    if webhook_url and not payload.get("unidade_id"):
+        from app.ferramentas_catalog import gravar_backup_url_ferramenta
+
+        gravar_backup_url_ferramenta(str(tool["tool_key"]), webhook_url)
+    return tool
 
 
 def atualizar_ferramenta(ferramenta_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -167,6 +173,13 @@ def atualizar_ferramenta(ferramenta_id: int, payload: dict[str, Any]) -> dict[st
     if not atual:
         return None
     now = _now()
+    if "webhook_url" in payload:
+        nova_url = str(payload.get("webhook_url") or "").strip()
+        url_atual = str(atual.get("webhook_url") or "").strip()
+        # Campo vazio no formulário não apaga URL já salva (mesmo padrão das API keys).
+        webhook_url = nova_url if nova_url or not url_atual else url_atual
+    else:
+        webhook_url = str(atual.get("webhook_url") or "").strip()
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -188,7 +201,7 @@ def atualizar_ferramenta(ferramenta_id: int, payload: dict[str, Any]) -> dict[st
                     str(payload.get("tool_key") or atual["tool_key"]).strip(),
                     str(payload.get("nome") or atual["nome"]).strip(),
                     str(payload.get("descricao") if "descricao" in payload else atual["descricao"]),
-                    str(payload.get("webhook_url") if "webhook_url" in payload else atual["webhook_url"]),
+                    webhook_url,
                     str(payload.get("integracao") or atual["integracao"]),
                     payload.get("unidade_id") if "unidade_id" in payload else atual["unidade_id"],
                     1
@@ -207,7 +220,12 @@ def atualizar_ferramenta(ferramenta_id: int, payload: dict[str, Any]) -> dict[st
                 _salvar_parametros(cur, ferramenta_id, list(payload.get("parametros") or []))
             cur.execute("SELECT * FROM ferramentas WHERE id = %s", (ferramenta_id,))
             row = cur.fetchone()
-            return _row_to_tool(cur, row) if row else None
+            tool = _row_to_tool(cur, row) if row else None
+    if tool and webhook_url and not tool.get("unidade_id"):
+        from app.ferramentas_catalog import gravar_backup_url_ferramenta
+
+        gravar_backup_url_ferramenta(str(tool["tool_key"]), webhook_url)
+    return tool
 
 
 def deletar_ferramenta(ferramenta_id: int) -> bool:
