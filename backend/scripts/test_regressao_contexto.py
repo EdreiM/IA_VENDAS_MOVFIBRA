@@ -1009,6 +1009,42 @@ def test_termos_instalar_hoje_nao_lista_planos() -> None:
     _assert("instala" in low, txt)
 
 
+def test_cadastro_apos_cancelamento_nao_repete_multa() -> None:
+    """Data/CEP/número após dúvida de cancelamento — só anota e pede próximo campo."""
+    base = {
+        "fase": "cadastro",
+        "plano_confirmado": "MOV SUPER+",
+        "nome": "Edrei teste",
+        "cpf": "60421079096",
+        "email": "edreiteste@gmail.com",
+        "telefone": "93992219098",
+        "ultimo_topico": "cancelamento",
+        "cancelamento_esclarecido": True,
+    }
+    acumulado = dict(base)
+    casos = [
+        ("16/08/2000", "data_nascimento", {"data_nascimento": "16/08/2000"}),
+        ("68020000", "cep", {"cep": "68020000"}),
+        ("12", "numero", {"numero": "12"}),
+    ]
+    for msg, aguardando, dados_ev in casos:
+        st = {**acumulado, "aguardando": aguardando}
+        dec = _decidir_sem_executar(
+            st,
+            msg,
+            {"eventos": ["DADO_INFORMADO"], "dados": dados_ev, "confianca": 0.9},
+        )
+        _assert(
+            dec.objetivo_resposta != "INFORMAR_CANCELAMENTO_E_RETOMAR",
+            f"msg={msg!r} acao={dec.objetivo_resposta}",
+        )
+        txt = gerar_resposta(dec, {**st, **(dec.atualizar_dados or {}), **dados_ev})
+        low = txt.casefold()
+        _assert("proporcional" not in low, txt)
+        _assert("12 meses" not in low, txt)
+        acumulado.update(dados_ev)
+
+
 def test_cadastro_email_telefone_mais_cancelamento() -> None:
     estado = {
         "fase": "cadastro",
@@ -1491,6 +1527,7 @@ def main() -> None:
         test_correcao_rotulada_confirmacao_dados,
         test_termos_sim_apos_cancelamento_nao_ativa,
         test_termos_instalar_hoje_nao_lista_planos,
+        test_cadastro_apos_cancelamento_nao_repete_multa,
         test_cadastro_email_telefone_mais_cancelamento,
         test_esclarecer_promo_6950_nao_50,
         test_termos_cancelamento_explica_sem_opcoes_vagas,

@@ -452,26 +452,11 @@ def _decisao_retomar_cadastro(
 
 
 def _eh_contexto_cancelamento(texto: str, topico: str) -> bool:
-    from app.parser import normalizar_texto
+    from app.parser import eh_apenas_dado_cadastro, eh_pergunta_cancelamento
 
-    t = normalizar_texto(texto)
-    if topico == "cancelamento":
-        return True
-    return any(
-        p in t
-        for p in (
-            "cancelar",
-            "cancelamento",
-            "multa",
-            "fidelidade",
-            "pagar se eu cancelar",
-            "tem que pagar se",
-            "tenho que pagar se",
-            "tenho que pagar",
-            "opcoes de que",
-            "opções de que",
-        )
-    )
+    if eh_apenas_dado_cadastro(texto, texto):
+        return False
+    return eh_pergunta_cancelamento(texto, texto, topico=topico)
 
 
 def _decidir_termos(
@@ -1707,6 +1692,8 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                     x in _norm_q(pergunta_bruta)
                     for x in ("quanto", "valor", "ficaria", "fica", "custa", "taxa", "multa")
                 )
+                ja_antes = bool(d.get("cancelamento_esclarecido") or estado.get("cancelamento_esclarecido"))
+                d["cancelamento_esclarecido"] = True
                 return dec(
                     "RESPONDER",
                     "INFORMAR_CANCELAMENTO_E_RETOMAR",
@@ -1720,6 +1707,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                         **ctx_perg,
                         "topico_contexto": "cancelamento",
                         "pergunta_valor_multa": pergunta_valor,
+                        "cancelamento_ja_esclarecido_antes": ja_antes,
                     },
                 )
             if topico == "beneficio_plano" or any(
@@ -1970,12 +1958,17 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                     x in _norm_c(str(resolucao.get("pergunta") or msg_sanit))
                     for x in ("quanto", "valor", "ficaria", "fica", "custa", "taxa", "multa")
                 )
+                d_can = dict(dados_base)
+                ja_antes = bool(
+                    d_can.get("cancelamento_esclarecido") or estado.get("cancelamento_esclarecido")
+                )
+                d_can["cancelamento_esclarecido"] = True
                 return dec(
                     "RESPONDER",
                     "INFORMAR_CANCELAMENTO_E_RETOMAR",
                     "cadastro",
                     pendente_ef,
-                    dados_base,
+                    d_can,
                     "Dado anotado + dúvida sobre cancelamento/multa",
                     "GLOBAL_PERGUNTA",
                     pergunta=str(resolucao.get("pergunta") or msg_sanit),
@@ -1984,6 +1977,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                         "topico_contexto": "cancelamento",
                         "campos_anotados": anotados,
                         "pergunta_valor_multa": pergunta_valor,
+                        "cancelamento_ja_esclarecido_antes": ja_antes,
                     },
                 )
             return _decisao_retomar_cadastro(

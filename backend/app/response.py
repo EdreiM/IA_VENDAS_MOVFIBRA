@@ -519,6 +519,7 @@ def gerar_resposta(
             pendente=str(ctx.get("pendente") or decisao.aguardando or ""),
             campos_anotados=list(ctx.get("campos_anotados") or []),
             pergunta_valor=bool(ctx.get("pergunta_valor_multa")),
+            ja_esclarecido=bool(ctx.get("cancelamento_ja_esclarecido_antes")),
         )
 
     if decisao.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR":
@@ -642,6 +643,7 @@ def gerar_resposta(
             pendente=str(ctx.get("pendente") or decisao.aguardando or ""),
             campos_anotados=list(ctx.get("campos_anotados") or []),
             pergunta_valor=pergunta_valor,
+            ja_esclarecido=bool(ctx.get("cancelamento_ja_esclarecido_antes")),
         )
 
     plano = ctx.get("plano") or {}

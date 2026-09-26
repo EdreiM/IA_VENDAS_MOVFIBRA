@@ -115,10 +115,40 @@ def anotar_e_pedir_proximo(
         else:
             teve_anotacao = True
 
-    if teve_correcao:
-        corpo = "Atualizei!"
-    elif teve_anotacao:
-        corpo = "Anotei!"
+    def _frase_anotacao(campos: list[str], corrigiu: bool) -> str:
+        rotulos = {
+            "nome": "seu nome",
+            "cpf": "CPF",
+            "email": "e-mail",
+            "telefone": "telefone",
+            "data_nascimento": "data de nascimento",
+            "cep": "CEP",
+            "rua": "rua",
+            "numero": "número",
+        }
+        itens = [rotulos.get(c, c) for c in campos if c in rotulos]
+        if not itens:
+            return "Atualizei!" if corrigiu else "Anotei!"
+        verbo = "Atualizei" if corrigiu else "Anotei"
+        if len(itens) == 1:
+            return f"{verbo} {itens[0]}."
+        if len(itens) == 2:
+            return f"{verbo} {itens[0]} e {itens[1]}."
+        return f"{verbo} {', '.join(itens[:-1])} e {itens[-1]}."
+
+    anotados_ok = [
+        c
+        for c in campos_anotados
+        if c in ROTULO_CAMPO and c not in campos_corrigidos and str(estado.get(c) or "").strip()
+    ]
+    corrigidos_ok = [
+        c for c in campos_corrigidos if c in ROTULO_CAMPO and str(estado.get(c) or "").strip()
+    ]
+
+    if corrigidos_ok:
+        corpo = _frase_anotacao(corrigidos_ok, corrigiu=True)
+    elif anotados_ok:
+        corpo = _frase_anotacao(anotados_ok, corrigiu=False)
     else:
         faltam = campos_para_pedir(estado) or ([pendente] if pendente else [])
         return pedir_campos(faltam)

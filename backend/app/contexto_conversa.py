@@ -217,9 +217,16 @@ def enriquecer_pergunta(
     """
     bruto = (pergunta or mensagem or "").strip()
     try:
-        from app.parser import eh_mensagem_correcao_cadastro
+        from app.parser import eh_apenas_dado_cadastro, eh_mensagem_correcao_cadastro
 
         if eh_mensagem_correcao_cadastro(bruto, bruto):
+            return {
+                "pergunta": bruto,
+                "topico": None,
+                "mensagem_original": bruto,
+                "era_followup": False,
+            }
+        if eh_apenas_dado_cadastro(bruto, bruto):
             return {
                 "pergunta": bruto,
                 "topico": None,

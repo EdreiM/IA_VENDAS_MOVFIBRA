@@ -73,22 +73,16 @@ def informar_cancelamento_e_retomar(
     pendente: str = "",
     campos_anotados: list[str] | None = None,
     pergunta_valor: bool = False,
+    ja_esclarecido: bool = False,
 ) -> str:
     """Resposta fixa sobre cancelamento/multa — sem pedir dados irrelevantes para 'calcular'."""
+    from app.cadastro_mensagens import pedir_campos, ROTULO_CAMPO
     from app.vendas_mensagens import rotulo_pendente_cadastro
 
     partes: list[str] = []
     anotados = [c for c in (campos_anotados or []) if c and c != "cpf"]
     if anotados:
-        rotulos = {
-            "nome": "nome",
-            "email": "e-mail",
-            "telefone": "telefone",
-            "data_nascimento": "data de nascimento",
-            "cep": "CEP",
-            "rua": "rua",
-            "numero": "número",
-        }
+        rotulos = {k: v.split("(")[0].strip() for k, v in ROTULO_CAMPO.items()}
         itens = [rotulos.get(c, c) for c in anotados]
         if len(itens) == 1:
             partes.append(f"Anotei {itens[0]}.")
@@ -97,12 +91,20 @@ def informar_cancelamento_e_retomar(
         else:
             partes.append(f"Anotei {', '.join(itens[:-1])} e {itens[-1]}.")
 
-    partes.append(_corpo_cancelamento_multa(pergunta_valor=pergunta_valor))
+    if ja_esclarecido:
+        partes.append(
+            "Sobre o cancelamento, já te expliquei — se quiser detalhar o valor exato, "
+            "nossa equipe confirma no contrato."
+        )
+    else:
+        partes.append(_corpo_cancelamento_multa(pergunta_valor=pergunta_valor))
 
     retomada = rotulo_pendente_cadastro(pendente)
+    if pendente and pendente in ROTULO_CAMPO and pendente != "confirmacao_dados":
+        retomada = pedir_campos([pendente])
     if retomada:
         partes.append(retomada)
-    else:
+    elif not pendente:
         partes.append("Se quiser, seguimos no passo em que paramos.")
 
     return "\n\n".join(partes)

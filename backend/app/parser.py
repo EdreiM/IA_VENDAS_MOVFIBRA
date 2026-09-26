@@ -450,6 +450,54 @@ def eh_esclarecimento_promo_plano(msg: str) -> bool:
     return False
 
 
+_CHAVES_CANCELAMENTO = (
+    "cancelar",
+    "cancelamento",
+    "multa",
+    "fidelidade",
+    "pagar se eu cancelar",
+    "tem que pagar se",
+    "tenho que pagar se",
+    "pagar se cancelar",
+    "e se eu cancelar",
+    "se eu cancelar",
+    "desistir do plano",
+    "rescindir",
+)
+
+
+def eh_apenas_dado_cadastro(msg: str, msg_bruto: str = "") -> bool:
+    """Mensagem só com dado cadastral (data, CEP, número…) — sem pergunta."""
+    t = normalizar_texto(msg_bruto or msg)
+    if not t:
+        return False
+    if "?" in (msg_bruto or msg):
+        return False
+    if any(p in t for p in _CHAVES_CANCELAMENTO):
+        return False
+    if any(
+        p in t
+        for p in (
+            "quanto",
+            "como ",
+            "tem ",
+            "posso ",
+            "consigo ",
+            "instalar",
+            "instala",
+        )
+    ):
+        return False
+    compacto = re.sub(r"\s+", "", t)
+    if re.fullmatch(r"\d{8}", compacto):
+        return True
+    if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", t.strip()):
+        return True
+    if re.fullmatch(r"\d{1,6}", compacto) and len(t.split()) <= 2:
+        return True
+    return False
+
+
 def eh_pergunta_cancelamento(
     msg: str,
     msg_bruto: str = "",
@@ -457,26 +505,39 @@ def eh_pergunta_cancelamento(
     topico: str | None = None,
 ) -> bool:
     """Dúvida sobre cancelamento, multa ou fidelidade — não é dado de cadastro."""
-    if (topico or "").strip().casefold() == "cancelamento":
-        return True
-    t = normalizar_texto(msg_bruto or msg)
+    bruto = (msg_bruto or msg or "").strip()
+    t = normalizar_texto(bruto)
     if not t:
         return False
-    return any(
-        p in t
-        for p in (
-            "cancelar",
-            "cancelamento",
-            "multa",
-            "fidelidade",
-            "pagar se eu cancelar",
-            "tem que pagar se",
-            "tenho que pagar se",
-            "pagar se cancelar",
-            "e se eu cancelar",
-            "se eu cancelar",
-        )
-    )
+    if eh_apenas_dado_cadastro(msg, bruto):
+        return False
+    if any(p in t for p in _CHAVES_CANCELAMENTO):
+        return True
+    # Follow-up curto sobre o assunto anterior (ex.: "nesse caso quanto ficaria?")
+    top = (topico or "").strip().casefold()
+    if top == "cancelamento":
+        from app.contexto_conversa import eh_followup_curto
+
+        if eh_followup_curto(t) and any(
+            x in t
+            for x in (
+                "quanto",
+                "multa",
+                "taxa",
+                "cancelar",
+                "fidelidade",
+                "paga",
+                "ficaria",
+                "custa",
+                "valor",
+                "nesse caso",
+                "opcoes",
+                "opções",
+                "devolver",
+            )
+        ):
+            return True
+    return False
 
 
 def eh_pedido_planos_com_desconto(msg: str) -> bool:
