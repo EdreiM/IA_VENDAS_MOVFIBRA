@@ -111,6 +111,10 @@ FOLLOWUPS = {
     "e cancelar",
     "e depois",
     "e ai",
+    "nesse caso",
+    "quanto ficaria",
+    "quanto que ficaria",
+    "quanto fica",
     "como assim",
     "explica melhor",
     "me explica",
@@ -156,6 +160,20 @@ def eh_followup_curto(texto: str) -> bool:
     if t in FOLLOWUPS:
         return True
     if t in {"hoje", "hj", "amanha", "hoje mesmo", "ainda hoje", "pra hoje"}:
+        return True
+    if len(t.split()) <= 8 and any(
+        p in t
+        for p in (
+            "quanto ficaria",
+            "quanto que ficaria",
+            "quanto fica",
+            "nesse caso",
+            "e a multa",
+            "a multa",
+            "a taxa",
+            "tem taxa",
+        )
+    ):
         return True
     if len(t.split()) <= 6 and any(
         t == p or t.startswith(p + " ") or t.startswith(p)

@@ -146,6 +146,25 @@ def informar_preco_plano(plano: dict[str, Any] | None = None) -> str:
     )
 
 
+def rotulo_pendente_cadastro(pendente: str) -> str:
+    """Frase para retomar o cadastro — sem inventar cálculos ou pedidos extras."""
+    mapa = {
+        "nome": "Me informa seu *nome completo*, por favor.",
+        "cpf": "Me informa seu *CPF*, por favor.",
+        "email": "Me informa seu *e-mail*, por favor.",
+        "telefone": "Me informa seu *telefone com DDD*, por favor.",
+        "data_nascimento": "Me informa sua *data de nascimento* (dd/mm/aaaa), por favor.",
+        "cep": "Me informa o *CEP* do endereço, por favor.",
+        "rua": "Me informa o nome da *rua*, por favor.",
+        "numero": "Me informa o *número* do endereço, por favor.",
+        "confirmacao_dados": "Os dados estão corretos? Me confirma com *sim* para seguir.",
+        "confirmacao_plano": "Quer confirmar esse plano pra gente seguir?",
+        "escolha_plano": "Qual plano você prefere?",
+        "lista_planos": "Qual plano você prefere?",
+    }
+    return mapa.get(str(pendente or "").strip(), "")
+
+
 def informar_instalacao_e_retomar(
     *,
     pendente: str = "confirmacao_plano",
@@ -175,6 +194,12 @@ def informar_instalacao_e_retomar(
             f"{corpo}\n\n"
             f"Quer confirmar{ref} pra gente seguir com o cadastro e depois marcar a instalação?"
         )
+    if pendente == "aceite_termos":
+        return (
+            f"{corpo}\n\n"
+            "Primeiro preciso do seu *aceite ao termo* que enviei (responda *sim* ou *aceito*). "
+            "Depois seguimos para escolher o horário da instalação."
+        )
     if pendente in {"escolha_horario", "confirmacao_horario"}:
         return (
             f"{corpo}\n\n"
@@ -183,19 +208,8 @@ def informar_instalacao_e_retomar(
     if pendente in {
         "nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero", "confirmacao_dados",
     }:
-        mapa = {
-            "nome": "seu *nome completo*",
-            "cpf": "seu *CPF*",
-            "email": "seu *e-mail*",
-            "telefone": "seu *telefone*",
-            "data_nascimento": "sua *data de nascimento*",
-            "cep": "o *CEP*",
-            "rua": "o nome da *rua*",
-            "numero": "o *número* do endereço",
-            "confirmacao_dados": "a confirmação dos dados",
-        }
-        rotulo = mapa.get(pendente, "o próximo passo")
-        return f"{corpo}\n\nQuando quiser, seguimos com {rotulo}."
+        rotulo = rotulo_pendente_cadastro(pendente) or "Quando quiser, seguimos no próximo passo."
+        return f"{corpo}\n\n{rotulo}"
     return (
         f"{corpo}\n\n"
         "Se quiser, seguimos no passo em que paramos."
@@ -648,17 +662,30 @@ def _info_promo_inicial_plano(plano: dict[str, Any]) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         valor_cheio = 0.0
     promo: float | None = None
-    for n in re.findall(r"\d+(?:[.,]\d{1,2})?", blob):
+    m_promo = re.search(
+        r"(?:fica por apenas|mensalidade fica por|por apenas|fica por)\s*(?:r\$\s*)?(\d{1,3}[.,]\d{2})",
+        blob,
+        re.I,
+    )
+    if m_promo:
         try:
-            v = float(n.replace(",", "."))
+            promo = float(m_promo.group(1).replace(",", "."))
         except ValueError:
-            continue
-        if v < 30:
-            continue
-        if valor_cheio > 0 and v >= valor_cheio:
-            continue
-        if promo is None or v < promo:
-            promo = v
+            promo = None
+    if promo is None:
+        for m in re.finditer(r"(?:r\$\s*)?(\d{1,3}[.,]\d{2})\b", blob, re.I):
+            try:
+                v = float(m.group(1).replace(",", "."))
+            except ValueError:
+                continue
+            if v < 30:
+                continue
+            if valor_cheio > 0 and v >= valor_cheio:
+                continue
+            if promo is None or v < promo:
+                promo = v
+    if promo is None and "50%" in blob_low and valor_cheio > 0:
+        promo = round(valor_cheio / 2, 2)
     meses = 3
     m = re.search(r"(\d+)\s*primeiros?\s*meses?", blob_low)
     if m:

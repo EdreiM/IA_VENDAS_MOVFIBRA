@@ -18,6 +18,7 @@ from app.cadastro_resumo import montar_resumo_cadastro
 from app.cadastro_mensagens import anotar_e_pedir_proximo, confirmar_plano_e_avancar, pedir_campo
 from app.termos_mensagens import (
     explicar_cancelamento_termos,
+    informar_cancelamento_e_retomar,
     pedir_aceite_termos,
     recusou_termos,
 )
@@ -89,6 +90,20 @@ def _system_prompt() -> str:
         else "Não use emojis nas respostas."
     )
     return SYSTEM.format(nome_ia=nome, tom_voz=tom or "profissional e acolhedora", emoji_rule=emoji_rule)
+
+
+def _rag_parece_catalogo_planos(texto: str) -> bool:
+    """RAG às vezes devolve catálogo inteiro — não usar como resposta."""
+    low = str(texto or "").casefold()
+    if not low:
+        return False
+    if "linha internet" in low or "beneficios:" in low:
+        return True
+    nomes = sum(
+        1 for m in ("mov essencial", "mov one", "mov super", "mov up", "mov infinity")
+        if m in low
+    )
+    return nomes >= 2
 
 
 def _fmt_money(valor: Any) -> str:
@@ -297,6 +312,23 @@ def gerar_resposta(
             termos_enviados=bool(ctx.get("termos_enviados")),
             parcial=bool(ctx.get("termos_parcial")),
             pedir_aceite_explicito=bool(ctx.get("pedir_aceite_explicito")),
+            termos_mock=bool(ctx.get("termos_mock")),
+        )
+
+    if decisao.objetivo_resposta == "CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA":
+        ctx = decisao.contexto_resposta or {}
+        topico = str(ctx.get("topico_contexto") or "")
+        if topico == "cancelamento":
+            return informar_cancelamento_e_retomar(
+                pendente="confirmacao_dados",
+                pergunta_valor=any(
+                    x in normalizar_texto(str(ctx.get("pergunta_original") or ""))
+                    for x in ("quanto", "valor", "ficaria", "multa", "taxa")
+                ),
+            )
+        return (
+            "Entendi sua dúvida. Sobre os dados do resumo: se estiver tudo certo, "
+            "me confirma com *sim* ou *tá* que eu sigo com o cadastro no sistema."
         )
 
     if decisao.objetivo_resposta == "INFORMAR_RECUSA_TERMOS":
@@ -343,18 +375,34 @@ def gerar_resposta(
         topico = str(ctx.get("topico_contexto") or "")
         if topico == "cancelamento" or ctx.get("esclarecer_aceite"):
             return explicar_cancelamento_termos()
+        from app.parser import eh_pergunta_instalacao
+
+        pergunta_bruta = str(decisao.pergunta or ctx.get("pergunta_original") or "")
+        if topico == "instalacao" or eh_pergunta_instalacao(
+            pergunta_bruta, pergunta_bruta, topico=topico
+        ):
+            from app.vendas_mensagens import informar_instalacao_e_retomar
+
+            return informar_instalacao_e_retomar(
+                pendente="aceite_termos",
+                plano_nome=str(estado.get("plano_confirmado") or ""),
+            )
         rag = ctx.get("rag") or {}
-        pergunta_bruta = normalizar_texto(
-            str(decisao.pergunta or ctx.get("pergunta_original") or "")
-        )
-        if pergunta_bruta in {"aceito", "aceita", "concordo"}:
+        pergunta_norm = normalizar_texto(pergunta_bruta)
+        if pergunta_norm in {"aceito", "aceita", "concordo"}:
             return pedir_aceite_termos(
                 termos_enviados=bool(estado.get("termos_enviados")),
             )
-        if rag.get("resposta") and topico != "cancelamento":
-            base = str(rag["resposta"]).strip()
+        resp_rag = str(rag.get("resposta") or "").strip()
+        if resp_rag and _rag_parece_catalogo_planos(resp_rag):
+            resp_rag = ""
+        if resp_rag and topico != "cancelamento":
+            base = resp_rag
         else:
-            base = "Boa pergunta!"
+            base = (
+                "Entendi sua dúvida. Posso te ajudar com isso, mas agora preciso do "
+                "seu aceite ao termo de fidelidade para seguirmos."
+            )
         return base + "\n\n" + pedir_aceite_termos(
             termos_enviados=bool(estado.get("termos_enviados")),
         )
@@ -465,6 +513,14 @@ def gerar_resposta(
                 )
         return informar_preco_plano(plano_atual)
 
+    if decisao.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR":
+        ctx = decisao.contexto_resposta or {}
+        return informar_cancelamento_e_retomar(
+            pendente=str(ctx.get("pendente") or decisao.aguardando or ""),
+            campos_anotados=list(ctx.get("campos_anotados") or []),
+            pergunta_valor=bool(ctx.get("pergunta_valor_multa")),
+        )
+
     if decisao.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR":
         from app.vendas_mensagens import informar_instalacao_e_retomar
 
@@ -569,6 +625,25 @@ def gerar_resposta(
         return responder_sem_base_rag(pendente)
 
     ctx = decisao.contexto_resposta or {}
+    topico = str(ctx.get("topico_contexto") or "")
+    if topico == "cancelamento" and decisao.objetivo_resposta in {
+        "RESPONDER_PERGUNTA_E_RETOMAR",
+        "CONFIRMAR_PLANO_E_RESPONDER_PERGUNTA",
+        "CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA",
+        "CONFIRMAR_HORARIO_E_RESPONDER_PERGUNTA",
+    }:
+        from app.parser import normalizar_texto
+
+        pergunta_valor = any(
+            x in normalizar_texto(str(ctx.get("pergunta_original") or decisao.pergunta or ""))
+            for x in ("quanto", "valor", "ficaria", "fica", "custa", "taxa", "multa")
+        )
+        return informar_cancelamento_e_retomar(
+            pendente=str(ctx.get("pendente") or decisao.aguardando or ""),
+            campos_anotados=list(ctx.get("campos_anotados") or []),
+            pergunta_valor=pergunta_valor,
+        )
+
     plano = ctx.get("plano") or {}
     planos = ctx.get("planos") or []
     planos_txt = ""
@@ -662,7 +737,7 @@ Como cumprir o objetivo:
 - INFORMAR_PLANO_BLOQUEADO_POS_CADASTRO: cadastro fechado — troca de plano com a equipe.
 - INFORMAR_SEM_COBERTURA: sem cobertura + oferecer outro endereço.
 - INFORMAR_CPF_JA_CADASTRADO / INFORMAR_ERRO_* / INFORMAR_TRANSFERENCIA: explique e diga que vai encaminhar para a equipe humana. NÃO pergunte "posso ajudar com mais alguma coisa" — o atendimento automático encerra aqui.
-- RESPONDER_PERGUNTA_E_RETOMAR: responda a pergunta com base na RAG e no TÓPICO DO CONTEXTO. Follow-ups curtos ("quanto paga?", "tem taxa?", "pra cancelar", "e a multa?") referem-se ao tópico anterior — NÃO troque cancelamento/multa por mensalidade do plano, nem o contrário, sem o cliente pedir. Se citou planos, SEMPRE com preço. Se anotou algum campo nesta mensagem, confirme o dado em 1 frase, responda a dúvida, e retome o pendente. Se cpf_anotado=true, ignore o CPF por enquanto.
+- RESPONDER_PERGUNTA_E_RETOMAR: responda a pergunta com base na RAG e no TÓPICO DO CONTEXTO. Follow-ups curtos ("quanto paga?", "tem taxa?", "pra cancelar", "e a multa?") referem-se ao tópico anterior — NÃO troque cancelamento/multa por mensalidade do plano, nem o contrário, sem o cliente pedir. Se citou planos, SEMPRE com preço. Se anotou algum campo nesta mensagem, confirme o dado em 1 frase, responda a dúvida, e retome o pendente. Se cpf_anotado=true, ignore o CPF por enquanto. NUNCA peça data de nascimento, CPF ou outro dado do cadastro para calcular multa, taxa ou cancelamento — a Eva não faz esse cálculo.
 - RESPONDER_DUVIDA_E_RETOMAR: agendamento já feito — responda a dúvida com RAG e/ou dados da conversa (plano, horário, endereço). Termine sempre perguntando se tem mais alguma dúvida.
 - CONVERSAR_E_RETOMAR / CUMPRIMENTAR_E_RETOMAR / RETOMAR_ESCOLHA_PLANO: responda e volte ao pendente.
 - CONTINUAR_CONVERSA: responda natural e retome o pendente se houver.

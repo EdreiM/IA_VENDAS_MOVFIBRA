@@ -450,6 +450,35 @@ def eh_esclarecimento_promo_plano(msg: str) -> bool:
     return False
 
 
+def eh_pergunta_cancelamento(
+    msg: str,
+    msg_bruto: str = "",
+    *,
+    topico: str | None = None,
+) -> bool:
+    """Dúvida sobre cancelamento, multa ou fidelidade — não é dado de cadastro."""
+    if (topico or "").strip().casefold() == "cancelamento":
+        return True
+    t = normalizar_texto(msg_bruto or msg)
+    if not t:
+        return False
+    return any(
+        p in t
+        for p in (
+            "cancelar",
+            "cancelamento",
+            "multa",
+            "fidelidade",
+            "pagar se eu cancelar",
+            "tem que pagar se",
+            "tenho que pagar se",
+            "pagar se cancelar",
+            "e se eu cancelar",
+            "se eu cancelar",
+        )
+    )
+
+
 def eh_pedido_planos_com_desconto(msg: str) -> bool:
     """Cliente quer planos com pontualidade ou promo (ex.: 50% nos 3 primeiros meses)."""
     if eh_esclarecimento_promo_plano(msg):
@@ -1734,13 +1763,17 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         eventos = [e for e in eventos if e not in {Evento.NEGACAO.value, Evento.PEDIU_TROCAR_PLANO.value}]
         if Evento.CONFIRMACAO.value not in eventos:
             eventos.append(Evento.CONFIRMACAO.value)
-        if tem_duvida_informativa(msg, msg_bruto):
+        duvida_no_resumo = (
+            tem_duvida_informativa(msg, msg_bruto)
+            and len(normalizar_texto(msg).split()) > 4
+        )
+        if duvida_no_resumo:
             if Evento.PERGUNTA.value not in eventos:
                 eventos.append(Evento.PERGUNTA.value)
             if not pergunta:
                 pergunta = extrair_parte_pergunta(msg_bruto, msg) or msg_bruto.strip()
         else:
-            # "Sim" / "tá certo" não regrava o cadastro que o modelo ecoou
+            # "Tá" / "Sim" — confirma resumo; não regrava cadastro nem abre RAG de planos
             pergunta = ""
             eventos = [
                 e
@@ -1750,6 +1783,8 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
                     Evento.PERGUNTA.value,
                     Evento.DADO_INFORMADO.value,
                     Evento.CORRECAO_DADO.value,
+                    Evento.PLANO_INFORMADO.value,
+                    Evento.PEDIU_TROCAR_PLANO.value,
                 }
             ]
             if Evento.CONFIRMACAO.value not in eventos:

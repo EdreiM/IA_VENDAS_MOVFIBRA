@@ -231,6 +231,33 @@ def test_confirmacao_dados_mais_duvida() -> None:
     _assert(dec.fase == "cadastro", dec.fase)
 
 
+def test_cancelamento_followup_nao_pede_data_nascimento_para_calcular() -> None:
+    """'Nesse caso quanto que ficaria?' após dúvida de cancelamento — resposta fixa."""
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "data_nascimento",
+        "plano_confirmado": "MOV SUPER+",
+        "nome": "Edrei teste",
+        "cpf": "60421079096",
+        "email": "edreiteste@gmail.com",
+        "telefone": "93992219098",
+        "ultimo_topico": "cancelamento",
+    }
+    msg = "Nesse caso quanto que ficaria?"
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR", dec.objetivo_resposta)
+    txt = gerar_resposta(dec, estado)
+    low = txt.casefold()
+    _assert("nao calcula" in low or "não calcula" in low, txt)
+    _assert("para calcular" not in low, txt)
+    _assert("preciso da sua data de nascimento" not in low, txt)
+    _assert("proporcional" in low, txt)
+
+
 def test_cadastro_cpf_mais_pergunta() -> None:
     msg = "60421079096 mas qual a multa de cancelamento?"
     raw = _raw({"eventos": ["DADO_INFORMADO"], "dados": {"cpf": "60421079096"}, "confianca": 0.9})
@@ -247,7 +274,7 @@ def test_cadastro_cpf_mais_pergunta() -> None:
         msg,
         {"eventos": ["DADO_INFORMADO"], "dados": {"cpf": "60421079096"}},
     )
-    _assert(dec.objetivo_resposta == "RESPONDER_PERGUNTA_E_RETOMAR", dec.objetivo_resposta)
+    _assert(dec.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR", dec.objetivo_resposta)
     _assert(dec.acao == "RESPONDER", f"acao={dec.acao}")
     _assert(dec.aguardando == "cpf", f"aguardando={dec.aguardando}")
 
@@ -575,6 +602,51 @@ def _decidir_sem_executar(estado: dict, msg: str, llm: dict):
     res["topico_contexto"] = ctx.get("topico")
     res["pergunta_original"] = msg
     return decidir(estado, res)
+
+
+def test_ta_com_pergunta_fantasma_llm_cadastra() -> None:
+    """LLM marca PERGUNTA em 'Tá' — parser limpa e dispara CADASTRAR_IXC."""
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "confirmacao_dados",
+        "nome": "Edrei teste",
+        "cpf": "60421079096",
+        "email": "edreiteste@gmail.com",
+        "telefone": "93992219098",
+        "data_nascimento": "16/08/2000",
+        "cep": "68020000",
+        "rua": "sergio henn",
+        "numero": "12",
+        "plano_confirmado": "MOV SUPER+",
+        "cidade": "Santarem",
+        "bairro": "Diamantino",
+        "documento_cpf_validado": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Tá",
+        {"eventos": ["CONFIRMACAO", "PERGUNTA"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.acao == "CADASTRAR_IXC", f"acao={dec.acao} obj={dec.objetivo_resposta}")
+
+
+def test_termos_mock_nao_afirma_envio() -> None:
+    from app.state_machine import decidir_resultado_termos
+
+    dec = decidir_resultado_termos(
+        {
+            "resultado": "ok",
+            "audio_enviado": False,
+            "termo_enviado": False,
+            "provider": "mock",
+            "motivo": "Termos mock local",
+        },
+        {"fase": "termos"},
+    )
+    _assert(dec.objetivo_resposta == "PEDIR_ACEITE_TERMOS", dec.objetivo_resposta)
+    _assert(not (dec.contexto_resposta or {}).get("termos_enviados"), dec.contexto_resposta)
+    txt = gerar_resposta(dec, {"termos_enviados": False})
+    _assert("acabei de enviar" not in txt.casefold(), txt)
 
 
 def test_confirmacao_dados_chama_cadastro() -> None:
@@ -915,6 +987,73 @@ def test_termos_sim_apos_cancelamento_nao_ativa() -> None:
     txt = gerar_resposta(dec, base)
     _assert("multa" in txt.casefold(), txt)
     _assert("aceito" in txt.casefold(), txt)
+
+
+def test_termos_instalar_hoje_nao_lista_planos() -> None:
+    base = {
+        "fase": "termos",
+        "aguardando": "aceite_termos",
+        "termos_enviados": True,
+        "plano_confirmado": "MOV SUPER+",
+    }
+    dec = _decidir_sem_executar(
+        base,
+        "Mas tem como instalar hj?",
+        {"eventos": ["PERGUNTA"], "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR", dec.objetivo_resposta)
+    txt = gerar_resposta(dec, {**base, **(dec.contexto_resposta or {})})
+    low = txt.casefold()
+    _assert("mov essencial" not in low and "mov one" not in low, txt)
+    _assert("aceite" in low or "aceito" in low, txt)
+    _assert("instala" in low, txt)
+
+
+def test_cadastro_email_telefone_mais_cancelamento() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "email",
+        "plano_confirmado": "MOV SUPER+",
+        "nome": "Edrei teste",
+        "cpf": "60421079096",
+    }
+    msg = "edreiteste@gmail.com, 93992219098. Ah e tem que pagar se eu cancelar?"
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {
+            "eventos": ["DADO_INFORMADO", "PERGUNTA"],
+            "dados": {"email": "edreiteste@gmail.com", "telefone": "93992219098"},
+            "confianca": 0.9,
+        },
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR", dec.objetivo_resposta)
+    txt = gerar_resposta(
+        dec,
+        {**estado, **(dec.atualizar_dados or {}), "email": "edreiteste@gmail.com", "telefone": "93992219098"},
+    )
+    low = txt.casefold()
+    _assert("nao calcula" in low or "não calcula" in low or "proporcional" in low, txt)
+    _assert("para calcular" not in low, txt)
+
+
+def test_esclarecer_promo_6950_nao_50() -> None:
+    from app.vendas_mensagens import esclarecer_promocao_plano
+
+    plano = {
+        "nome": "MOV SUPER+",
+        "valor": 139.0,
+        "descricao": (
+            "COMBO MOV SUPER+ – R$ 139,00/mês\n"
+            "🔥 Oferta especial: 50% de desconto nos 3 primeiros meses\n"
+            "💰 Nos 3 primeiros meses, a mensalidade fica por apenas R$ 69,50"
+        ),
+        "beneficios": "50% de desconto nos 3 primeiros meses (R$ 69,50)",
+        "tags": ["promo_inicial"],
+    }
+    txt = esclarecer_promocao_plano(plano)
+    _assert("69,50" in txt or "69.50" in txt, txt)
+    _assert("50,00" not in txt, txt)
 
 
 def test_termos_cancelamento_explica_sem_opcoes_vagas() -> None:
@@ -1308,6 +1447,7 @@ def main() -> None:
         test_plano_no_meio_do_cadastro_nao_vai_para_rua,
         test_titulo_categoria_sem_chip_indevido,
         test_mostre_os_planos_dispara_lista_completa,
+        test_cancelamento_followup_nao_pede_data_nascimento_para_calcular,
         test_esclarecimento_promo_nao_lista_planos,
         test_pedido_planos_com_desconto_lista_filtrada,
         test_sim_apos_oferta_desconto_lista_planos,
@@ -1337,6 +1477,8 @@ def main() -> None:
         test_termos_ok_nao_lista_planos,
         test_data_nascimento_extracao,
         test_cadastro_pede_em_pares,
+        test_ta_com_pergunta_fantasma_llm_cadastra,
+        test_termos_mock_nao_afirma_envio,
         test_confirmacao_dados_chama_cadastro,
         test_cadastro_webhook_dispara_com_url_no_painel_mesmo_provider_mock,
         test_cadastro_multiplos_campos_anticipados,
@@ -1348,6 +1490,9 @@ def main() -> None:
         test_fluxo_edrei_rua_nao_vai_pro_nome,
         test_correcao_rotulada_confirmacao_dados,
         test_termos_sim_apos_cancelamento_nao_ativa,
+        test_termos_instalar_hoje_nao_lista_planos,
+        test_cadastro_email_telefone_mais_cancelamento,
+        test_esclarecer_promo_6950_nao_50,
         test_termos_cancelamento_explica_sem_opcoes_vagas,
         test_agendamento_sim_sem_horario,
     ]

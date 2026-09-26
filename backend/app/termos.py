@@ -52,7 +52,8 @@ def enviar_termos(estado: dict[str, Any]) -> dict[str, Any]:
         "resultado": "ok",
         "audio_enviado": False,
         "termo_enviado": False,
-        "motivo": "Termos mock local (sem webhook)",
+        "motivo": "Termos mock local (sem webhook configurado)",
         "provider": "mock",
         "erro": False,
+        "mock": True,
     }

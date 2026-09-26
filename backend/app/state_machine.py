@@ -465,6 +465,8 @@ def _eh_contexto_cancelamento(texto: str, topico: str) -> bool:
             "multa",
             "fidelidade",
             "pagar se eu cancelar",
+            "tem que pagar se",
+            "tenho que pagar se",
             "tenho que pagar",
             "opcoes de que",
             "opções de que",
@@ -486,9 +488,29 @@ def _decidir_termos(
     msg = _texto(resolucao.get("mensagem") or "")
     topico = _texto(resolucao.get("topico_contexto") or estado.get("ultimo_topico") or "")
 
+    from app.parser import eh_pergunta_instalacao, eh_pergunta_cancelamento
+
     if flags.get("tem_pergunta") or pergunta:
         texto_q = pergunta or msg
-        if _eh_contexto_cancelamento(texto_q, topico):
+        if eh_pergunta_instalacao(texto_q, texto_q, topico=topico):
+            return dec(
+                "RESPONDER",
+                "INFORMAR_INSTALACAO_E_RETOMAR",
+                "termos",
+                "aceite_termos",
+                dados_base,
+                "Dúvida sobre instalação durante aceite de termos",
+                "TERMOS",
+                contexto={
+                    "pendente": "aceite_termos",
+                    "topico_contexto": "instalacao",
+                    "plano_nome": _texto(estado.get("plano_confirmado")),
+                },
+                pergunta=texto_q,
+            )
+        if _eh_contexto_cancelamento(texto_q, topico) or eh_pergunta_cancelamento(
+            texto_q, msg, topico=topico
+        ):
             return dec(
                 "RESPONDER",
                 "RESPONDER_DUVIDA_E_RETOMAR_TERMOS",
@@ -512,7 +534,7 @@ def _decidir_termos(
                 dados_base,
                 "Dúvida sobre termos — responder e retomar aceite",
                 "TERMOS",
-                contexto={"pendente": "aceite_termos"},
+                contexto={"pendente": "aceite_termos", "topico_contexto": topico or ""},
                 pergunta=texto_q,
             )
 
@@ -996,58 +1018,57 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             "GLOBAL_LOCALIZACAO",
         )
 
-    # Confirmação do resumo cadastral (+ dúvida na mesma mensagem)
-    if (
-        fase == "cadastro"
-        and aguardando == "confirmacao_dados"
-        and flags.get("confirmacao")
-        and flags.get("tem_pergunta")
-        and not quer_mudar_plano
-    ):
-        campos_info = list((resolucao.get("dados") or {}).get("campos_informados") or [])
-        d = dict(dados_base)
-        return dec(
-            "RESPONDER",
-            "CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA",
-            "cadastro",
-            "confirmacao_dados",
-            d,
-            "Confirmou resumo e perguntou algo",
-            "FASE_CADASTRO",
-            pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
-            contexto={
-                "pendente": "confirmacao_dados",
-                "topico_contexto": resolucao.get("topico_contexto"),
-                "pergunta_original": resolucao.get("pergunta_original") or "",
-            },
+    # Confirmação do resumo cadastral — "Tá"/"Sim" disparam cadastro, não RAG de planos
+    if fase == "cadastro" and aguardando == "confirmacao_dados":
+        from app.parser import eh_confirmacao, normalizar_texto, tem_duvida_informativa
+
+        msg_conf = eh_confirmacao(msg_cliente) or flags.get("confirmacao")
+        campos_cadastro = list(cadastro.get("campos_informados") or [])
+        novos_turno = set(resolucao.get("campos_novos") or [])
+        alterados_turno = set(resolucao.get("campos_alterados") or [])
+        tem_dado_novo = bool(correcoes) or any(
+            c in novos_turno or c in alterados_turno for c in campos_cadastro
+        )
+        pergunta_txt = str(
+            resolucao.get("pergunta") or resolucao.get("pergunta_original") or ""
+        ).strip()
+        msg_curta = len(normalizar_texto(msg_cliente).split()) <= 4
+        duvida_real = bool(
+            pergunta_txt
+            and tem_duvida_informativa(pergunta_txt, pergunta_txt)
+            and not eh_confirmacao(normalizar_texto(pergunta_txt))
+            and len(normalizar_texto(pergunta_txt).split()) > 2
         )
 
-    # Confirmação do resumo cadastral → cadastrar no IXC
-    # Eco de campos já salvos não bloqueia o cadastro
-    campos_cadastro = list(cadastro.get("campos_informados") or [])
-    novos_turno = set(resolucao.get("campos_novos") or [])
-    alterados_turno = set(resolucao.get("campos_alterados") or [])
-    tem_dado_novo = bool(correcoes) or any(
-        c in novos_turno or c in alterados_turno for c in campos_cadastro
-    )
-    if (
-        fase == "cadastro"
-        and aguardando == "confirmacao_dados"
-        and flags.get("confirmacao")
-        and not quer_mudar_plano
-        and not tem_dado_novo
-        and not flags.get("tem_pergunta")
-    ):
-        d = dict(dados_base)
-        return dec(
-            "CADASTRAR_IXC",
-            None,
-            "cadastro",
-            "resultado_cadastro_ixc",
-            d,
-            "Cliente confirmou — cadastrar no IXC",
-            "FASE_CADASTRO",
-        )
+        if msg_conf and not quer_mudar_plano:
+            if duvida_real and not msg_curta:
+                d = dict(dados_base)
+                return dec(
+                    "RESPONDER",
+                    "CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA",
+                    "cadastro",
+                    "confirmacao_dados",
+                    d,
+                    "Confirmou resumo e perguntou algo",
+                    "FASE_CADASTRO",
+                    pergunta=pergunta_txt or resolucao.get("mensagem") or "",
+                    contexto={
+                        "pendente": "confirmacao_dados",
+                        "topico_contexto": resolucao.get("topico_contexto"),
+                        "pergunta_original": resolucao.get("pergunta_original") or "",
+                    },
+                )
+            if not tem_dado_novo or msg_curta:
+                d = dict(dados_base)
+                return dec(
+                    "CADASTRAR_IXC",
+                    None,
+                    "cadastro",
+                    "resultado_cadastro_ixc",
+                    d,
+                    "Cliente confirmou resumo — cadastrar no IXC",
+                    "FASE_CADASTRO",
+                )
 
     # Correções no resumo cadastral — antes de negacao/perguntas genéricas
     if fase == "cadastro" and aguardando == "confirmacao_dados":
@@ -1662,27 +1683,44 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                         ),
                     },
                 )
-            if topico == "cancelamento" or (
-                any(
-                    p in texto_q
-                    for p in ("cancelar", "cancelamento", "multa", "fidelidade")
-                )
-                or (
-                    "taxa" in texto_q
-                    and not eh_pergunta_instalacao(texto_q, msg_bruta, topico=topico)
-                )
+            from app.parser import eh_pergunta_cancelamento
+
+            pergunta_bruta = str(
+                resolucao.get("pergunta")
+                or resolucao.get("pergunta_original")
+                or resolucao.get("mensagem")
+                or ""
+            )
+            if eh_pergunta_cancelamento(
+                pergunta_bruta,
+                msg_bruta,
+                topico=topico,
+            ) or (
+                "taxa" in texto_q
+                and not eh_pergunta_instalacao(texto_q, msg_bruta, topico=topico)
+                and any(x in texto_q for x in ("cancelar", "multa", "fidelidade"))
             ):
                 d = dict(dados_base)
+                from app.parser import normalizar_texto as _norm_q
+
+                pergunta_valor = any(
+                    x in _norm_q(pergunta_bruta)
+                    for x in ("quanto", "valor", "ficaria", "fica", "custa", "taxa", "multa")
+                )
                 return dec(
                     "RESPONDER",
-                    "RESPONDER_PERGUNTA_E_RETOMAR",
+                    "INFORMAR_CANCELAMENTO_E_RETOMAR",
                     fase,
                     pendente_ef,
                     d,
                     "Pergunta sobre cancelamento/multa",
                     "GLOBAL_PERGUNTA",
                     pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
-                    contexto={**ctx_perg, "topico_contexto": "cancelamento"},
+                    contexto={
+                        **ctx_perg,
+                        "topico_contexto": "cancelamento",
+                        "pergunta_valor_multa": pergunta_valor,
+                    },
                 )
             if topico == "beneficio_plano" or any(
                 k in texto_q for k in ("roteador", "direito", "comodato", "disney", "mesh", "inclui")
@@ -1917,6 +1955,37 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
 
             corrigidos = [c for c in correcoes if c in campos_info]
             anotados = [c for c in campos_info if c != "cpf"]
+            from app.parser import eh_pergunta_cancelamento, normalizar_texto as _norm_c
+
+            msg_sanit = str(resolucao.get("mensagem") or resolucao.get("pergunta_original") or "")
+            if eh_pergunta_cancelamento(
+                str(resolucao.get("pergunta") or msg_sanit),
+                msg_sanit,
+                topico=str(resolucao.get("topico_contexto") or ""),
+            ):
+                pendente_ef = _pendente_cadastro_apos_anotacao(
+                    estado, dados_base, aguardando, anotados
+                )
+                pergunta_valor = any(
+                    x in _norm_c(str(resolucao.get("pergunta") or msg_sanit))
+                    for x in ("quanto", "valor", "ficaria", "fica", "custa", "taxa", "multa")
+                )
+                return dec(
+                    "RESPONDER",
+                    "INFORMAR_CANCELAMENTO_E_RETOMAR",
+                    "cadastro",
+                    pendente_ef,
+                    dados_base,
+                    "Dado anotado + dúvida sobre cancelamento/multa",
+                    "GLOBAL_PERGUNTA",
+                    pergunta=str(resolucao.get("pergunta") or msg_sanit),
+                    contexto={
+                        "pendente": pendente_ef,
+                        "topico_contexto": "cancelamento",
+                        "campos_anotados": anotados,
+                        "pergunta_valor_multa": pergunta_valor,
+                    },
+                )
             return _decisao_retomar_cadastro(
                 estado,
                 dados_base,
@@ -2410,12 +2479,36 @@ def decidir_resultado_termos(
     """Após envio de áudio/PDF — pede aceite antes da ativação/agendamento."""
     audio = bool(resultado.get("audio_enviado"))
     termo = bool(resultado.get("termo_enviado"))
-    ok = (
+    enviados = audio and termo
+    # n8n às vezes reporta audio=false com termo=true — PDF já chegou; seguir fluxo normal
+    if termo and not audio:
+        enviados = True
+        parcial = False
+    else:
+        parcial = bool((audio or termo) and not enviados)
+    mock_sem_anexo = (
         str(resultado.get("resultado") or "").lower() == "ok"
-        or (audio and termo)
-        or (termo and not resultado.get("transferir"))
+        and not resultado.get("erro")
+        and not enviados
+        and not parcial
+        and str(resultado.get("provider") or "").lower() == "mock"
     )
-    parcial = not ok and (audio or termo)
+
+    if resultado.get("erro") and not enviados and not parcial:
+        return Decisao(
+            acao="TRANSFERIR_HUMANO",
+            objetivo_resposta="INFORMAR_ERRO_E_TRANSFERENCIA",
+            fase="transferido",
+            aguardando=None,
+            atualizar_dados={
+                "transferido_humano": True,
+                "motivo_transferencia": _texto(resultado.get("motivo"))
+                or "Erro ao enviar termos",
+            },
+            contexto_resposta={"motivo": _texto(resultado.get("motivo"))},
+            motivo=_texto(resultado.get("motivo")) or "Erro ao enviar termos",
+            prioridade="TERMOS",
+        )
 
     return Decisao(
         acao="RESPONDER",
@@ -2423,15 +2516,16 @@ def decidir_resultado_termos(
         fase="termos",
         aguardando="aceite_termos",
         atualizar_dados={
-            "termos_enviados": termo,
-            "audio_fidelidade_enviado": audio or ok,
+            "termos_enviados": enviados,
+            "audio_fidelidade_enviado": audio,
         },
         contexto_resposta={
-            "termos_enviados": ok,
+            "termos_enviados": enviados,
             "termos_parcial": parcial,
+            "termos_mock": mock_sem_anexo,
             "termos_motivo": _texto(resultado.get("motivo")),
         },
-        motivo=_texto(resultado.get("motivo")) or "Termos enviados — aguardar aceite",
+        motivo=_texto(resultado.get("motivo")) or "Termos — aguardar aceite",
         prioridade="TERMOS",
     )
 

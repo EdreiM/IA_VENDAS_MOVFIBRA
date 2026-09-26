@@ -222,7 +222,7 @@ def _enriquecer_com_rag(
     objetivos_com_rag = {
         "RESPONDER_PERGUNTA_E_RETOMAR",
         "RESPONDER_DUVIDA_E_RETOMAR",
-        "RESPONDER_DUVIDA_E_RETOMAR_TERMOS",
+        "RESPONDER_DUVIDA_E_RETOMAR_TERMOS",  # filtrado em response.py se vier catálogo
         "CONFIRMAR_PLANO_E_RESPONDER_PERGUNTA",
         "CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA",
         "CONFIRMAR_HORARIO_E_RESPONDER_PERGUNTA",
@@ -236,6 +236,15 @@ def _enriquecer_com_rag(
         return decisao
 
     ctx_dec = decisao.contexto_resposta or {}
+    topico_rag = str(ctx_dec.get("topico_contexto") or "")
+    if topico_rag in {"cancelamento", "instalacao"}:
+        return decisao
+    if decisao.objetivo_resposta in {
+        "INFORMAR_CANCELAMENTO_E_RETOMAR",
+        "CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA",
+        "PEDIR_ACEITE_TERMOS",
+    }:
+        return decisao
     plano = ctx_dec.get("plano") or {}
     rag = consultar_rag(
         pergunta=pergunta or mensagem,
