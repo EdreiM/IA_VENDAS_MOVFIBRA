@@ -65,9 +65,67 @@ export function PageHeader({
   );
 }
 
+export type ConfirmExclusaoRequest = {
+  item: string;
+  consequencia: string;
+  resolve: (confirmed: boolean) => void;
+};
+
+/** @deprecated Prefer ConfirmDialog + pedirConfirmacaoExclusao no App */
 export function confirmarExclusao(item: string, consequencia: string): boolean {
   return window.confirm(
     `Tem certeza que deseja excluir ${item}?\n\n${consequencia}`,
+  );
+}
+
+export function ConfirmDialog({
+  request,
+  onDismiss,
+}: {
+  request: ConfirmExclusaoRequest | null;
+  onDismiss: () => void;
+}) {
+  if (!request) return null;
+
+  const fechar = (confirmed: boolean) => {
+    request.resolve(confirmed);
+    onDismiss();
+  };
+
+  return (
+    <div
+      className="confirm-overlay"
+      role="presentation"
+      onClick={() => fechar(false)}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") fechar(false);
+      }}
+    >
+      <div
+        className="confirm-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        aria-describedby="confirm-desc"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="confirm-title">Confirmar exclusão</h2>
+        <p>
+          Tem certeza que deseja excluir <strong>{request.item}</strong>?
+        </p>
+        <p id="confirm-desc" className="confirm-consequencia">
+          {request.consequencia}
+        </p>
+        <div className="confirm-actions">
+          <button type="button" className="ghost" onClick={() => fechar(false)}>
+            Não
+          </button>
+          <button type="button" className="danger" onClick={() => fechar(true)}>
+            Sim, excluir
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

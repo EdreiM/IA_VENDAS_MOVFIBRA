@@ -60,7 +60,14 @@ import {
   uploadPlanoImagem,
   upsertPromocao,
 } from "./api";
-import { NAV_GROUPS, PageHeader, Tab, ToastStack, confirmarExclusao } from "./ui";
+import {
+  ConfirmDialog,
+  ConfirmExclusaoRequest,
+  NAV_GROUPS,
+  PageHeader,
+  Tab,
+  ToastStack,
+} from "./ui";
 
 type Option = { id: number; label: string };
 
@@ -245,6 +252,7 @@ export default function App() {
   const [clienteForm, setClienteForm] = useState<Record<string, string>>({});
   const [agents, setAgents] = useState<Option[]>([]);
   const [teams, setTeams] = useState<Option[]>([]);
+  const [confirmExclusao, setConfirmExclusao] = useState<ConfirmExclusaoRequest | null>(null);
   const [labelOptions, setLabelOptions] = useState<string[]>([]);
   const [assigneeId, setAssigneeId] = useState("");
   const [teamId, setTeamId] = useState("");
@@ -764,14 +772,22 @@ export default function App() {
     await refreshClientes();
   }
 
+  const pedirConfirmacaoExclusao = useCallback(
+    (item: string, consequencia: string) =>
+      new Promise<boolean>((resolve) => {
+        setConfirmExclusao({ item, consequencia, resolve });
+      }),
+    [],
+  );
+
   async function deletarConversaSelecionada() {
     if (!sel) return;
     const rotulo = sel.nome || sel.telefone || sel.id_cliente;
     if (
-      !confirmarExclusao(
+      !(await pedirConfirmacaoExclusao(
         `a conversa de "${rotulo}"`,
         "Isso apaga o histórico, estado e turnos. Não pode ser desfeito.",
-      )
+      ))
     ) {
       return;
     }
@@ -791,10 +807,10 @@ export default function App() {
   async function deletarPlanoConfirmado(plano: Plano) {
     const rotulo = plano.nome?.trim() || `plano #${plano.id}`;
     if (
-      !confirmarExclusao(
+      !(await pedirConfirmacaoExclusao(
         `o plano "${rotulo}"`,
         "Ele será removido do catálogo e a Eva não poderá mais oferecê-lo. Não pode ser desfeito.",
-      )
+      ))
     ) {
       return;
     }
@@ -812,10 +828,10 @@ export default function App() {
   async function deletarPromocaoConfirmada(promo: Promocao) {
     const rotulo = promo.titulo?.trim() || promo.codigo?.trim() || `promoção #${promo.id}`;
     if (
-      !confirmarExclusao(
+      !(await pedirConfirmacaoExclusao(
         `a promoção "${rotulo}"`,
         "Ela será removida permanentemente do sistema. Não pode ser desfeito.",
-      )
+      ))
     ) {
       return;
     }
@@ -833,10 +849,10 @@ export default function App() {
     const rotulo =
       ferramenta.nome?.trim() || ferramenta.tool_key?.trim() || `ferramenta #${ferramenta.id}`;
     if (
-      !confirmarExclusao(
+      !(await pedirConfirmacaoExclusao(
         `a ferramenta "${rotulo}"`,
         "Ela será removida e deixará de estar disponível para a Eva. Não pode ser desfeito.",
-      )
+      ))
     ) {
       return;
     }
@@ -1300,6 +1316,10 @@ export default function App() {
 
         {error ? <div className="alert bad">{error}</div> : null}
         <ToastStack message={okMsg} onDismiss={() => setOkMsg("")} />
+        <ConfirmDialog
+          request={confirmExclusao}
+          onDismiss={() => setConfirmExclusao(null)}
+        />
 
         {tab === "chat" && (
           <section className="panel chat-panel">
