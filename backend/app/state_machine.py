@@ -945,6 +945,41 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             )
         return _decidir_pos_venda(estado, resolucao, dados_base, flags, dec)
 
+    # Cliente quer contratar / instalar — reabrir funil sem transferir
+    if flags.get("pedido_contratacao"):
+        tem_plano_ctx = (
+            estado.get("plano_em_negociacao_id") is not None
+            or estado.get("plano_apresentado_id") is not None
+            or estado.get("plano_confirmado_id") is not None
+        )
+        if fase in {"inicio", "viabilidade", "sem_cobertura"} or (
+            fase == "vendas" and not tem_plano_ctx
+        ):
+            if estado.get("tem_cobertura") is True:
+                return dec(
+                    "BUSCAR_PLANO_INICIAL",
+                    None,
+                    "vendas",
+                    "resultado_plano",
+                    dict(dados_base),
+                    "Cliente quer contratar — apresentar plano",
+                    "GLOBAL_PLANO",
+                )
+            obj_loc = (
+                "APRESENTAR_E_PEDIR_LOCALIZACAO"
+                if fase == "inicio" or flags.get("saudacao")
+                else "PEDIR_LOCALIZACAO"
+            )
+            return dec(
+                "RESPONDER",
+                obj_loc,
+                "viabilidade",
+                "localizacao",
+                dict(dados_base),
+                "Cliente quer contratar — pedir localização",
+                "GLOBAL_PLANO",
+            )
+
     # Humano
     if flags.get("pediu_humano"):
         d = dict(dados_base)
@@ -1408,14 +1443,52 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                 "Cliente confirmou o plano",
                 "FASE_VENDAS",
             )
+        from app.parser import eh_pedido_contratacao
+
+        msg_abertura = normalizar_texto(str(resolucao.get("mensagem") or ""))
+        if (
+            eh_pedido_contratacao(msg_abertura, str(resolucao.get("mensagem") or ""))
+            or flags.get("pedido_contratacao")
+            or flags.get("saudacao")
+        ):
+            if estado.get("tem_cobertura") is True:
+                return dec(
+                    "BUSCAR_PLANO_INICIAL",
+                    None,
+                    "vendas",
+                    "resultado_plano",
+                    dict(dados_base),
+                    "Reabertura — apresentar plano",
+                    "FASE_VENDAS",
+                )
+            return dec(
+                "RESPONDER",
+                "APRESENTAR_E_PEDIR_LOCALIZACAO",
+                "viabilidade",
+                "localizacao",
+                dict(dados_base),
+                "Reabertura — pedir localização",
+                "GLOBAL_SOCIAL",
+            )
+        if estado.get("tem_cobertura") is True:
+            return dec(
+                "BUSCAR_PLANO_INICIAL",
+                None,
+                "vendas",
+                "resultado_plano",
+                dict(dados_base),
+                "Confirmação sem plano — reapresentar destaque",
+                "FASE_VENDAS",
+            )
         return dec(
-            "TRANSFERIR_HUMANO",
-            "INFORMAR_ERRO_E_TRANSFERENCIA",
-            "transferido",
-            None,
-            {"transferido_humano": True},
-            "Confirmação sem plano válido",
+            "RESPONDER",
+            "RETOMAR_ESCOLHA_PLANO",
+            "vendas",
+            "escolha_plano",
+            dict(dados_base),
+            "Confirmação sem plano — retomar escolha",
             "FASE_VENDAS",
+            contexto={"pendente": "plano"},
         )
 
     # Recusa de plano

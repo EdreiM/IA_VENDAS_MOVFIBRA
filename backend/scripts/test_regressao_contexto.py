@@ -19,11 +19,13 @@ from app.parser import (
     eh_aceite_termos_explicito,
     eh_confirmacao,
     eh_mensagem_sobre_planos,
+    eh_pedido_contratacao,
     eh_pedido_lista_completa_planos,
     eh_esclarecimento_promo_plano,
     eh_pedido_plano_promocional,
     eh_pedido_planos_com_desconto,
     eh_pergunta_cobertura_informativa,
+    eh_pergunta_instalacao,
     eh_pergunta_mudanca_endereco,
     eh_pergunta_plano_por_preco,
     parse_interpretacao,
@@ -872,6 +874,46 @@ def test_quanto_e_nao_anota_cpf() -> None:
     i = parse_interpretacao(raw, msg, estado)
     _assert(not i.dados.cpf, f"cpf indevido={i.dados.cpf}")
     _assert(Evento.PERGUNTA.value in i.eventos, i.eventos)
+
+
+def test_oi_quero_instalar_nao_transfere() -> None:
+    """Abertura com intenção de contratar — pede localização, não transfere."""
+    msg = "Oi, quero instalar"
+    _assert(eh_pedido_contratacao(msg, msg), msg)
+    _assert(not eh_mensagem_sobre_planos(msg, msg), msg)
+    _assert(not eh_pergunta_instalacao(msg, msg), msg)
+
+    estado = {"fase": "inicio"}
+    i = parse_interpretacao(
+        _raw({"eventos": ["CONFIRMACAO", "PLANO_INFORMADO"], "dados": {"plano": "instalar"}, "confianca": 0.8}),
+        msg,
+        estado,
+    )
+    _assert(Evento.PEDIDO_CONTRATACAO.value in i.eventos, i.eventos)
+    _assert(Evento.CONFIRMACAO.value not in i.eventos, i.eventos)
+    _assert(Evento.PLANO_INFORMADO.value not in i.eventos, i.eventos)
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {"eventos": ["SAUDACAO", "PEDIDO_CONTRATACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(
+        dec.objetivo_resposta == "APRESENTAR_E_PEDIR_LOCALIZACAO",
+        dec.objetivo_resposta,
+    )
+
+    estado_vendas = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "tem_cobertura": True,
+    }
+    dec2 = _decidir_sem_executar(
+        estado_vendas,
+        msg,
+        {"eventos": ["SAUDACAO", "CONFIRMACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec2.acao != "TRANSFERIR_HUMANO", f"{dec2.acao} {dec2.objetivo_resposta}")
+    _assert(dec2.acao == "BUSCAR_PLANO_INICIAL", dec2.acao)
 
 
 def test_quero_contratar_nao_grava_localizacao() -> None:
@@ -1750,6 +1792,7 @@ def main() -> None:
         test_cpf_11_digitos_aguardando_cpf_nao_vai_telefone,
         test_me_da_logo_nao_vai_para_nome,
         test_quanto_e_nao_anota_cpf,
+        test_oi_quero_instalar_nao_transfere,
         test_quero_contratar_nao_grava_localizacao,
         test_nome_valido_continua_aceito,
         test_cpf_antes_do_nome_nao_vai_para_nome,

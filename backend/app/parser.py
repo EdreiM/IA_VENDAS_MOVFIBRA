@@ -1151,6 +1151,8 @@ def eh_mensagem_sobre_planos(msg: str, msg_bruto: str = "") -> bool:
     t = normalizar_texto(msg_bruto or msg)
     if not t:
         return False
+    if eh_pedido_contratacao(msg, msg_bruto):
+        return False
     if eh_pergunta_cancelamento(msg, msg_bruto):
         return False
     if eh_pergunta_mudanca_endereco(msg_bruto or msg):
@@ -1582,6 +1584,32 @@ def eh_pergunta_plano_por_preco(msg: str, msg_bruto: str = "") -> bool:
     )
 
 
+def eh_pedido_contratacao(msg: str, msg_bruto: str = "") -> bool:
+    """Intenção de contratar/instalar serviço — não é pergunta sobre instalação."""
+    t = normalizar_texto(msg_bruto or msg)
+    if not t:
+        return False
+    if re.search(r"\b(quero|queria|preciso|gostaria)\s+(instalar|contratar)\b", t):
+        return True
+    if re.search(r"\b(quero|queria)\s+(internet|fibra)\b", t):
+        return True
+    return any(
+        p in t
+        for p in (
+            "quero instalar",
+            "queria instalar",
+            "preciso instalar",
+            "quero contratar",
+            "queria contratar",
+            "preciso contratar",
+            "quero internet",
+            "queria internet",
+            "quero fibra",
+            "queria fibra",
+        )
+    )
+
+
 def eh_pergunta_custo_instalacao(msg: str, msg_bruto: str = "") -> bool:
     """Pergunta se instalação é grátis, tem taxa ou quanto custa."""
     t = normalizar_texto(msg_bruto or msg)
@@ -1599,6 +1627,8 @@ def eh_pergunta_instalacao(
     topico: str | None = None,
 ) -> bool:
     """Dúvida sobre instalação, prazo, técnico ou 'conseguem vir hoje?'."""
+    if eh_pedido_contratacao(msg, msg_bruto):
+        return False
     if eh_pergunta_custo_instalacao(msg, msg_bruto):
         return True
     if (topico or "").strip().casefold() == "instalacao":
@@ -1712,6 +1742,38 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     }
     aguardando_agenda = aguardando in {"escolha_horario", "confirmacao_horario"}
 
+    # "Oi, quero instalar" — intenção de contratar, não plano/pergunta de instalação
+    abertura_contratacao = eh_pedido_contratacao(msg, msg_bruto) and not (
+        fase == "vendas"
+        and aguardando_plano
+        and (
+            estado.get("plano_em_negociacao_id") is not None
+            or estado.get("plano_apresentado_id") is not None
+        )
+    )
+    if abertura_contratacao:
+        if any(p in msg for p in ("oi", "ola", "olá", "bom dia", "boa tarde", "boa noite")):
+            if Evento.SAUDACAO.value not in eventos:
+                eventos.append(Evento.SAUDACAO.value)
+        eventos = [
+            e
+            for e in eventos
+            if e
+            not in {
+                Evento.CONFIRMACAO.value,
+                Evento.PLANO_INFORMADO.value,
+                Evento.PERGUNTA.value,
+                Evento.OUTRO.value,
+                Evento.LOCALIZACAO_INFORMADA.value,
+            }
+        ]
+        if Evento.PEDIDO_CONTRATACAO.value not in eventos:
+            eventos.append(Evento.PEDIDO_CONTRATACAO.value)
+        dados.plano = ""
+        dados.cidade = ""
+        dados.bairro = ""
+        pergunta = ""
+
     # CPF/CNPJ — força extração quando o pendente é CPF (evita ir para telefone)
     if _parece_cpf_cnpj(msg, msg_bruto) and aguardando == "cpf":
         cpf_val = _extrair_cpf(msg, msg_bruto)
@@ -1794,7 +1856,11 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             dados.plano = ""
         pergunta = ""
 
-    if aguardando_plano and (eh_confirmacao(msg) or msg == "quero"):
+    if (
+        aguardando_plano
+        and (eh_confirmacao(msg) or msg == "quero")
+        and not eh_pedido_contratacao(msg, msg_bruto)
+    ):
         eventos = [e for e in eventos if e not in {Evento.PLANO_INFORMADO.value, Evento.PEDIU_TROCAR_PLANO.value, Evento.NEGACAO.value}]
         if Evento.CONFIRMACAO.value not in eventos:
             eventos.append(Evento.CONFIRMACAO.value)
