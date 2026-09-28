@@ -253,6 +253,25 @@ def _resolver_por_preco(
     }
 
 
+def resolver_plano_citado_na_mensagem(
+    msg: str,
+    msg_bruto: str,
+    planos: list[dict[str, Any]],
+    *,
+    plano_atual_id: int | None = None,
+) -> dict[str, Any] | None:
+    """Resolve plano citado pelo nome na mensagem; None se não citou ou não achou."""
+    from app.parser import extrair_referencia_plano_na_mensagem
+
+    ref = extrair_referencia_plano_na_mensagem(msg, msg_bruto)
+    if not ref:
+        return None
+    resolvido = resolver_plano(ref, planos, plano_atual_id=plano_atual_id)
+    if resolvido.get("evento") == "PLANO_RESOLVIDO" and resolvido.get("plano"):
+        return resolvido["plano"]
+    return None
+
+
 def normalizar_referencia_plano(referencia: str) -> str:
     """'Plano simples' → 'mais barato' (intenção, não nome literal)."""
     ref = _norm(str(referencia or ""))

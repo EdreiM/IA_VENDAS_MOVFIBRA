@@ -118,13 +118,6 @@ def _plano_do_estado(estado: dict[str, Any], ctx: dict[str, Any] | None = None) 
     """Monta dict do plano em foco com preço (catálogo), para nunca omitir valor."""
     ctx = ctx or {}
     plano = ctx.get("plano") or ctx.get("plano_sugerido") or {}
-    if (
-        isinstance(plano, dict)
-        and (plano.get("valor") or plano.get("valor_pontualidade"))
-        and (plano.get("beneficios") or plano.get("descricao") or plano.get("dispositivos_max"))
-    ):
-        return plano
-
     from app.plans_catalog import listar_planos
 
     planos = listar_planos(estado)
@@ -134,6 +127,17 @@ def _plano_do_estado(estado: dict[str, Any], ctx: dict[str, Any] | None = None) 
         or estado.get("plano_apresentado_id")
         or estado.get("plano_confirmado_id")
     )
+    if isinstance(plano, dict) and plano.get("id") is not None:
+        for p in planos:
+            if int(p.get("id") or -1) == int(plano["id"]):
+                return p
+    if (
+        isinstance(plano, dict)
+        and plano.get("nome")
+        and (plano.get("valor") or plano.get("valor_pontualidade"))
+        and (plano.get("beneficios") or plano.get("descricao") or plano.get("dispositivos_max"))
+    ):
+        return plano
     if pid is not None:
         for p in planos:
             if int(p.get("id") or -1) == int(pid):
@@ -462,9 +466,11 @@ def gerar_resposta(
         plano = _plano_do_estado(estado, ctx)
         ref = str(ctx.get("referencia_plano") or "").strip()
         if ref:
+            from app.parser import extrair_referencia_plano_na_mensagem
             from app.plans import resolver_plano
             from app.plans_catalog import listar_planos
 
+            ref_resolve = extrair_referencia_plano_na_mensagem(ref, ref) or ref
             plano_atual_id = None
             try:
                 if estado.get("plano_em_negociacao_id") is not None:
@@ -472,7 +478,7 @@ def gerar_resposta(
             except (TypeError, ValueError):
                 plano_atual_id = None
             resolvido = resolver_plano(
-                ref, listar_planos(estado), plano_atual_id=plano_atual_id
+                ref_resolve, listar_planos(estado), plano_atual_id=plano_atual_id
             )
             if resolvido.get("evento") == "PLANO_RESOLVIDO" and resolvido.get("plano"):
                 plano = resolvido["plano"]
@@ -502,12 +508,23 @@ def gerar_resposta(
 
     if decisao.objetivo_resposta == "INFORMAR_PRECO_PLANO_E_RETOMAR":
         ctx = decisao.contexto_resposta or {}
-        plano_atual = _plano_do_estado(estado, ctx)
         from app.plans_catalog import listar_planos
 
         catalogo = listar_planos(estado)
+        plano_atual = _plano_do_estado(estado, ctx)
+        if not plano_atual.get("nome"):
+            msg_cli = str(ctx.get("mensagem_cliente") or ctx.get("referencia_plano") or "")
+            if msg_cli:
+                from app.plans import resolver_plano_citado_na_mensagem
+
+                citado = resolver_plano_citado_na_mensagem(msg_cli, msg_cli, catalogo)
+                if citado:
+                    plano_atual = citado
         ultima = str(estado.get("ultima_mensagem_sofia") or "")
-        citados = planos_citados_no_texto(ultima, catalogo)
+        msg_cli = str(ctx.get("mensagem_cliente") or "")
+        citados = planos_citados_no_texto(msg_cli, catalogo) if msg_cli else []
+        if not citados:
+            citados = planos_citados_no_texto(ultima, catalogo)
         # Se a Eva citou outros planos (ex.: ONE+ / UP+ com Disney), preço deles
         if len(citados) >= 1:
             ids_citados = {int(p.get("id") or -1) for p in citados}

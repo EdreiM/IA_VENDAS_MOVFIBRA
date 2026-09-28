@@ -273,10 +273,12 @@ INTENCAO_PLANO_KEYWORDS = (
 # Palavras que identificam plano mesmo se o LLM errar (ordem: + antes do nome base)
 PLANOS_MENCAO = [
     (r"\bsuper\s*\+", "SUPER+"),
-    (r"\bup\s*\+", "UP+"),
-    (r"\bone\s*\+|one\s+plus\b", "ONE+"),
-    (r"\binfinity\b", "INFINITY"),
-    (r"\bessencial\b", "ESSENCIAL"),
+    (r"\bmov\s+super\s*\+|\bmov\s+super\b", "SUPER+"),
+    (r"\bmovup\b|\bmov\s*up\b|\bmov\s+up\b|\bup\s*\+", "UP+"),
+    (r"\bmovone\b|\bmov\s*one\b|\bmov\s+one\b|\bone\s*\+|one\s+plus\b", "ONE+"),
+    (r"\bmov\s+infinity\b|\binfinity\b", "INFINITY"),
+    (r"\bmov\s+essencial\b|\bessencial\b", "ESSENCIAL"),
+    (r"\bmov\s+flex\b|\bflex\b", "FLEX"),
     (r"\bcombo.*12\s*gb|12\s*gb", "COMBO TOTAL 12GB"),
     (r"\bcombo.*22\s*gb|22\s*gb", "COMBO TOTAL 22GB"),
     (r"\bcombo\b", "COMBO"),
@@ -335,6 +337,13 @@ def _extrair_cpf(msg: str, bruto: str = "") -> str:
     if len(n) in {11, 14}:
         return n
     return ""
+
+
+def extrair_referencia_plano_na_mensagem(msg: str, msg_bruto: str = "") -> str:
+    """Extrai nome/referência de plano citado na mensagem (ex.: 'mov up' → UP+)."""
+    bruto = texto(msg_bruto or msg)
+    t = normalizar_texto(bruto)
+    return _detectar_plano_na_mensagem(t)
 
 
 def _detectar_plano_na_mensagem(msg: str) -> str:
@@ -1481,6 +1490,46 @@ def eh_pergunta_detalhe_plano(msg: str, msg_bruto: str = "") -> bool:
     return any(p in t for p in PERGUNTAS_DETALHE_PLANO)
 
 
+def eh_pergunta_generica_plano_em_foco(msg: str, msg_bruto: str = "") -> bool:
+    """Pergunta sobre o plano já em foco, sem citar outro nome."""
+    t = normalizar_texto(msg_bruto or msg)
+    return any(
+        p in t
+        for p in (
+            "nesse plano",
+            "nessa opcao",
+            "nessa opção",
+            "nesse combo",
+            "esse plano",
+            "essa opcao",
+            "o que tem nesse",
+            "o que vem nesse",
+            "quanto e esse",
+            "quanto custa esse",
+            "valor desse",
+            "preco desse",
+            "preço desse",
+        )
+    )
+
+
+def eh_pergunta_preco_plano_nomeado(msg: str, msg_bruto: str = "") -> bool:
+    """'Quanto custa o mov up?' — preço de plano citado na mensagem."""
+    t = normalizar_texto(msg_bruto or msg)
+    if not any(p in t for p in PERGUNTAS_PRECO):
+        return False
+    return bool(extrair_referencia_plano_na_mensagem(t, msg_bruto or msg))
+
+
+def eh_pergunta_informativa_sobre_plano(msg: str, msg_bruto: str = "") -> bool:
+    """Detalhe, preço ou identificação — não é escolha/troca de plano."""
+    return (
+        eh_pergunta_detalhe_plano(msg, msg_bruto)
+        or eh_pergunta_plano_por_preco(msg, msg_bruto)
+        or eh_pergunta_preco_plano_nomeado(msg, msg_bruto)
+    )
+
+
 def _precos_na_mensagem(msg: str, *, minimo: float = 30) -> list[float]:
     nums = re.findall(r"\d+(?:[.,]\d{1,2})?", str(msg or ""))
     out: list[float] = []
@@ -1498,13 +1547,22 @@ def eh_pergunta_plano_por_preco(msg: str, msg_bruto: str = "") -> bool:
     """'Qual o de 69,50?' — identifica plano pelo valor, não escolha."""
     bruto = texto(msg_bruto or msg)
     t = normalizar_texto(bruto)
-    if not t or not _precos_na_mensagem(t):
+    if not t:
+        return False
+    # Evita falso positivo com telefone/CPF (93992219098 + ?)
+    digitos = re.sub(r"\D", "", bruto)
+    tem_valor_plano = bool(re.search(r"\b\d{2,3}[.,]\d{2}\b", bruto))
+    if len(digitos) >= 10 and not tem_valor_plano:
+        return False
+    if not tem_valor_plano and not _precos_na_mensagem(t, minimo=50):
         return False
     if eh_confirmacao(t):
         return False
     if re.match(r"^(quero|queria|preciso|gostaria|vou de|fecho com|fico com)\b", t):
         return False
-    if "?" in bruto or t.startswith("qual ") or t.startswith("quais "):
+    if tem_valor_plano and (
+        "?" in bruto or t.startswith("qual ") or t.startswith("quais ")
+    ):
         return True
     return any(
         p in t
@@ -1890,7 +1948,10 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     # Proteção: citação explícita de plano (não CPF, não campos cadastrais pendentes)
     skip_plano = _parece_cpf_cnpj(msg, msg_bruto) or aguardando in {"cpf", "email", "telefone"}
     plano_detectado = _detectar_plano_na_mensagem(msg) if (pode_trocar_plano and not skip_plano) else ""
-    if plano_detectado:
+    pergunta_sobre_plano = (
+        bool(plano_detectado) and eh_pergunta_informativa_sobre_plano(msg, msg_bruto)
+    )
+    if plano_detectado and not pergunta_sobre_plano:
         eventos = [
             e
             for e in eventos
@@ -1913,9 +1974,18 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         dados.telefone = ""
         campos_corrigidos = []
         pergunta = ""
+    elif plano_detectado and pergunta_sobre_plano:
+        dados.plano = plano_detectado
+        if Evento.PERGUNTA.value not in eventos:
+            eventos.append(Evento.PERGUNTA.value)
+        if not pergunta:
+            pergunta = texto(msg_bruto) or msg
 
     # "O que tem no SUPER+?" / "Qual o de 69,50?" — PERGUNTA (não escolha de plano)
-    if (aguardando_plano or fase == "vendas") and (
+    pode_perguntar_plano = aguardando_plano or fase == "vendas" or (
+        fase == "cadastro" and bool(estado.get("plano_confirmado"))
+    )
+    if pode_perguntar_plano and (
         eh_pergunta_detalhe_plano(msg, msg_bruto)
         or eh_pergunta_plano_por_preco(msg, msg_bruto)
     ):
@@ -2111,11 +2181,15 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     pausa_cadastro_plano = False
     if fase == "cadastro" and estado.get("tem_cobertura") is True:
         if (
-            eh_mensagem_sobre_planos(msg, msg_bruto)
-            or Evento.PEDIU_TROCAR_PLANO.value in eventos
-            or Evento.PLANO_INFORMADO.value in eventos
-            or any(k in msg for k in INTENCAO_PLANO_KEYWORDS)
-        ) and not eh_mensagem_correcao_cadastro(msg, msg_bruto):
+            not eh_pergunta_informativa_sobre_plano(msg, msg_bruto)
+            and (
+                eh_mensagem_sobre_planos(msg, msg_bruto)
+                or Evento.PEDIU_TROCAR_PLANO.value in eventos
+                or Evento.PLANO_INFORMADO.value in eventos
+                or any(k in msg for k in INTENCAO_PLANO_KEYWORDS)
+            )
+            and not eh_mensagem_correcao_cadastro(msg, msg_bruto)
+        ):
             from app.plans import normalizar_referencia_plano
 
             pausa_cadastro_plano = True
@@ -2150,7 +2224,12 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
                 setattr(dados, campo, "")
 
     # Extração determinística do campo pendente (LLM falhou ou veio dado+pergunta)
-    if fase == "cadastro" and aguardando_cadastro and not pausa_cadastro_plano:
+    if (
+        fase == "cadastro"
+        and aguardando_cadastro
+        and not pausa_cadastro_plano
+        and not eh_pergunta_informativa_sobre_plano(msg, msg_bruto)
+    ):
         _aplicar_extracao_campo_pendente(
             aguardando,
             msg_bruto,
@@ -2224,9 +2303,14 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         pergunta = ""
 
     # Dado puro anotado — remove PERGUNTA fantasma do LLM (ex.: nome classificado errado)
-    if not tem_duvida and aguardando in {
-        "nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero"
-    }:
+    if (
+        not tem_duvida
+        and not eh_pergunta_informativa_sobre_plano(msg, msg_bruto)
+        and aguardando
+        in {
+            "nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero"
+        }
+    ):
         valor_pendente = texto(getattr(dados, aguardando, ""))
         if valor_pendente and Evento.DADO_INFORMADO.value in eventos:
             eventos = [e for e in eventos if e not in {Evento.PERGUNTA.value, Evento.OUTRO.value}]

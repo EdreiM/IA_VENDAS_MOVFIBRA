@@ -31,6 +31,72 @@ def _texto(v: Any) -> str:
     return "" if v is None else str(v).strip()
 
 
+def _fase_aceita_pergunta_plano(fase: str, estado: dict[str, Any]) -> bool:
+    """Etapas em que perguntas sobre plano usam resposta fixa (não RAG)."""
+    if fase == "vendas":
+        return True
+    if fase == "cadastro" and (
+        estado.get("plano_confirmado") or estado.get("plano_em_negociacao")
+    ):
+        return True
+    return False
+
+
+def _plano_atual_id(estado: dict[str, Any]) -> int | None:
+    for key in ("plano_em_negociacao_id", "plano_apresentado_id", "plano_confirmado_id"):
+        try:
+            if estado.get(key) is not None:
+                return int(estado[key])
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _resolver_plano_da_pergunta(
+    estado: dict[str, Any],
+    resolucao: dict[str, Any],
+    *,
+    usar_fallback_negociacao: bool = False,
+) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
+    """
+    Extrai referência e resolve plano citado na pergunta.
+    Retorna (plano_ctx, ref, resolvido_completo ou None).
+    """
+    from app.parser import (
+        eh_pergunta_generica_plano_em_foco,
+        extrair_referencia_plano_na_mensagem,
+        normalizar_texto,
+    )
+    from app.plans import resolver_plano
+    from app.plans_catalog import listar_planos
+
+    msg_bruta = str(resolucao.get("mensagem") or resolucao.get("pergunta_original") or "")
+    texto = normalizar_texto(
+        str(resolucao.get("mensagem") or resolucao.get("pergunta") or "")
+    )
+    ref_plano = extrair_referencia_plano_na_mensagem(texto, msg_bruta)
+    ref = ref_plano or ""
+    if not ref_plano and usar_fallback_negociacao:
+        if eh_pergunta_generica_plano_em_foco(texto, msg_bruta) or not ref:
+            ref = (
+                _texto(estado.get("plano_em_negociacao"))
+                or _texto(estado.get("plano_confirmado"))
+                or _texto(estado.get("plano_apresentado"))
+                or ref
+            )
+    plano_ctx: dict[str, Any] = {}
+    resolvido: dict[str, Any] | None = None
+    if ref:
+        resolvido = resolver_plano(
+            ref,
+            listar_planos(estado),
+            plano_atual_id=_plano_atual_id(estado),
+        )
+        if resolvido.get("evento") == "PLANO_RESOLVIDO" and resolvido.get("plano"):
+            plano_ctx = resolvido["plano"]
+    return plano_ctx, ref, resolvido
+
+
 def _detectar_beneficio_pergunta(texto_q: str) -> str | None:
     """Retorna rótulo do benefício se a pergunta for sobre ele."""
     mapa = [
@@ -1400,7 +1466,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
         )
 
     # "O que tem nesse plano?" / "Qual o de 69,50?" — antes de tratar como escolha
-    if flags.get("tem_pergunta") and fase == "vendas":
+    if flags.get("tem_pergunta") and _fase_aceita_pergunta_plano(fase, estado):
         from app.parser import (
             eh_pergunta_detalhe_plano,
             eh_pergunta_plano_por_preco,
@@ -1415,48 +1481,22 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
         )
         identificacao_preco = eh_pergunta_plano_por_preco(texto_det, msg_bruta_det)
         if eh_pergunta_detalhe_plano(texto_det) or identificacao_preco:
-            ref = _texto(resolucao.get("pergunta")) or _texto(resolucao.get("mensagem")) or ""
-            if not identificacao_preco:
-                ref = _texto(plano.get("valor")) or ref
+            plano_ctx, ref, resolvido = _resolver_plano_da_pergunta(
+                estado, resolucao, usar_fallback_negociacao=True
+            )
             d = dict(dados_base)
-            plano_ctx: dict[str, Any] = {}
             aguard = aguardando or "confirmacao_plano"
-            if ref:
-                from app.plans import resolver_plano
-                from app.plans_catalog import listar_planos
-
-                plano_atual_id = None
-                try:
-                    if estado.get("plano_em_negociacao_id") is not None:
-                        plano_atual_id = int(estado["plano_em_negociacao_id"])
-                    elif estado.get("plano_apresentado_id") is not None:
-                        plano_atual_id = int(estado["plano_apresentado_id"])
-                except (TypeError, ValueError):
-                    plano_atual_id = None
-                resolvido = resolver_plano(
-                    ref,
-                    listar_planos(estado),
-                    plano_atual_id=plano_atual_id,
+            if resolvido and resolvido.get("evento") == "PLANO_AMBIGUO":
+                return dec(
+                    "RESPONDER",
+                    "ESCLARECER_PLANO_AMBIGUO",
+                    fase,
+                    "escolha_plano",
+                    d,
+                    "Detalhe pediu plano ambíguo",
+                    "GLOBAL_PERGUNTA",
+                    contexto={"candidatos": resolvido.get("candidatos") or []},
                 )
-                if resolvido.get("evento") == "PLANO_RESOLVIDO" and resolvido.get("plano"):
-                    p = resolvido["plano"]
-                    plano_ctx = p
-                    d["plano_apresentado"] = p.get("nome")
-                    d["plano_apresentado_id"] = int(p["id"]) if p.get("id") is not None else None
-                    d["plano_em_negociacao"] = p.get("nome")
-                    d["plano_em_negociacao_id"] = int(p["id"]) if p.get("id") is not None else None
-                    aguard = "confirmacao_plano"
-                elif resolvido.get("evento") == "PLANO_AMBIGUO":
-                    return dec(
-                        "RESPONDER",
-                        "ESCLARECER_PLANO_AMBIGUO",
-                        "vendas",
-                        "escolha_plano",
-                        d,
-                        "Detalhe pediu plano ambíguo",
-                        "GLOBAL_PERGUNTA",
-                        contexto={"candidatos": resolvido.get("candidatos") or []},
-                    )
             motivo = (
                 "Pergunta para identificar plano por preço"
                 if identificacao_preco
@@ -1465,7 +1505,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             return dec(
                 "RESPONDER",
                 "INFORMAR_DETALHES_PLANO",
-                "vendas",
+                fase,
                 aguard,
                 d,
                 motivo,
@@ -1475,6 +1515,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                     "referencia_plano": ref,
                     "plano": plano_ctx,
                     "identificacao_por_preco": identificacao_preco,
+                    "mensagem_cliente": msg_bruta_det,
                 },
             )
 
@@ -1553,12 +1594,14 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             contexto={"quer_ver_planos": True},
         )
 
-    # "Quanto é?" do PLANO — não confundir com multa de cancelamento
+    # "Quanto é?" do PLANO — não confundir com multa de cancelamento (só vendas;
+    # cadastro trata instalação/preço depois de anotar o dado pendente)
     if flags.get("tem_pergunta") and fase == "vendas":
         from app.parser import (
             PERGUNTAS_PRECO,
             eh_pergunta_custo_instalacao,
             eh_pergunta_instalacao,
+            eh_pergunta_preco_plano_nomeado,
             normalizar_texto,
         )
 
@@ -1573,7 +1616,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             return dec(
                 "RESPONDER",
                 "INFORMAR_INSTALACAO_E_RETOMAR",
-                "vendas",
+                fase,
                 aguardando or "confirmacao_plano",
                 dict(dados_base),
                 "Pergunta sobre instalação — resposta fixa e retomar plano",
@@ -1589,30 +1632,47 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                     ),
                 },
             )
-        elif any(p in texto_q for p in PERGUNTAS_PRECO):
+        elif any(p in texto_q for p in PERGUNTAS_PRECO) or eh_pergunta_preco_plano_nomeado(
+            texto_q, msg_bruta
+        ):
+            plano_ctx, ref, _ = _resolver_plano_da_pergunta(
+                estado, resolucao, usar_fallback_negociacao=True
+            )
             return dec(
                 "RESPONDER",
                 "INFORMAR_PRECO_PLANO_E_RETOMAR",
-                "vendas",
+                fase,
                 aguardando or "confirmacao_plano",
                 dict(dados_base),
                 "Pergunta de preço do plano",
                 "GLOBAL_PERGUNTA",
-                contexto={"pendente": aguardando},
+                contexto={
+                    "pendente": aguardando,
+                    "plano": plano_ctx,
+                    "referencia_plano": ref,
+                    "mensagem_cliente": msg_bruta,
+                },
             )
 
         # "Tem Disney?" / benefício → resposta fixa com planos + preço
         beneficio = _detectar_beneficio_pergunta(texto_q)
         if beneficio and topico != "cancelamento":
+            plano_ctx, ref, _ = _resolver_plano_da_pergunta(estado, resolucao)
             return dec(
                 "RESPONDER",
                 "INFORMAR_PLANOS_POR_BENEFICIO",
-                "vendas",
+                fase,
                 aguardando or "confirmacao_plano",
                 dict(dados_base),
                 f"Pergunta sobre benefício {beneficio}",
                 "GLOBAL_PERGUNTA",
-                contexto={"pendente": aguardando, "beneficio": beneficio},
+                contexto={
+                    "pendente": aguardando,
+                    "beneficio": beneficio,
+                    "plano": plano_ctx,
+                    "referencia_plano": ref,
+                    "mensagem_cliente": msg_bruta,
+                },
             )
 
     # Em cadastro: "quanto paga?" no tópico cancelamento ≠ preço do plano

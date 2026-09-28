@@ -342,7 +342,10 @@ def process_message(
 
     decisao = decidir(estado, resolucao)
     if decisao.acao == "RESOLVER_PLANO":
-        decisao.contexto_resposta["referencia_plano"] = (resolucao.get("plano") or {}).get("valor") or ""
+        ctx_rp = dict(decisao.contexto_resposta or {})
+        if not str(ctx_rp.get("referencia_plano") or "").strip():
+            ctx_rp["referencia_plano"] = (resolucao.get("plano") or {}).get("valor") or ""
+        decisao.contexto_resposta = ctx_rp
 
     # Propaga contexto de follow-up para RAG/resposta
     if ctx_perg.get("topico") or ctx_perg.get("era_followup"):

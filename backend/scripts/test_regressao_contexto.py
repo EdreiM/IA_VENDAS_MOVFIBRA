@@ -1518,6 +1518,75 @@ def test_quero_na_promocao_nao_confirma_plano_atual() -> None:
     _assert(dec.aguardando != "nome", f"aguardando={dec.aguardando}")
 
 
+def test_preco_mov_up_nao_usa_plano_em_negociacao() -> None:
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "tem_cobertura": True,
+        "plano_em_negociacao": "MOV ESSENCIAL",
+        "plano_em_negociacao_id": 1213,
+    }
+    msg = "Quanto custa o mov up?"
+    dec = _decidir_sem_executar(
+        estado, msg, {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9}
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_PRECO_PLANO_E_RETOMAR", dec.objetivo_resposta)
+    ctx = dec.contexto_resposta or {}
+    plano = ctx.get("plano") or {}
+    nome = str(plano.get("nome") or "").casefold()
+    _assert("up" in nome, f"plano={plano.get('nome')}")
+    txt = gerar_resposta(dec, {**estado, **(dec.atualizar_dados or {})})
+    _assert("149" in txt or "up" in txt.casefold(), txt)
+    _assert("129" not in txt or "up" in txt.casefold(), txt)
+
+
+def test_detalhe_mov_up_no_cadastro() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "nome",
+        "tem_cobertura": True,
+        "plano_confirmado": "MOV SUPER+",
+        "plano_em_negociacao": "MOV SUPER+",
+    }
+    msg = "O que vem no mov up?"
+    dec = _decidir_sem_executar(
+        estado, msg, {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9}
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_DETALHES_PLANO", dec.objetivo_resposta)
+    txt = gerar_resposta(dec, {**estado, **(dec.atualizar_dados or {})})
+    _assert("up" in txt.casefold(), txt)
+    _assert("super+" not in txt.casefold() or "up" in txt.casefold(), txt)
+
+
+def test_detalhe_mov_up_na_pergunta_mostra_plano_correto() -> None:
+    """'O que vem no mov up?' — detalha UP+, não o plano em negociacao."""
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "tem_cobertura": True,
+        "cidade": "Santarem",
+        "bairro": "Diamantino",
+        "plano_em_negociacao": "MOV ESSENCIAL",
+        "plano_em_negociacao_id": 1213,
+        "plano_apresentado": "MOV ESSENCIAL",
+        "plano_apresentado_id": 1213,
+    }
+    msg = "O que vem mais nese mov up?"
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_DETALHES_PLANO", dec.objetivo_resposta)
+    ctx = dec.contexto_resposta or {}
+    plano_ctx = ctx.get("plano") or {}
+    nome_ctx = str(plano_ctx.get("nome") or "").casefold()
+    txt = gerar_resposta(dec, {**estado, **(dec.atualizar_dados or {})})
+    _assert("mov up" in nome_ctx or "up+" in nome_ctx, f"plano={plano_ctx.get('nome')}")
+    _assert("mov up" in txt.casefold() or "up+" in txt.casefold(), txt)
+    _assert("mov essencial" not in txt.casefold() or "up" in txt.casefold(), txt)
+
+
 def test_qual_o_de_6950_nao_trata_como_escolha() -> None:
     """'Qual o de 69,50?' após lista — identifica plano, não 'anotei a troca'."""
     msg = "Qual o de 69,50?"
@@ -1607,6 +1676,9 @@ def main() -> None:
         test_pedido_lista_completa_planos,
         test_mais_forte_resolve_premium,
         test_quero_na_promocao_nao_confirma_plano_atual,
+        test_preco_mov_up_nao_usa_plano_em_negociacao,
+        test_detalhe_mov_up_no_cadastro,
+        test_detalhe_mov_up_na_pergunta_mostra_plano_correto,
         test_qual_o_de_6950_nao_trata_como_escolha,
         test_resolver_plano_preco_promocional_6950,
         test_listar_todos_quando_pediu_outras_opcoes,
