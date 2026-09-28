@@ -650,6 +650,47 @@ def gerar_resposta(
         pendente = str(ctx.get("pendente") or decisao.aguardando or "")
         return responder_sem_base_rag(pendente)
 
+    if str(estado.get("fase") or "") == "cadastro" and decisao.objetivo_resposta in {
+        "CONTINUAR_CONVERSA",
+        "CONVERSAR_E_RETOMAR",
+    }:
+        from app.cadastro_mensagens import campos_para_pedir, pedir_campos
+
+        ctx_cad = decisao.contexto_resposta or {}
+        merged = {**estado, **(decisao.atualizar_dados or {})}
+        pend = str(ctx_cad.get("pendente") or decisao.aguardando or "")
+        faltam = campos_para_pedir(merged) or ([pend] if pend else [])
+        cadastro_ok = {
+            "nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero",
+        }
+        if faltam and all(c in cadastro_ok for c in faltam):
+            plano_n = str(merged.get("plano_confirmado") or "").strip()
+            intro = f"Beleza! Seguimos com o *{plano_n}*. " if plano_n else "Beleza! "
+            return intro + pedir_campos(faltam)
+
+    if decisao.objetivo_resposta == "ANOTAR_DADO_E_RETOMAR_PLANO":
+        ctx = decisao.contexto_resposta or {}
+        campos = [c for c in (ctx.get("campos_anotados") or []) if c in {"nome", "cpf", "email", "telefone"}]
+        plano_n = str(
+            estado.get("plano_em_negociacao")
+            or estado.get("plano_apresentado")
+            or ""
+        ).strip()
+        rotulos = {"nome": "seu nome", "cpf": "CPF", "email": "e-mail", "telefone": "telefone"}
+        if campos:
+            itens = [rotulos.get(c, c) for c in campos]
+            anot = f"Anotei {itens[0]}." if len(itens) == 1 else f"Anotei {' e '.join(itens)}."
+        else:
+            anot = ""
+        if plano_n:
+            pergunta = f"Quer confirmar o *{plano_n}* pra gente seguir com o cadastro?"
+            return f"{anot} {pergunta}".strip()
+        from app.vendas_mensagens import prioritizar_plano_antes_cadastro
+
+        return prioritizar_plano_antes_cadastro(
+            aguardando_cadastro=str(ctx.get("aguardando_cadastro") or "nome"),
+        )
+
     ctx = decisao.contexto_resposta or {}
     topico = str(ctx.get("topico_contexto") or "")
     if topico == "cancelamento" and decisao.objetivo_resposta in {

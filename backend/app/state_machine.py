@@ -461,6 +461,57 @@ def _decidir_pos_venda(
     )
 
 
+def _dados_plano_ctx(plano_ctx: dict[str, Any] | None) -> dict[str, Any]:
+    """Persiste plano citado/resolvido no estado para confirmação posterior."""
+    if not isinstance(plano_ctx, dict) or plano_ctx.get("id") is None:
+        return {}
+    nome = _texto(plano_ctx.get("nome"))
+    pid = int(plano_ctx["id"])
+    return {
+        "plano_em_negociacao": nome,
+        "plano_em_negociacao_id": pid,
+        "plano_apresentado": nome,
+        "plano_apresentado_id": pid,
+    }
+
+
+def _resolver_pid_plano(nome: str, estado: dict[str, Any]) -> tuple[str, int | None]:
+    from app.plans import resolver_plano
+    from app.plans_catalog import listar_planos
+
+    ref = _texto(nome)
+    if not ref:
+        return "", None
+    res = resolver_plano(ref, listar_planos(estado))
+    if res.get("evento") == "PLANO_RESOLVIDO" and res.get("plano"):
+        p = res["plano"]
+        return _texto(p.get("nome")) or ref, int(p["id"])
+    return ref, None
+
+
+def _referencia_mesmo_plano_confirmado(estado: dict[str, Any], referencia: str) -> bool:
+    """Cliente repetiu o plano já confirmado — não reabrir vendas."""
+    confirmado = _texto(estado.get("plano_confirmado"))
+    pid = estado.get("plano_confirmado_id")
+    ref = _texto(referencia)
+    if not confirmado or not ref:
+        return False
+    from app.plans import normalizar_referencia_plano, resolver_plano
+    from app.plans_catalog import listar_planos
+
+    res = resolver_plano(ref, listar_planos(estado))
+    if res.get("evento") == "PLANO_RESOLVIDO" and res.get("plano"):
+        p = res["plano"]
+        if pid is not None and int(p.get("id") or -1) == int(pid):
+            return True
+        conf_n = normalizar_referencia_plano(confirmado).casefold()
+        nome_n = normalizar_referencia_plano(str(p.get("nome") or "")).casefold()
+        return bool(conf_n and nome_n and conf_n == nome_n)
+    ref_n = normalizar_referencia_plano(ref).casefold()
+    conf_n = normalizar_referencia_plano(confirmado).casefold()
+    return bool(ref_n and conf_n and (ref_n == conf_n or ref_n in conf_n or conf_n in ref_n))
+
+
 def _salvar_desvio_cadastro(estado: dict[str, Any], dados: dict[str, Any]) -> dict[str, Any]:
     """Guarda posição do cadastro antes de ir para troca de plano."""
     d = dict(dados)
@@ -1324,6 +1375,11 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     ):
         nome = _texto(estado.get("plano_em_negociacao") or estado.get("plano_apresentado"))
         pid = estado.get("plano_em_negociacao_id") or estado.get("plano_apresentado_id")
+        if nome and pid is None:
+            nome_res, pid_res = _resolver_pid_plano(nome, estado)
+            if pid_res is not None:
+                nome = nome_res or nome
+                pid = pid_res
         if nome and pid is not None:
             d = dict(dados_base)
             d["plano_confirmado"] = nome
@@ -1575,6 +1631,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                 if identificacao_preco
                 else "Pergunta sobre o que inclui o plano"
             )
+            d.update(_dados_plano_ctx(plano_ctx if isinstance(plano_ctx, dict) else {}))
             return dec(
                 "RESPONDER",
                 "INFORMAR_DETALHES_PLANO",
@@ -1595,6 +1652,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     # Cadastro — cancelamento/mudança de endereço ≠ troca de plano (ex.: "taxa se cancelar")
     if fase == "cadastro":
         from app.parser import (
+            eh_confirmacao,
             eh_pergunta_cancelamento,
             eh_pergunta_mudanca_endereco,
             extrair_referencia_plano_na_mensagem,
@@ -1608,6 +1666,29 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
         topico_aux = str(resolucao.get("topico_contexto") or "")
         pendente_aux = _proximo_cadastro(estado, dados_base) or aguardando
         ref_plano_aux = extrair_referencia_plano_na_mensagem(texto_aux, msg_aux)
+
+        # Após explicar cancelamento, "sim/si" = continuar cadastro (não reconfirmar plano)
+        if (
+            aguardando != "confirmacao_dados"
+            and (flags.get("confirmacao") or eh_confirmacao(msg_aux))
+            and (
+                estado.get("cancelamento_esclarecido")
+                or topico_aux == "cancelamento"
+                or _texto(estado.get("ultimo_topico")) == "cancelamento"
+            )
+            and not ref_plano_aux
+            and not cadastro.get("campos_informados")
+        ):
+            faltando = _proximo_cadastro(estado, dados_base) or aguardando
+            return dec(
+                "RESPONDER",
+                _objetivo_pedir(str(faltando)),
+                "cadastro",
+                faltando,
+                dict(dados_base),
+                "Continuar cadastro após dúvida de cancelamento",
+                "CADASTRO",
+            )
 
         if not ref_plano_aux and eh_pergunta_cancelamento(
             msg_aux, msg_aux, topico=topico_aux
@@ -1670,23 +1751,28 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
 
         if not pular_resolver:
             if estado.get("tem_cobertura") is True:
-                d = _salvar_desvio_cadastro(estado, dados_base)
-                d["limpar_plano_em_negociacao"] = True
-                if fase == "cadastro":
-                    d["invalidar_plano"] = True
-                else:
-                    d.pop("invalidar_plano", None)
                 ref = ref_msg or ref_norm or ref_bruto
-                return dec(
-                    "RESOLVER_PLANO",
-                    None,
-                    "vendas",
-                    "resultado_plano",
-                    d,
-                    "Resolver referência de plano",
-                    "GLOBAL_PLANO",
-                    contexto={"referencia_plano": ref},
-                )
+                if fase == "cadastro" and estado.get("plano_confirmado") and _referencia_mesmo_plano_confirmado(
+                    estado, ref
+                ):
+                    pass
+                else:
+                    d = _salvar_desvio_cadastro(estado, dados_base)
+                    d["limpar_plano_em_negociacao"] = True
+                    if fase == "cadastro":
+                        d["invalidar_plano"] = True
+                    else:
+                        d.pop("invalidar_plano", None)
+                    return dec(
+                        "RESOLVER_PLANO",
+                        None,
+                        "vendas",
+                        "resultado_plano",
+                        d,
+                        "Resolver referência de plano",
+                        "GLOBAL_PLANO",
+                        contexto={"referencia_plano": ref},
+                    )
         if not pular_resolver:
             if loc.get("completa") and estado.get("tem_cobertura") is not False:
                 return dec(
@@ -1783,12 +1869,14 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             plano_ctx, ref, _ = _resolver_plano_da_pergunta(
                 estado, resolucao, usar_fallback_negociacao=True
             )
+            d_preco = dict(dados_base)
+            d_preco.update(_dados_plano_ctx(plano_ctx if isinstance(plano_ctx, dict) else {}))
             return dec(
                 "RESPONDER",
                 "INFORMAR_PRECO_PLANO_E_RETOMAR",
                 fase,
                 aguardando or "confirmacao_plano",
-                dict(dados_base),
+                d_preco,
                 "Pergunta de preço do plano",
                 "GLOBAL_PERGUNTA",
                 contexto={

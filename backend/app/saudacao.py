@@ -92,23 +92,23 @@ def mensagem_cumprimento_retomar(mensagem_cliente: str, pendente: str = "") -> s
     else:
         cumprimento = frase_cumprimento(mensagem_cliente, usar_relogio_se_padrao=False)
 
-    retomadas = {
-        "localizacao": "Me passa sua *cidade* e *bairro* pra eu seguir?",
-        "confirmacao_plano": "Quer confirmar o plano que te indiquei?",
-        "escolha_plano": "Qual plano você prefere?",
-        "lista_planos": "Qual plano você prefere?",
-        "nome": "Me passa seu *nome completo* e o *CPF*? Pode ser na mesma mensagem.",
-        "cpf": "Me envia seu *CPF*?",
-        "email": "Qual o seu *e-mail*?",
-        "telefone": "Qual o seu *telefone com DDD*?",
-        "data_nascimento": "Qual a sua *data de nascimento*?",
-        "cep": "Qual o *CEP*?",
-        "rua": "Qual o nome da *rua*?",
-        "numero": "Qual o *número* do endereço?",
-        "confirmacao_dados": "Os dados estão corretos?",
-        "escolha_horario": "Qual horário de instalação fica melhor pra você?",
-        "confirmacao_horario": "Posso confirmar esse horário?",
-        "duvidas": "Ficou alguma dúvida?",
+    from app.cadastro_mensagens import par_de, pedir_campos
+
+    cadastro_campos = {
+        "nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero",
     }
-    retoma = retomadas.get(pendente or "", "Como posso te ajudar?")
+    if pendente in cadastro_campos:
+        retoma = pedir_campos(list(par_de(pendente) or [pendente]))
+    else:
+        retomadas = {
+            "localizacao": "Me passa sua *cidade* e *bairro* pra eu seguir?",
+            "confirmacao_plano": "Quer confirmar o plano que te indiquei?",
+            "escolha_plano": "Qual plano você prefere?",
+            "lista_planos": "Qual plano você prefere?",
+            "confirmacao_dados": "Os dados estão corretos?",
+            "escolha_horario": "Qual horário de instalação fica melhor pra você?",
+            "confirmacao_horario": "Posso confirmar esse horário?",
+            "duvidas": "Ficou alguma dúvida?",
+        }
+        retoma = retomadas.get(pendente or "", "Como posso te ajudar?")
     return f"{cumprimento}\n\n{retoma}"

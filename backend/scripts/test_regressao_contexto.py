@@ -876,6 +876,54 @@ def test_quanto_e_nao_anota_cpf() -> None:
     _assert(Evento.PERGUNTA.value in i.eventos, i.eventos)
 
 
+def test_si_e_confirmacao() -> None:
+    _assert(eh_confirmacao("Si"), "Si")
+    _assert(eh_confirmacao("si"), "si")
+
+
+def test_mov_essencial_repetido_no_cadastro_nao_reabre_vendas() -> None:
+    from app.state_machine import _referencia_mesmo_plano_confirmado
+
+    estado = {
+        "fase": "cadastro",
+        "plano_confirmado": "MOV ESSENCIAL",
+        "plano_confirmado_id": 1214,
+        "tem_cobertura": True,
+        "nome": "Edrei testes",
+    }
+    _assert(_referencia_mesmo_plano_confirmado(estado, "mov essencial"), "mov essencial")
+    i = parse_interpretacao(
+        _raw({"eventos": ["PLANO_INFORMADO"], "dados": {"plano": "mov essencial"}, "confianca": 0.9}),
+        "Mov essencial",
+        estado,
+    )
+    res = resolver(estado, i)
+    res["mensagem"] = "Mov essencial"
+    dec = decidir(estado, res)
+    _assert(dec.acao != "RESOLVER_PLANO", f"{dec.acao} {dec.motivo}")
+
+
+def test_sim_apos_cancelamento_no_cadastro_continua() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "cpf",
+        "nome": "Edrei testes",
+        "plano_confirmado": "MOV ESSENCIAL",
+        "plano_confirmado_id": 1214,
+        "cancelamento_esclarecido": True,
+        "ultimo_topico": "cancelamento",
+        "tem_cobertura": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Si",
+        {"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.fase == "cadastro", dec.fase)
+    _assert(dec.aguardando == "cpf", dec.aguardando)
+    _assert(dec.objetivo_resposta == "PEDIR_CPF", dec.objetivo_resposta)
+
+
 def test_oi_quero_instalar_nao_transfere() -> None:
     """Abertura com intenção de contratar — pede localização, não transfere."""
     msg = "Oi, quero instalar"
@@ -1792,6 +1840,9 @@ def main() -> None:
         test_cpf_11_digitos_aguardando_cpf_nao_vai_telefone,
         test_me_da_logo_nao_vai_para_nome,
         test_quanto_e_nao_anota_cpf,
+        test_si_e_confirmacao,
+        test_mov_essencial_repetido_no_cadastro_nao_reabre_vendas,
+        test_sim_apos_cancelamento_no_cadastro_continua,
         test_oi_quero_instalar_nao_transfere,
         test_quero_contratar_nao_grava_localizacao,
         test_nome_valido_continua_aceito,

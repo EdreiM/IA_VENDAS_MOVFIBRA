@@ -763,7 +763,7 @@ def eh_confirmacao(msg: str) -> bool:
         )
     ):
         return False
-    if t in CONFIRMACOES_GENERICAS:
+    if t in CONFIRMACOES_GENERICAS or t in {"si", "s", "yes", "yep", "yeah"}:
         return True
     if any(
         p in t
@@ -788,7 +788,7 @@ def eh_confirmacao(msg: str) -> bool:
     if "?" in bruto:
         return False
     primeira = t.split()[0] if t.split() else ""
-    return primeira in {"sim", "ta", "confirmo", "ok", "blz", "beleza", "fechado", "fechou"}
+    return primeira in {"sim", "si", "s", "ta", "confirmo", "ok", "blz", "beleza", "fechado", "fechou"}
 
 
 def eh_aceite_termos_explicito(msg: str) -> bool:
@@ -2118,6 +2118,18 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             # sinal para o resolver/state via campos_corrigidos / dado vazio na cidade
             if "cidade" not in campos_corrigidos:
                 campos_corrigidos.append("cidade")
+
+    # Cadastro — rua/CEP/número são endereço de instalação, não cobertura
+    if fase == "cadastro" and estado.get("plano_confirmado"):
+        tem_endereco = any(
+            texto(getattr(dados, c, "")) for c in ("rua", "numero", "cep", "complemento")
+        ) or _mensagem_tem_sinal_endereco(msg_bruto, aguardando=aguardando) or bool(
+            _extrair_rua_rotulo(msg_bruto)
+        )
+        if tem_endereco:
+            eventos = [e for e in eventos if e != Evento.LOCALIZACAO_INFORMADA.value]
+            dados.cidade = ""
+            dados.bairro = ""
 
     # Pós-venda — "não", "obrigado", "pode encerrar" ≠ dúvida
     if fase == "pos_venda" and aguardando == "duvidas":
