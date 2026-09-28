@@ -1884,8 +1884,20 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             dados_base = _dados_sem_campos_rejeitados(dados_base, campos_info)
 
         if campos_info:
+            from app.interpretacao_campo import filtrar_campos_informados
             from app.parser import sanitizar_dados_cadastro
 
+            msg_sanit = str(resolucao.get("mensagem") or resolucao.get("pergunta_original") or "")
+            campos_info, dados_base = filtrar_campos_informados(
+                campos_info,
+                dados_base,
+                msg=msg_sanit,
+                msg_bruto=msg_sanit,
+                aguardando=str(aguardando) if aguardando else None,
+                estado=estado,
+            )
+
+        if campos_info:
             msg_sanit = str(resolucao.get("mensagem") or resolucao.get("pergunta_original") or "")
             dados_base = sanitizar_dados_cadastro(dados_base, estado, msg_sanit)
             campos_info = [

@@ -789,6 +789,75 @@ def test_pergunta_instalacao_nao_e_confirmacao() -> None:
     _assert(Evento.CONFIRMACAO.value not in i.eventos, i.eventos)
 
 
+def test_me_da_logo_nao_vai_para_nome() -> None:
+    """'Me dá logo' é pedido de urgência — não é nome."""
+    estado = {"fase": "cadastro", "aguardando": "nome", "plano_confirmado": "MOV SUPER+"}
+    msg = "Me dá logo"
+    raw = _raw(
+        {
+            "eventos": ["DADO_INFORMADO"],
+            "dados": {"nome": "Me dá logo"},
+            "confianca": 0.85,
+        }
+    )
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(not i.dados.nome, f"nome indevido={i.dados.nome}")
+    _assert(Evento.PERGUNTA.value in i.eventos or Evento.OUTRO.value in i.eventos, i.eventos)
+
+
+def test_quanto_e_nao_anota_cpf() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "cpf",
+        "nome": "João Silva",
+        "plano_confirmado": "MOV SUPER+",
+    }
+    msg = "Quanto é?"
+    raw = _raw(
+        {
+            "eventos": ["DADO_INFORMADO", "PERGUNTA"],
+            "dados": {"cpf": "Quanto é"},
+            "pergunta": "Quanto é?",
+            "confianca": 0.8,
+        }
+    )
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(not i.dados.cpf, f"cpf indevido={i.dados.cpf}")
+    _assert(Evento.PERGUNTA.value in i.eventos, i.eventos)
+
+
+def test_quero_contratar_nao_grava_localizacao() -> None:
+    estado = {"fase": "viabilidade", "aguardando": "localizacao"}
+    msg = "Quero contratar"
+    raw = _raw(
+        {
+            "eventos": ["LOCALIZACAO_INFORMADA"],
+            "dados": {"cidade": "Quero contratar"},
+            "confianca": 0.7,
+        }
+    )
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(not i.dados.cidade, f"cidade indevida={i.dados.cidade}")
+    _assert(not i.dados.bairro, f"bairro indevido={i.dados.bairro}")
+
+
+def test_nome_valido_continua_aceito() -> None:
+    estado = {"fase": "cadastro", "aguardando": "nome", "plano_confirmado": "MOV SUPER+"}
+    msg = "Maria Oliveira Santos"
+    raw = _raw(
+        {
+            "eventos": ["DADO_INFORMADO"],
+            "dados": {"nome": "Maria Oliveira Santos"},
+            "confianca": 0.9,
+        }
+    )
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(
+        "Maria" in (i.dados.nome or ""),
+        f"nome deveria ser aceito, veio={i.dados.nome}",
+    )
+
+
 def test_cpf_antes_do_nome_nao_vai_para_nome() -> None:
     estado = {"fase": "cadastro", "aguardando": "nome", "plano_confirmado": "MOV ONE+"}
     msg = "604.210.790-96"
@@ -1521,6 +1590,10 @@ def main() -> None:
         test_cadastro_nao_repete_nem_troca_nome_pela_rua,
         test_nome_com_interrogacao_nao_e_duvida,
         test_pergunta_instalacao_nao_e_confirmacao,
+        test_me_da_logo_nao_vai_para_nome,
+        test_quanto_e_nao_anota_cpf,
+        test_quero_contratar_nao_grava_localizacao,
+        test_nome_valido_continua_aceito,
         test_cpf_antes_do_nome_nao_vai_para_nome,
         test_llm_nao_ecoa_estado_sem_repetir,
         test_fluxo_edrei_rua_nao_vai_pro_nome,

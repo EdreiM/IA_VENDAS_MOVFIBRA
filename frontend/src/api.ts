@@ -324,6 +324,9 @@ export type ConfigIa = {
   rag_webhook_token_configured: boolean;
   message_buffer_enabled: boolean;
   message_buffer_seconds: number;
+  inactivity_followup_enabled: boolean;
+  inactivity_followup_delay_minutes: number;
+  inactivity_followup_max: number;
 };
 
 export const fetchConfigIa = (unidade_id?: number) => {

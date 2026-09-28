@@ -119,6 +119,35 @@ def resolver_message_buffer_seconds(*, unidade_id: int | None = None) -> float:
     return max(0.5, float(get_settings().message_buffer_seconds or 3.5))
 
 
+def resolver_inactivity_followup_enabled(*, unidade_id: int | None = None) -> bool:
+    db = _cfg("inactivity_followup_enabled", "", unidade_id=unidade_id).lower()
+    if db in {"1", "true", "sim", "yes", "on"}:
+        return True
+    if db in {"0", "false", "nao", "não", "no", "off"}:
+        return False
+    return bool(get_settings().inactivity_followup_enabled)
+
+
+def resolver_inactivity_followup_delay_minutes(*, unidade_id: int | None = None) -> int:
+    raw = _cfg("inactivity_followup_delay_minutes", "", unidade_id=unidade_id).strip()
+    if raw:
+        try:
+            return max(1, min(1440, int(float(raw.replace(",", ".")))))
+        except ValueError:
+            pass
+    return max(1, int(get_settings().inactivity_followup_delay_minutes or 15))
+
+
+def resolver_inactivity_followup_max(*, unidade_id: int | None = None) -> int:
+    raw = _cfg("inactivity_followup_max", "", unidade_id=unidade_id).strip()
+    if raw:
+        try:
+            return max(1, min(10, int(float(raw.replace(",", ".")))))
+        except ValueError:
+            pass
+    return max(1, int(get_settings().inactivity_followup_max or 3))
+
+
 def resolver_rag_provider(*, unidade_id: int | None = None) -> str:
     """
     Fonte da verdade: painel.
@@ -160,6 +189,13 @@ def obter_config_ia(*, unidade_id: int | None = None) -> dict[str, Any]:
         "rag_webhook_token_configured": bool(rag_token),
         "message_buffer_enabled": resolver_message_buffer_enabled(unidade_id=unidade_id),
         "message_buffer_seconds": resolver_message_buffer_seconds(unidade_id=unidade_id),
+        "inactivity_followup_enabled": resolver_inactivity_followup_enabled(
+            unidade_id=unidade_id
+        ),
+        "inactivity_followup_delay_minutes": resolver_inactivity_followup_delay_minutes(
+            unidade_id=unidade_id
+        ),
+        "inactivity_followup_max": resolver_inactivity_followup_max(unidade_id=unidade_id),
         "env_fallback": {
             "llm_provider": settings.llm_provider,
             "openai_model": settings.openai_model,
@@ -167,6 +203,9 @@ def obter_config_ia(*, unidade_id: int | None = None) -> dict[str, Any]:
             "rag_webhook_url": settings.rag_webhook_url or "",
             "message_buffer_enabled": settings.message_buffer_enabled,
             "message_buffer_seconds": settings.message_buffer_seconds,
+            "inactivity_followup_enabled": settings.inactivity_followup_enabled,
+            "inactivity_followup_delay_minutes": settings.inactivity_followup_delay_minutes,
+            "inactivity_followup_max": settings.inactivity_followup_max,
         },
     }
 
@@ -189,6 +228,13 @@ def salvar_config_ia(dados: dict[str, Any], *, unidade_id: int | None = None) ->
         "rag_webhook_url": rag_url,
         "message_buffer_enabled": "1" if dados.get("message_buffer_enabled") else "0",
         "message_buffer_seconds": str(_normalizar_buffer_seconds(dados.get("message_buffer_seconds"), unidade_id=unidade_id)),
+        "inactivity_followup_enabled": "1" if dados.get("inactivity_followup_enabled") else "0",
+        "inactivity_followup_delay_minutes": str(
+            max(1, min(1440, int(dados.get("inactivity_followup_delay_minutes") or 15)))
+        ),
+        "inactivity_followup_max": str(
+            max(1, min(10, int(dados.get("inactivity_followup_max") or 3)))
+        ),
     }
     for k, v in plain.items():
         admin_store.set_config(k, v, unidade_id=unidade_id)

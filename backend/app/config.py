@@ -124,6 +124,11 @@ class Settings(BaseSettings):
     # Acumula mensagens rápidas (debounce) antes de 1 resposta
     message_buffer_enabled: bool = True
     message_buffer_seconds: float = 3.5
+
+    # Follow-up de inatividade (cliente parou de responder)
+    inactivity_followup_enabled: bool = False
+    inactivity_followup_delay_minutes: int = 15
+    inactivity_followup_max: int = 3
     # Webhook Chatwoot: desligado por padrão (n8n já pode agrupar; evita debounce duplo)
     chatwoot_buffer_enabled: bool = False
 

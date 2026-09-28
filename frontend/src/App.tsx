@@ -294,6 +294,9 @@ export default function App() {
     rag_webhook_token: "",
     message_buffer_enabled: true,
     message_buffer_seconds: 3.5,
+    inactivity_followup_enabled: false,
+    inactivity_followup_delay_minutes: 15,
+    inactivity_followup_max: 3,
   });
   const [iaMasks, setIaMasks] = useState({
     openai: "",
@@ -469,6 +472,9 @@ export default function App() {
       rag_webhook_token: "",
       message_buffer_enabled: c.message_buffer_enabled !== false,
       message_buffer_seconds: Number(c.message_buffer_seconds ?? 3.5),
+      inactivity_followup_enabled: !!c.inactivity_followup_enabled,
+      inactivity_followup_delay_minutes: Number(c.inactivity_followup_delay_minutes ?? 15),
+      inactivity_followup_max: Number(c.inactivity_followup_max ?? 3),
     });
     setIaMasks({
       openai: c.openai_api_key_mask || "",
@@ -953,6 +959,9 @@ export default function App() {
         rag_webhook_url: saved.rag_webhook_url || "",
         message_buffer_enabled: saved.message_buffer_enabled !== false,
         message_buffer_seconds: Number(saved.message_buffer_seconds ?? 3.5),
+        inactivity_followup_enabled: !!saved.inactivity_followup_enabled,
+        inactivity_followup_delay_minutes: Number(saved.inactivity_followup_delay_minutes ?? 15),
+        inactivity_followup_max: Number(saved.inactivity_followup_max ?? 3),
       }));
       setIaMasks({
         openai: saved.openai_api_key_mask || "",
@@ -2327,6 +2336,66 @@ export default function App() {
                       }
                     />
                     <small className="field-hint">Mín. 0,5s · máx. 30s · padrão 3,5s</small>
+                  </label>
+                </div>
+              </div>
+
+              <div className="config-box span2">
+                <strong>Follow-up de inatividade</strong>
+                <small className="field-hint">
+                  Se o cliente parar de responder, a Eva envia até 3 mensagens contextualizadas
+                  conforme a fase do atendimento. Sem retorno após a última, o atendimento é
+                  encerrado automaticamente.
+                </small>
+                <div className="form-grid" style={{ marginTop: "0.75rem" }}>
+                  <label className="check span2">
+                    <input
+                      type="checkbox"
+                      checked={iaForm.inactivity_followup_enabled}
+                      onChange={(e) =>
+                        setIaForm({
+                          ...iaForm,
+                          inactivity_followup_enabled: e.target.checked,
+                        })
+                      }
+                    />
+                    Ativar follow-up quando o cliente demorar a responder
+                  </label>
+                  <label>
+                    Tempo de espera (minutos)
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      max="1440"
+                      value={iaForm.inactivity_followup_delay_minutes}
+                      disabled={!iaForm.inactivity_followup_enabled}
+                      onChange={(e) =>
+                        setIaForm({
+                          ...iaForm,
+                          inactivity_followup_delay_minutes: Number(e.target.value),
+                        })
+                      }
+                    />
+                    <small className="field-hint">Mín. 1 min · máx. 24 h · padrão 15 min</small>
+                  </label>
+                  <label>
+                    Máximo de tentativas
+                    <input
+                      type="number"
+                      step="1"
+                      min="1"
+                      max="10"
+                      value={iaForm.inactivity_followup_max}
+                      disabled={!iaForm.inactivity_followup_enabled}
+                      onChange={(e) =>
+                        setIaForm({
+                          ...iaForm,
+                          inactivity_followup_max: Number(e.target.value),
+                        })
+                      }
+                    />
+                    <small className="field-hint">Padrão 3 · após a última, encerra o atendimento</small>
                   </label>
                 </div>
               </div>

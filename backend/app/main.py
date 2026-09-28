@@ -97,6 +97,9 @@ class ConfigIaIn(BaseModel):
     rag_webhook_token: str = ""
     message_buffer_enabled: bool = True
     message_buffer_seconds: float = 3.5
+    inactivity_followup_enabled: bool = False
+    inactivity_followup_delay_minutes: int = 15
+    inactivity_followup_max: int = 3
     unidade_id: int | None = None
 
 
@@ -269,6 +272,22 @@ def startup() -> None:
         f"pool={settings.db_pool_min_size}-{settings.db_pool_max_size}"
     )
     print("API: http://127.0.0.1:8000  |  Dash: frontend (Vite :5173)")
+    from app.inactivity_followup import iniciar_worker_inatividade
+
+    iniciar_worker_inatividade()
+
+
+@app.post("/admin/followup/processar")
+def admin_processar_followup_inatividade(
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+    unidade_id: int | None = None,
+):
+    """Dispara manualmente o sweep de follow-up (útil para teste ou cron externo)."""
+    _exigir_admin(authorization, x_admin_token)
+    from app.inactivity_followup import processar_inatividade
+
+    return {"ok": True, **processar_inatividade(unidade_id=unidade_id)}
 
 
 @app.on_event("shutdown")

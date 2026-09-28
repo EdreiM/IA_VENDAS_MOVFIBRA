@@ -386,6 +386,9 @@ def _migrar_colunas(cur: Any) -> None:
         ("imagem_plano_enviada", "INTEGER DEFAULT 0"),
         ("imagens_plano_enviadas", "TEXT DEFAULT '[]'"),
         ("unidade_id", "INTEGER"),
+        ("followup_count", "INTEGER DEFAULT 0"),
+        ("last_client_message_at", "TIMESTAMPTZ"),
+        ("last_followup_at", "TIMESTAMPTZ"),
     ]
     for nome, tipo in extras:
         if nome not in cols:
@@ -568,6 +571,7 @@ def carregar_ou_criar_estado(id_cliente: str) -> dict[str, Any]:
 
 
 def log_mensagem(id_cliente: str, remetente: str, mensagem: str) -> None:
+    now = _now()
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -575,7 +579,74 @@ def log_mensagem(id_cliente: str, remetente: str, mensagem: str) -> None:
                 INSERT INTO historico_mensagens_ia (id_cliente, remetente, mensagem, created_at)
                 VALUES (%s, %s, %s, %s)
                 """,
-                (id_cliente, remetente, mensagem, _now()),
+                (id_cliente, remetente, mensagem, now),
+            )
+            if remetente == "cliente":
+                cur.execute(
+                    """
+                    UPDATE estado_cliente_ia
+                    SET last_client_message_at = %s,
+                        followup_count = 0,
+                        updated_at = %s
+                    WHERE id_cliente = %s
+                    """,
+                    (now, now, id_cliente),
+                )
+
+
+def listar_estados_followup_candidatos(*, limite: int = 80) -> list[dict[str, Any]]:
+    """Estados onde a Eva aguarda resposta do cliente (follow-up de inatividade)."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM estado_cliente_ia
+                WHERE conversation_id IS NOT NULL
+                  AND TRIM(conversation_id) <> ''
+                  AND COALESCE(transferido_humano, 0) = 0
+                  AND COALESCE(fase, '') NOT IN ('finalizado', 'transferido')
+                  AND aguardando IS NOT NULL
+                  AND TRIM(aguardando) <> ''
+                  AND aguardando NOT LIKE 'resultado_%%'
+                ORDER BY COALESCE(last_client_message_at, updated_at) ASC
+                LIMIT %s
+                """,
+                (max(1, int(limite)),),
+            )
+            return [_row_to_dict(r) or {} for r in cur.fetchall()]
+
+
+def registrar_followup_enviado(id_cliente: str) -> None:
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE estado_cliente_ia
+                SET followup_count = COALESCE(followup_count, 0) + 1,
+                    last_followup_at = %s,
+                    updated_at = %s
+                WHERE id_cliente = %s
+                """,
+                (now, now, id_cliente),
+            )
+
+
+def marcar_encerrado_inatividade(id_cliente: str, *, motivo: str = "") -> None:
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE estado_cliente_ia
+                SET fase = 'finalizado',
+                    aguardando = NULL,
+                    motivo_transferencia = COALESCE(NULLIF(%s, ''), motivo_transferencia),
+                    updated_at = %s
+                WHERE id_cliente = %s
+                """,
+                (motivo, now, id_cliente),
             )
 
 

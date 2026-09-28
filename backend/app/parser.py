@@ -905,16 +905,25 @@ def _extrair_nome_livre(bruto: str) -> str:
     if not t or "@" in t:
         return ""
     partes = [p for p in t.split() if re.search(r"[A-Za-zÀ-ÿ]", p) and not re.search(r"\d", p)]
+    from app.validation import nome_parece_frase_invalida
+
     if len(partes) >= 2:
-        return " ".join(partes)[:120]
+        candidato = " ".join(partes)[:120]
+        if nome_parece_frase_invalida(candidato, bruto):
+            return ""
+        return candidato
     if len(partes) == 1:
         unico = partes[0]
         bloqueio = {
             "sim", "nao", "ok", "quero", "certo", "blz", "beleza", "obrigado",
             "obrigada", "valeu", "entendi", "pode", "isso", "esse", "essa",
+            "logo", "mano", "po", "aff", "puts",
         }
         if len(unico) >= 2 and normalizar_texto(unico) not in bloqueio:
-            return unico[:120]
+            candidato = unico[:120]
+            if nome_parece_frase_invalida(candidato, bruto):
+                return ""
+            return candidato
     return ""
 
 
@@ -1281,6 +1290,13 @@ def _aplicar_extracao_campo_pendente(
 
     campos_alvo = set(_campos_cadastro_a_partir_de(aguardando))
     if not campos_alvo:
+        return
+
+    from app.interpretacao_campo import mensagem_tem_intencao_nao_dado
+
+    if mensagem_tem_intencao_nao_dado(
+        msg, msg_bruto, aguardando=aguardando, fase="cadastro"
+    ) and not _texto_parece_apenas_dado_cadastro(msg_bruto, aguardando):
         return
 
     par = set(par_de(aguardando))
@@ -2185,6 +2201,20 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         and (eh_pedido_plano_promocional(msg) or eh_pedido_planos_com_desconto(msg))
     ):
         eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
+
+    from app.interpretacao_campo import aplicar_guards_interpretacao
+
+    pergunta = aplicar_guards_interpretacao(
+        dados=dados,
+        eventos=eventos,
+        pergunta=pergunta,
+        estado=estado,
+        msg=msg,
+        msg_bruto=msg_bruto,
+        aguardando=aguardando,
+        fase=fase,
+        campos_corrigidos=campos_corrigidos,
+    )
 
     return Interpretacao(
         eventos=eventos,

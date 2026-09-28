@@ -67,6 +67,56 @@ def rua_parece_frase_invalida(rua: str) -> bool:
     return any(k in t for k in _CHAVES_RUA_INVALIDA)
 
 
+_CHAVES_NOME_INVALIDO = (
+    "me da ",
+    "me dá ",
+    "me passa",
+    "me manda",
+    "cadastra",
+    "quero ver",
+    "quero contratar",
+    "da logo",
+    "dá logo",
+    "atende sim",
+    "quanto",
+    "preco",
+    "plano",
+    "planos",
+    "contratar",
+    "instalar",
+    "cancelar",
+    "multa",
+    " mano",
+    " po ",
+    "pooo",
+)
+
+_PALAVRAS_NAO_NOME = frozenset({
+    "me", "da", "de", "dá", "logo", "quero", "ver", "contratar", "mano", "po",
+    "sim", "nao", "não", "ta", "tá", "atende", "isso", "ai", "aí", "pra", "por",
+    "favor", "cadastra", "manda", "passa", "coloca", "corre", "bora", "vamo",
+    "pooo", "aff", "puts", "caraca", "bro", "vei", "cara",
+})
+
+
+def nome_parece_frase_invalida(nome: str, msg_bruto: str = "") -> bool:
+    """Frase conversacional/imperativo — não é nome de pessoa."""
+    t = _normalizar_nome(nome)
+    bruto = _normalizar_nome(msg_bruto or nome)
+    if not t:
+        return True
+    if any(k in bruto for k in _CHAVES_NOME_INVALIDO):
+        return True
+    if re.search(r"\b(me|nos|te)\s+(da|dá|passa|manda|coloca|envia)\b", bruto):
+        return True
+    partes = [p for p in t.split() if p]
+    if not partes:
+        return True
+    if all(p in _PALAVRAS_NAO_NOME for p in partes):
+        return True
+    return False
+
+
 def validar_campo(campo: str, valor: str, *, nome_cliente: str = "") -> str | None:
     """
     Retorna motivo amigável se inválido, ou None se ok.
@@ -76,6 +126,8 @@ def validar_campo(campo: str, valor: str, *, nome_cliente: str = "") -> str | No
         return None
 
     if campo == "nome":
+        if nome_parece_frase_invalida(v):
+            return "isso não parece um nome — me passa seu nome completo"
         partes = [p for p in v.split() if p]
         if len(partes) < 2:
             return "preciso do nome completo (nome e sobrenome)"
