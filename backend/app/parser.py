@@ -745,6 +745,19 @@ CHAVES_COBERTURA_INFORMATIVA = (
 )
 
 
+def eh_ack_curto(msg: str) -> bool:
+    """Confirmação curta — sim, si, certo, ok (sem pergunta embutida)."""
+    bruto = texto(msg)
+    t = normalizar_texto(bruto)
+    if not t or "?" in bruto:
+        return False
+    if t in {"sim", "si", "s", "ta", "ok", "okay", "blz", "beleza", "certo", "isso", "isso mesmo", "pode ser"}:
+        return True
+    if len(t.split()) <= 3 and eh_confirmacao(msg):
+        return True
+    return False
+
+
 def eh_confirmacao(msg: str) -> bool:
     bruto = texto(msg)
     t = normalizar_texto(bruto)
@@ -1319,10 +1332,20 @@ def _aplicar_extracao_campo_pendente(
 
     from app.interpretacao_campo import mensagem_tem_intencao_nao_dado
 
-    if mensagem_tem_intencao_nao_dado(
-        msg, msg_bruto, aguardando=aguardando, fase="cadastro"
-    ) and not _texto_parece_apenas_dado_cadastro(msg_bruto, aguardando):
+    parte_dado = _strip_trailing_question_mark(_parte_principal_dado(msg_bruto))
+    tem_dado_na_frente = bool(
+        parte_dado and _texto_parece_apenas_dado_cadastro(parte_dado, aguardando)
+    )
+    if (
+        mensagem_tem_intencao_nao_dado(msg, msg_bruto, aguardando=aguardando, fase="cadastro")
+        and not _texto_parece_apenas_dado_cadastro(msg_bruto, aguardando)
+        and not tem_dado_na_frente
+    ):
         return
+    if tem_dado_na_frente and parte_dado != msg_bruto.strip():
+        bruto = parte_dado
+        msg = normalizar_texto(parte_dado)
+        segmentos = _segmentos_mensagem(bruto)
 
     par = set(par_de(aguardando))
     duvida = tem_duvida_informativa(msg, msg_bruto, aguardando=aguardando)
@@ -2329,12 +2352,16 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     # Confirmação + dúvida na mesma mensagem — planos
     if aguardando_plano and tem_duvida_informativa(msg, msg_bruto):
         if eh_confirmacao(msg) or msg == "quero":
-            if Evento.CONFIRMACAO.value not in eventos:
-                eventos.append(Evento.CONFIRMACAO.value)
+            pergunta_parte = extrair_parte_pergunta(msg_bruto, msg) or ""
+            if pergunta_parte and len(normalizar_texto(pergunta_parte).split()) > 2:
+                eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
+            else:
+                if Evento.CONFIRMACAO.value not in eventos:
+                    eventos.append(Evento.CONFIRMACAO.value)
             if Evento.PERGUNTA.value not in eventos:
                 eventos.append(Evento.PERGUNTA.value)
             if not pergunta:
-                pergunta = extrair_parte_pergunta(msg_bruto, msg) or msg_bruto.strip()
+                pergunta = pergunta_parte or msg_bruto.strip()
             dados.plano = ""
 
     # Confirmação + dúvida — agendamento
@@ -2375,12 +2402,30 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     if fase in FASES_PROTEGIDAS_LOC and tem_duvida:
         eventos = _suprimir_troca_localizacao_informativa(eventos, dados, msg_bruto, msg)
 
-    # "Entendi" / ack curto — retoma fluxo, não desvia
-    if (
+    # Confirmação curta de horário — "certo", "ok", "si"
+    if fase == "agendamento" and aguardando == "confirmacao_horario":
+        if eh_ack_curto(msg_bruto) and Evento.DADO_INFORMADO.value not in eventos:
+            eventos = [
+                e
+                for e in eventos
+                if e
+                not in {
+                    Evento.CONVERSA_SOCIAL.value,
+                    Evento.OUTRO.value,
+                    Evento.PERGUNTA.value,
+                }
+            ]
+            if Evento.CONFIRMACAO.value not in eventos:
+                eventos.append(Evento.CONFIRMACAO.value)
+            pergunta = ""
+
+    # "Entendi" / ack curto — retoma fluxo, não desvia (exceto confirmação de horário)
+    elif (
         fase in {"cadastro", "agendamento", "pos_venda"}
         and msg in {"entendi", "ok entendi", "ta entendi", "certo", "ok", "blz", "beleza"}
         and Evento.DADO_INFORMADO.value not in eventos
         and not tem_duvida
+        and not (fase == "agendamento" and aguardando == "confirmacao_horario")
     ):
         eventos = [e for e in eventos if e not in {Evento.PEDIU_TROCAR_LOCALIZACAO.value, Evento.OUTRO.value}]
         if Evento.CONVERSA_SOCIAL.value not in eventos:

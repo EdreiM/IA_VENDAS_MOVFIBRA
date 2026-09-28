@@ -605,6 +605,41 @@ def gerar_resposta(
         valor = _fmt_money(plano.get("valor") or plano.get("valor_pontualidade"))
         return confirmar_plano_e_avancar(nome, valor)
 
+    if decisao.objetivo_resposta == "CONFIRMAR_PLANO_E_RESPONDER_PERGUNTA":
+        ctx = decisao.contexto_resposta or {}
+        plano = _plano_do_estado(estado, ctx)
+        nome = str(plano.get("nome") or estado.get("plano_confirmado") or "")
+        valor = _fmt_money(plano.get("valor") or plano.get("valor_pontualidade"))
+        preco = f" — *{valor}*" if valor else ""
+        base = f"Perfeito! Vamos seguir com o *{nome}*{preco}."
+        from app.cadastro_mensagens import pedir_campos
+
+        return f"{base} Sobre sua dúvida: vou te explicar em seguida. {pedir_campos(['nome', 'cpf'])}"
+
+    if decisao.objetivo_resposta == "CONFIRMAR_HORARIO_E_RESPONDER_PERGUNTA":
+        from app.parser import normalizar_texto
+
+        ctx = decisao.contexto_resposta or {}
+        horario = str(
+            ctx.get("horario")
+            or estado.get("horario_escolhido")
+            or decisao.atualizar_dados.get("horario_escolhido")
+            or ""
+        )
+        data = str(ctx.get("data") or estado.get("data_agendamento") or "")
+        pergunta = normalizar_texto(
+            str(ctx.get("pergunta_original") or decisao.pergunta or "")
+        )
+        base = f"Perfeito! Anotei *{horario}* no dia *{data}*."
+        if any(x in pergunta for x in ("remarc", "reagend", "mudar horario", "trocar horario")):
+            extra = (
+                " Sim, você pode remarcar depois — é só falar com a nossa equipe. "
+                "Posso confirmar esse agendamento?"
+            )
+        else:
+            extra = " Sobre sua dúvida: vou te explicar. Posso confirmar esse agendamento?"
+        return base + extra
+
     if decisao.objetivo_resposta == "ANOTAR_E_PEDIR_PROXIMO":
         ctx = decisao.contexto_resposta or {}
         dados = {**estado, **(decisao.atualizar_dados or {})}

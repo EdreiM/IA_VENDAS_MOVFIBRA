@@ -876,6 +876,97 @@ def test_quanto_e_nao_anota_cpf() -> None:
     _assert(Evento.PERGUNTA.value in i.eventos, i.eventos)
 
 
+def test_ack_curto_confirmacao_horario() -> None:
+    from app.parser import eh_ack_curto
+
+    _assert(eh_ack_curto("certo"), "certo")
+    _assert(eh_ack_curto("ok"), "ok")
+    estado = {
+        "fase": "agendamento",
+        "aguardando": "confirmacao_horario",
+        "horario_escolhido": "8h às 9h",
+        "data_agendamento": "01/09/2026",
+    }
+    i = parse_interpretacao(
+        _raw({"eventos": [], "dados": {}, "confianca": 0.9}),
+        "certo",
+        estado,
+    )
+    _assert(Evento.CONFIRMACAO.value in i.eventos, f"certo → CONFIRMACAO {i.eventos}")
+    dec = _decidir_sem_executar(
+        estado,
+        "certo",
+        {"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.acao == "INSERIR_AGENDAMENTO", f"{dec.acao} {dec.motivo}")
+
+
+def test_termos_si_aceita_quando_nao_cancelamento() -> None:
+    base = {
+        "fase": "termos",
+        "aguardando": "aceite_termos",
+        "termos_enviados": True,
+        "plano_confirmado": "MOV SUPER+",
+        "nome": "Edrei",
+    }
+    dec = _decidir_sem_executar(
+        base,
+        "Si",
+        {"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.acao == "ATIVAR_CLIENTE", f"{dec.acao} {dec.motivo}")
+
+
+def test_plano_repetido_na_confirmacao_confirma() -> None:
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "plano_em_negociacao": "MOV ESSENCIAL",
+        "plano_em_negociacao_id": 1214,
+        "tem_cobertura": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "mov essencial",
+        {"eventos": ["PLANO_INFORMADO"], "dados": {"plano": "mov essencial"}, "confianca": 0.9},
+    )
+    _assert(dec.acao != "RESOLVER_PLANO", f"{dec.acao} {dec.motivo}")
+    _assert(dec.fase == "cadastro", dec.fase)
+
+
+def test_rua_cadastro_nao_revalida_cobertura() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "rua",
+        "plano_confirmado": "MOV ESSENCIAL",
+        "cidade": "Santarem",
+        "bairro": "Centro",
+        "tem_cobertura": True,
+        "cep": "68020000",
+    }
+    msg = "Rua Sergio Henn, 872, Santarem"
+    i = parse_interpretacao(
+        _raw(
+            {
+                "eventos": ["DADO_INFORMADO"],
+                "dados": {
+                    "rua": "Rua Sergio Henn",
+                    "numero": "872",
+                    "cidade": "Santarem",
+                },
+                "confianca": 0.9,
+            }
+        ),
+        msg,
+        estado,
+    )
+    res = resolver(estado, i)
+    loc = res.get("localizacao") or {}
+    _assert(not loc.get("precisa_revalidar"), f"precisa_revalidar={loc}")
+    campos = (res.get("dados") or {}).get("campos_informados") or []
+    _assert("rua" in campos, campos)
+
+
 def test_si_e_confirmacao() -> None:
     _assert(eh_confirmacao("Si"), "Si")
     _assert(eh_confirmacao("si"), "si")
@@ -1840,6 +1931,10 @@ def main() -> None:
         test_cpf_11_digitos_aguardando_cpf_nao_vai_telefone,
         test_me_da_logo_nao_vai_para_nome,
         test_quanto_e_nao_anota_cpf,
+        test_ack_curto_confirmacao_horario,
+        test_termos_si_aceita_quando_nao_cancelamento,
+        test_plano_repetido_na_confirmacao_confirma,
+        test_rua_cadastro_nao_revalida_cobertura,
         test_si_e_confirmacao,
         test_mov_essencial_repetido_no_cadastro_nao_reabre_vendas,
         test_sim_apos_cancelamento_no_cadastro_continua,

@@ -489,6 +489,31 @@ def _resolver_pid_plano(nome: str, estado: dict[str, Any]) -> tuple[str, int | N
     return ref, None
 
 
+def _referencia_mesmo_plano_negociacao(estado: dict[str, Any], referencia: str) -> bool:
+    """Cliente repetiu o plano em negociação — tratar como confirmação, não nova escolha."""
+    negociacao = _texto(
+        estado.get("plano_em_negociacao") or estado.get("plano_apresentado")
+    )
+    pid = estado.get("plano_em_negociacao_id") or estado.get("plano_apresentado_id")
+    ref = _texto(referencia)
+    if not negociacao or not ref:
+        return False
+    from app.plans import normalizar_referencia_plano, resolver_plano
+    from app.plans_catalog import listar_planos
+
+    res = resolver_plano(ref, listar_planos(estado))
+    if res.get("evento") == "PLANO_RESOLVIDO" and res.get("plano"):
+        p = res["plano"]
+        if pid is not None and int(p.get("id") or -1) == int(pid):
+            return True
+        neg_n = normalizar_referencia_plano(negociacao).casefold()
+        nome_n = normalizar_referencia_plano(str(p.get("nome") or "")).casefold()
+        return bool(neg_n and nome_n and neg_n == nome_n)
+    ref_n = normalizar_referencia_plano(ref).casefold()
+    neg_n = normalizar_referencia_plano(negociacao).casefold()
+    return bool(ref_n and neg_n and (ref_n == neg_n or ref_n in neg_n or neg_n in ref_n))
+
+
 def _referencia_mesmo_plano_confirmado(estado: dict[str, Any], referencia: str) -> bool:
     """Cliente repetiu o plano já confirmado — não reabrir vendas."""
     confirmado = _texto(estado.get("plano_confirmado"))
@@ -647,15 +672,17 @@ def _decidir_termos(
                 topico == "cancelamento"
                 or _texto(estado.get("ultimo_topico")) == "cancelamento"
             )
+            from app.parser import eh_confirmacao
+
             aceite_claro = eh_aceite_termos_explicito(msg)
-            sim_aceite = msg_n == "sim" and not em_duvida_cancelamento
+            sim_aceite = eh_confirmacao(msg) and not em_duvida_cancelamento
             if not aceite_claro and not sim_aceite:
                 ctx = {
                     "pendente": "aceite_termos",
                     "topico_contexto": "cancelamento",
                     "esclarecer_aceite": True,
                 }
-                if em_duvida_cancelamento or msg_n == "sim":
+                if em_duvida_cancelamento or eh_confirmacao(msg):
                     return dec(
                         "RESPONDER",
                         "RESPONDER_DUVIDA_E_RETOMAR_TERMOS",
@@ -780,7 +807,7 @@ def _decidir_agendamento(
         from app.parser import normalizar_texto
 
         msg_ag = normalizar_texto(str(resolucao.get("mensagem") or ""))
-        if msg_ag in {"sim", "ok", "pode", "blz", "beleza", "certo", "isso"} and not turno:
+        if msg_ag in {"sim", "si", "s", "ok", "pode", "blz", "beleza", "certo", "isso"} and not turno:
             return dec(
                 "RESPONDER",
                 "PEDIR_HORARIO_ESPECIFICO",
@@ -1366,11 +1393,19 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
         )
 
     # Confirmação de plano (vendas) — com retorno ao cadastro se houver desvio
+    confirma_plano_vendas = (
+        flags.get("confirmacao")
+        and (not plano.get("informado") or plano.get("repetido"))
+    ) or (
+        plano.get("informado")
+        and _referencia_mesmo_plano_negociacao(
+            estado, plano.get("valor") or msg_cliente
+        )
+    )
     if (
         fase == "vendas"
         and aguardando == "confirmacao_plano"
-        and flags.get("confirmacao")
-        and (not plano.get("informado") or plano.get("repetido"))
+        and confirma_plano_vendas
         and not plano.get("pediu_troca_declarada")
     ):
         nome = _texto(estado.get("plano_em_negociacao") or estado.get("plano_apresentado"))
@@ -2077,23 +2112,27 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             if fase == "cadastro"
             else aguardando
         )
-        return dec(
-            "RESPONDER",
-            "RESPONDER_PERGUNTA_E_RETOMAR",
-            fase,
-            pendente_ef,
-            d,
-            "Pergunta do cliente",
-            "GLOBAL_PERGUNTA",
-            pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
-            contexto={
-                "pendente": pendente_ef,
-                "cpf_anotado": bool(d.get("cpf")),
-                "topico_contexto": resolucao.get("topico_contexto"),
-                "pergunta_original": resolucao.get("pergunta_original") or "",
-                "campos_anotados": anotados,
-            },
-        )
+        # Cadastro com dado anotado na mesma mensagem — salvar antes de só responder
+        if fase == "cadastro" and anotados:
+            pass
+        else:
+            return dec(
+                "RESPONDER",
+                "RESPONDER_PERGUNTA_E_RETOMAR",
+                fase,
+                pendente_ef,
+                d,
+                "Pergunta do cliente",
+                "GLOBAL_PERGUNTA",
+                pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
+                contexto={
+                    "pendente": pendente_ef,
+                    "cpf_anotado": bool(d.get("cpf")),
+                    "topico_contexto": resolucao.get("topico_contexto"),
+                    "pergunta_original": resolucao.get("pergunta_original") or "",
+                    "campos_anotados": anotados,
+                },
+            )
 
     # CPF — só valida na fase cadastro quando CPF é o pendente
     cpf_pendente = (
@@ -2326,6 +2365,26 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                         "campos_anotados": anotados,
                         "pergunta_valor_multa": pergunta_valor,
                         "cancelamento_ja_esclarecido_antes": ja_antes,
+                    },
+                )
+            if flags.get("tem_pergunta"):
+                pendente_ef = _pendente_cadastro_apos_anotacao(
+                    estado, dados_base, aguardando, anotados
+                )
+                return dec(
+                    "RESPONDER",
+                    "RESPONDER_PERGUNTA_E_RETOMAR",
+                    "cadastro",
+                    pendente_ef,
+                    dados_base,
+                    "Dado anotado + pergunta genérica",
+                    "GLOBAL_PERGUNTA",
+                    pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
+                    contexto={
+                        "pendente": pendente_ef,
+                        "topico_contexto": resolucao.get("topico_contexto"),
+                        "pergunta_original": resolucao.get("pergunta_original") or "",
+                        "campos_anotados": anotados,
                     },
                 )
             return _decisao_retomar_cadastro(

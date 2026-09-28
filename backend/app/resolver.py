@@ -168,9 +168,32 @@ def resolver(estado: dict[str, Any], interpretacao: Interpretacao) -> dict[str, 
         fase_atual == "cadastro"
         and estado.get("plano_confirmado")
         and tem_endereco_inst
-        and not localizacao_alterada
     )
-    if endereco_inst_sem_cobertura:
+    # Cidade/bairro junto com rua/CEP na mesma mensagem — eco do endereço, não troca cobertura
+    if endereco_inst_sem_cobertura and (informou_cidade or informou_bairro):
+        for c in ("cidade", "bairro"):
+            if c in para_salvar:
+                para_salvar.pop(c, None)
+            if c in campos_informados:
+                campos_informados.remove(c)
+            if c in campos_novos:
+                campos_novos.remove(c)
+            if c in campos_alterados:
+                campos_alterados.remove(c)
+            if c in campos_repetidos:
+                campos_repetidos.remove(c)
+        informou_cidade = "cidade" in campos_informados
+        informou_bairro = "bairro" in campos_informados
+        localizacao_informada = informou_cidade or informou_bairro
+        cidade_alterada = "cidade" in campos_alterados
+        bairro_alterado = "bairro" in campos_alterados
+        cidade_nova = "cidade" in campos_novos
+        bairro_novo = "bairro" in campos_novos
+        cidade_efetiva = cidade_atual
+        bairro_efetivo = bairro_atual
+        localizacao_alterada = cidade_alterada or bairro_alterado or limpar_cidade
+        localizacao_completa = bool(cidade_efetiva and bairro_efetivo)
+    if endereco_inst_sem_cobertura and not localizacao_alterada:
         localizacao_informada = False
 
     cobertura_conhecida = isinstance(estado.get("tem_cobertura"), bool)
