@@ -157,6 +157,7 @@ def _valor_parece_resposta_campo(
         _extrair_email,
         _extrair_nome_livre,
         _extrair_telefone_em_segmentos,
+        _mensagem_e_apenas_cpf,
         _mensagem_tem_sinal_endereco,
         _parece_cpf_cnpj,
         _texto_parece_apenas_dado_cadastro,
@@ -193,6 +194,10 @@ def _valor_parece_resposta_campo(
         return bool(_extrair_email(bruto)) and "@" in bruto
 
     if campo == "telefone":
+        if aguardando == "cpf":
+            return False
+        if aguardando != "telefone" and _mensagem_e_apenas_cpf(bruto):
+            return False
         return bool(_extrair_telefone_em_segmentos(bruto))
 
     if campo == "data_nascimento":
@@ -265,6 +270,9 @@ def aplicar_guards_interpretacao(
     tem_duvida = tem_duvida_informativa(
         msg, bruto, aguardando=aguardando if fase == "cadastro" else None
     )
+
+    if Evento.PLANO_INFORMADO.value in eventos or Evento.PEDIU_TROCAR_PLANO.value in eventos:
+        return pergunta
 
     for campo in list(CAMPOS_DADOS):
         if campo in corrigidos:

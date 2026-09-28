@@ -116,7 +116,23 @@ def _plano_tem_preco(plano: dict[str, Any], alvo: float) -> tuple[bool, str]:
 
 
 INTENCOES_TAG: list[tuple[tuple[str, ...], str]] = [
-    (("mais barato", "mais barata", "economico", "economica", "menor preco", "mais em conta", "o mais barato"), "mais_barato"),
+    (
+        (
+            "mais barato",
+            "mais barata",
+            "economico",
+            "economica",
+            "menor preco",
+            "mais em conta",
+            "o mais barato",
+            "plano simples",
+            "mais simples",
+            "simples",
+            "basico",
+            "básico",
+        ),
+        "mais_barato",
+    ),
     (("mais caro", "premium", "top", "melhor plano", "mais completo", "mais rapido", "mais veloz", "mais forte", "plano forte", "mais potente", "mais velocidade"), "premium"),
     (("mesh", "repetidor", "roteador", "roteadores", "dois roteadores", "2 roteadores", "dois wifi"), "mesh"),
     (("telemedicina",), "telemedicina"),
@@ -235,6 +251,29 @@ def _resolver_por_preco(
         "plano": None,
         "candidatos": [_plano_resolvido(p, criterio, 90) for p in empates],
     }
+
+
+def normalizar_referencia_plano(referencia: str) -> str:
+    """'Plano simples' → 'mais barato' (intenção, não nome literal)."""
+    ref = _norm(str(referencia or ""))
+    if not ref:
+        return ""
+    if any(
+        k in ref
+        for k in (
+            "plano simples",
+            "mais simples",
+            "simples",
+            "basico",
+            "economico",
+            "menor preco",
+            "mais barato",
+            "mais barata",
+            "mais em conta",
+        )
+    ):
+        return "mais barato"
+    return str(referencia or "").strip()
 
 
 def _tags_da_referencia(ref: str) -> list[str]:

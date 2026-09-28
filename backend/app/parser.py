@@ -262,6 +262,11 @@ INTENCAO_PLANO_KEYWORDS = (
     "telemedicina",
     "exitlag",
     "dois wifi",
+    "plano simples",
+    "mais simples",
+    "simples",
+    "basico",
+    "economico",
 )
 
 
@@ -1112,6 +1117,10 @@ _CHAVES_MENSAGEM_PLANO = (
     "mais barata",
     "mais caro",
     "mais forte",
+    "plano simples",
+    "mais simples",
+    "simples",
+    "basico",
     "outro plano",
     "outros planos",
     "quero um",
@@ -1309,19 +1318,26 @@ def _aplicar_extracao_campo_pendente(
         if nome:
             dados.nome = nome
     if "cpf" in campos_alvo and not dados.cpf:
-        cpf = _extrair_cpf_embutido(bruto)
+        cpf = _extrair_cpf_embutido(bruto) or _extrair_cpf("", bruto)
         if cpf:
             dados.cpf = cpf
+    if "telefone" in campos_alvo and not dados.telefone:
+        if aguardando == "cpf":
+            pass
+        elif aguardando == "telefone":
+            tel = _extrair_telefone_em_segmentos(bruto)
+            if tel:
+                dados.telefone = tel
+        elif not _mensagem_e_apenas_cpf(bruto) and not _parece_cpf_cnpj("", bruto):
+            tel = _extrair_telefone_em_segmentos(bruto)
+            if tel:
+                dados.telefone = tel
     if "email" in campos_alvo and not dados.email:
         for seg in segmentos + [bruto]:
             email = _extrair_email(seg)
             if email:
                 dados.email = email
                 break
-    if "telefone" in campos_alvo and not dados.telefone:
-        tel = _extrair_telefone_em_segmentos(bruto)
-        if tel:
-            dados.telefone = tel
     if "data_nascimento" in campos_alvo and not dados.data_nascimento:
         dt = _extrair_data_nascimento(bruto)
         if dt:
@@ -1633,7 +1649,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     }
     aguardando_agenda = aguardando in {"escolha_horario", "confirmacao_horario"}
 
-    # CPF/CNPJ — só forçar extração quando estivermos pedindo CPF (evita confundir em vendas/perguntas)
+    # CPF/CNPJ — força extração quando o pendente é CPF (evita ir para telefone)
     if _parece_cpf_cnpj(msg, msg_bruto) and aguardando == "cpf":
         cpf_val = _extrair_cpf(msg, msg_bruto)
         eventos = [
@@ -1650,6 +1666,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         if Evento.DADO_INFORMADO.value not in eventos:
             eventos.append(Evento.DADO_INFORMADO.value)
         dados.cpf = cpf_val
+        dados.telefone = ""
         dados.plano = ""
         campos_corrigidos = []
         pergunta = ""
@@ -1759,7 +1776,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         (
             aguardando_plano
             or (fase == "vendas" and estado.get("tem_cobertura") is True)
-            or (fase == "cadastro" and estado.get("plano_confirmado"))
+            or (fase == "cadastro" and estado.get("tem_cobertura") is True)
         )
         and any(k in msg for k in INTENCAO_PLANO_KEYWORDS)
         and msg not in CONFIRMACOES_GENERICAS
@@ -2090,6 +2107,39 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         if not pergunta:
             pergunta = extrair_parte_pergunta(msg_bruto, msg) or msg_bruto.strip()
 
+    # Cadastro pausado — cliente quer trocar/ver plano (prioridade sobre coleta de dados)
+    pausa_cadastro_plano = False
+    if fase == "cadastro" and estado.get("tem_cobertura") is True:
+        if (
+            eh_mensagem_sobre_planos(msg, msg_bruto)
+            or Evento.PEDIU_TROCAR_PLANO.value in eventos
+            or Evento.PLANO_INFORMADO.value in eventos
+            or any(k in msg for k in INTENCAO_PLANO_KEYWORDS)
+        ) and not eh_mensagem_correcao_cadastro(msg, msg_bruto):
+            from app.plans import normalizar_referencia_plano
+
+            pausa_cadastro_plano = True
+            ref = normalizar_referencia_plano(dados.plano or msg_bruto)
+            eventos = [
+                e
+                for e in eventos
+                if e
+                not in {
+                    Evento.DADO_INFORMADO.value,
+                    Evento.PERGUNTA.value,
+                    Evento.OUTRO.value,
+                    Evento.CONFIRMACAO.value,
+                }
+            ]
+            if Evento.PLANO_INFORMADO.value not in eventos:
+                eventos.append(Evento.PLANO_INFORMADO.value)
+            dados.plano = ref or msg_bruto[:160]
+            for campo in (
+                "rua", "numero", "cep", "nome", "cpf", "email", "telefone", "data_nascimento",
+            ):
+                setattr(dados, campo, "")
+            pergunta = ""
+
     if fase == "cadastro" and (
         eh_mensagem_sobre_planos(msg, msg_bruto)
         or Evento.PEDIU_TROCAR_PLANO.value in eventos
@@ -2100,7 +2150,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
                 setattr(dados, campo, "")
 
     # Extração determinística do campo pendente (LLM falhou ou veio dado+pergunta)
-    if fase == "cadastro" and aguardando_cadastro:
+    if fase == "cadastro" and aguardando_cadastro and not pausa_cadastro_plano:
         _aplicar_extracao_campo_pendente(
             aguardando,
             msg_bruto,
@@ -2201,6 +2251,11 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         and (eh_pedido_plano_promocional(msg) or eh_pedido_planos_com_desconto(msg))
     ):
         eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
+
+    if dados.plano:
+        from app.plans import normalizar_referencia_plano
+
+        dados.plano = normalizar_referencia_plano(dados.plano) or dados.plano
 
     from app.interpretacao_campo import aplicar_guards_interpretacao
 

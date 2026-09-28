@@ -37,6 +37,20 @@ def insistencia_sem_cobertura(tentativa: int, max_tentativas: int = 3) -> str:
     )
 
 
+def prioritizar_plano_antes_cadastro(*, aguardando_cadastro: str = "") -> str:
+    pend = rotulo_pendente_cadastro(aguardando_cadastro) if aguardando_cadastro else ""
+    extra = (
+        f"\n\nDepois que confirmar o plano, retomo{' ' + pend if pend else ' o cadastro'}."
+        if aguardando_cadastro
+        else "\n\nDepois que confirmar o plano, seguimos com o cadastro."
+    )
+    return (
+        "Antes de seguir com os dados, preciso que você *escolha e confirme* "
+        "qual plano quer contratar."
+        + extra
+    )
+
+
 def informar_plano_nao_encontrado(referencia: str = "") -> str:
     ref = f" (*{referencia}*)" if referencia else ""
     return (

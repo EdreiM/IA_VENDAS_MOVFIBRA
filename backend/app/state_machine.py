@@ -1375,8 +1375,11 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     if plano.get("pediu_troca_declarada") and not plano.get("informado"):
         if estado.get("tem_cobertura") is True:
             d = _salvar_desvio_cadastro(estado, dados_base)
-            d.pop("invalidar_plano", None)
             d["limpar_plano_em_negociacao"] = True
+            if fase == "cadastro":
+                d["invalidar_plano"] = True
+            else:
+                d.pop("invalidar_plano", None)
             return dec(
                 "BUSCAR_PLANOS",
                 None,
@@ -1478,9 +1481,17 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     # Plano informado (nome/referência)
     if plano.get("informado") and not plano.get("repetido"):
         if estado.get("tem_cobertura") is True:
+            from app.plans import normalizar_referencia_plano
+
             d = _salvar_desvio_cadastro(estado, dados_base)
-            d.pop("invalidar_plano", None)
             d["limpar_plano_em_negociacao"] = True
+            if fase == "cadastro":
+                d["invalidar_plano"] = True
+            else:
+                d.pop("invalidar_plano", None)
+            ref = normalizar_referencia_plano(plano.get("valor") or msg_cliente) or (
+                plano.get("valor") or ""
+            )
             return dec(
                 "RESOLVER_PLANO",
                 None,
@@ -1489,7 +1500,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                 d,
                 "Resolver referência de plano",
                 "GLOBAL_PLANO",
-                contexto={"referencia_plano": plano.get("valor") or ""},
+                contexto={"referencia_plano": ref},
             )
         if loc.get("completa") and estado.get("tem_cobertura") is not False:
             return dec(
@@ -1930,13 +1941,45 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                         },
                     )
 
+            # Cadastro pausado — não anota CPF/telefone enquanto plano não estiver confirmado
+            if (
+                fase == "vendas"
+                and _texto(estado.get("fase_anterior")) == "cadastro"
+                and aguardando in {"confirmacao_plano", "lista_planos", "escolha_plano", "resultado_plano"}
+            ):
+                campos_cad = [c for c in campos_info if c in ORDEM_CADASTRO]
+                if campos_cad:
+                    for c in campos_cad:
+                        dados_base.pop(c, None)
+                    campos_info = [c for c in campos_info if c not in ORDEM_CADASTRO]
+                    if not campos_info:
+                        return dec(
+                            "RESPONDER",
+                            "PRIORIZAR_PLANO_ANTES_CADASTRO",
+                            "vendas",
+                            aguardando,
+                            {},
+                            "Cadastro pausado — escolher plano antes de dados",
+                            "GLOBAL_PLANO",
+                            contexto={
+                                "pendente": aguardando,
+                                "aguardando_cadastro": _texto(
+                                    estado.get("aguardando_anterior")
+                                ),
+                            },
+                        )
+
             # Se ainda não confirmou plano e está em vendas pedindo plano, só salva e retoma
-            if fase == "vendas" and aguardando in {
-                "confirmacao_plano",
-                "lista_planos",
-                "escolha_plano",
-                "resultado_plano",
-            }:
+            if (
+                fase == "vendas"
+                and aguardando in {
+                    "confirmacao_plano",
+                    "lista_planos",
+                    "escolha_plano",
+                    "resultado_plano",
+                }
+                and _texto(estado.get("fase_anterior")) != "cadastro"
+            ):
                 return dec(
                     "RESPONDER",
                     "ANOTAR_DADO_E_RETOMAR_PLANO",

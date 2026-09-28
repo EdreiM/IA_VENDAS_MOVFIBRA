@@ -442,6 +442,14 @@ def gerar_resposta(
         ctx = decisao.contexto_resposta or {}
         return informar_plano_nao_encontrado(str(ctx.get("referencia") or ""))
 
+    if decisao.objetivo_resposta == "PRIORIZAR_PLANO_ANTES_CADASTRO":
+        from app.vendas_mensagens import prioritizar_plano_antes_cadastro
+
+        ctx = decisao.contexto_resposta or {}
+        return prioritizar_plano_antes_cadastro(
+            aguardando_cadastro=str(ctx.get("aguardando_cadastro") or ""),
+        )
+
     if decisao.objetivo_resposta == "ESCLARECER_PLANO_AMBIGUO":
         ctx = decisao.contexto_resposta or {}
         return esclarecer_plano_ambiguo(list(ctx.get("candidatos") or []))

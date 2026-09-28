@@ -789,6 +789,54 @@ def test_pergunta_instalacao_nao_e_confirmacao() -> None:
     _assert(Evento.CONFIRMACAO.value not in i.eventos, i.eventos)
 
 
+def test_plano_simples_no_cadastro_vai_para_resolver() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "cpf",
+        "nome": "Isabelly Gamboa Martins",
+        "plano_confirmado": "MOV SUPER+",
+        "tem_cobertura": True,
+        "cidade": "Santarem",
+        "bairro": "Aparecida",
+    }
+    msg = "Plano simples"
+    raw = _raw(
+        {
+            "eventos": ["PLANO_INFORMADO"],
+            "dados": {"plano": "Plano simples"},
+            "confianca": 0.85,
+        }
+    )
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(Evento.PLANO_INFORMADO.value in i.eventos, i.eventos)
+    _assert(not i.dados.cpf, f"cpf indevido={i.dados.cpf}")
+    _assert(
+        "barato" in (i.dados.plano or "").casefold() or "simples" in (i.dados.plano or "").casefold(),
+        f"plano={i.dados.plano}",
+    )
+
+
+def test_cpf_11_digitos_aguardando_cpf_nao_vai_telefone() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "cpf",
+        "nome": "Isabelly Gamboa Martins",
+        "plano_confirmado": "MOV SUPER+",
+        "tem_cobertura": True,
+    }
+    msg = "03225928283"
+    raw = _raw(
+        {
+            "eventos": ["DADO_INFORMADO"],
+            "dados": {"telefone": "03225928283", "cpf": ""},
+            "confianca": 0.8,
+        }
+    )
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(i.dados.cpf == "03225928283", f"cpf={i.dados.cpf}")
+    _assert(not i.dados.telefone, f"telefone indevido={i.dados.telefone}")
+
+
 def test_me_da_logo_nao_vai_para_nome() -> None:
     """'Me dá logo' é pedido de urgência — não é nome."""
     estado = {"fase": "cadastro", "aguardando": "nome", "plano_confirmado": "MOV SUPER+"}
@@ -1590,6 +1638,8 @@ def main() -> None:
         test_cadastro_nao_repete_nem_troca_nome_pela_rua,
         test_nome_com_interrogacao_nao_e_duvida,
         test_pergunta_instalacao_nao_e_confirmacao,
+        test_plano_simples_no_cadastro_vai_para_resolver,
+        test_cpf_11_digitos_aguardando_cpf_nao_vai_telefone,
         test_me_da_logo_nao_vai_para_nome,
         test_quanto_e_nao_anota_cpf,
         test_quero_contratar_nao_grava_localizacao,
