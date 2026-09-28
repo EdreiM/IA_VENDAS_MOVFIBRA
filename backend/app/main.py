@@ -21,7 +21,7 @@ from app.config import get_settings
 from app.db import init_schema, mensagem_ja_processada, marcar_mensagem_processada, resetar_cliente, turnos_recentes
 from app.integrations import chatwoot as chatwoot_api
 from app.media_store import ensure_upload_dirs, remover_arquivo_se_local, salvar_imagem_plano
-from app.message_buffer import limpar_buffer, processar_com_buffer
+from app.message_buffer import chave_buffer, limpar_buffer, processar_com_buffer
 from app.pipeline import process_message
 from app.transfer_chatwoot import handoff_por_config
 
@@ -466,8 +466,15 @@ def chat_endpoint(body: ChatIn):
 
         from app.ia_config import resolver_message_buffer_enabled
 
+        enviar_resposta = True
         if body.buffer and resolver_message_buffer_enabled():
-            result = processar_com_buffer(id_cliente, body.mensagem, _process)
+            buf_key = chave_buffer(id_cliente, body.conversation_id)
+            result, enviar_resposta = processar_com_buffer(
+                buf_key,
+                body.mensagem,
+                _process,
+                id_cliente=id_cliente,
+            )
         else:
             result = _process(id_cliente, body.mensagem)
     except Exception as exc:  # noqa: BLE001
@@ -475,7 +482,11 @@ def chat_endpoint(body: ChatIn):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     payload = result.model_dump()
-    envio = _talvez_enviar_chatwoot(result, forcar=body.enviar_chatwoot)
+    envio = (
+        _talvez_enviar_chatwoot(result, forcar=body.enviar_chatwoot)
+        if enviar_resposta
+        else {"ok": True, "motivo": "resposta enviada pelo último webhook do buffer"}
+    )
     if envio is not None:
         payload["chatwoot_envio"] = envio
     return payload
@@ -547,14 +558,17 @@ async def webhook_chatwoot(
             message_id=message_id,
         )
 
+    enviar_resposta = True
     try:
         if chatwoot_config.resolver_buffer_enabled():
+            buf_key = chave_buffer(id_cliente, evento.get("conversation_id"))
             # Thread separada: não bloqueia o event loop — 2ª mensagem entra no debounce
-            result = await asyncio.to_thread(
+            result, enviar_resposta = await asyncio.to_thread(
                 processar_com_buffer,
-                id_cliente,
+                buf_key,
                 evento["mensagem"],
                 _process,
+                id_cliente=id_cliente,
             )
         else:
             result = await asyncio.to_thread(_process, id_cliente, evento["mensagem"])
@@ -566,7 +580,11 @@ async def webhook_chatwoot(
         marcar_mensagem_processada(message_id, id_cliente)
 
     payload = result.model_dump()
-    envio = _talvez_enviar_chatwoot(result)
+    envio = (
+        _talvez_enviar_chatwoot(result)
+        if enviar_resposta
+        else {"ok": True, "motivo": "resposta enviada pelo último webhook do buffer"}
+    )
     if envio is not None:
         payload["chatwoot_envio"] = envio
     payload["ok"] = True

@@ -309,7 +309,7 @@ export default function App() {
     inbox_id: "",
     inbound_mode: "allowlist",
     allowlist_phones: "",
-    buffer_enabled: false,
+    buffer_enabled: true,
     public_base_url: "",
     webhook_token: "",
     chatwoot_base_url: "https://chatwoot.mov.pro.br",

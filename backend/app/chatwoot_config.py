@@ -70,15 +70,16 @@ def resolver_buffer_seconds(*, unidade_id: int | None = None) -> float:
 
 
 def resolver_buffer_enabled(*, unidade_id: int | None = None) -> bool:
+    from app.ia_config import resolver_message_buffer_enabled
+
+    ia = resolver_message_buffer_enabled(unidade_id=unidade_id)
     db = _cfg("chatwoot_buffer_enabled", "", unidade_id=unidade_id).lower()
     if db in {"1", "true", "sim", "yes", "on"}:
         return True
-    if db in {"0", "false", "nao", "não", "no", "off"}:
+    if db in {"0", "false", "nao", "não", "no", "off"} and not ia:
         return False
-    from app.ia_config import resolver_message_buffer_enabled
-
-    # Sem override no painel Chatwoot → usa Config IA (evita debounce desligado por padrão)
-    return resolver_message_buffer_enabled(unidade_id=unidade_id)
+    # Config IA prevalece — evita buffer off por save acidental com checkbox desmarcado
+    return ia
 
 
 def resolver_webhook_token(*, unidade_id: int | None = None) -> str:
