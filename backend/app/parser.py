@@ -1142,13 +1142,18 @@ _CHAVES_MENSAGEM_PLANO = (
     "quanto custa",
     "instalar",
     "instalacao",
-    "taxa",
+    "taxa de instala",
+    "taxa instalacao",
 )
 
 
 def eh_mensagem_sobre_planos(msg: str, msg_bruto: str = "") -> bool:
     t = normalizar_texto(msg_bruto or msg)
     if not t:
+        return False
+    if eh_pergunta_cancelamento(msg, msg_bruto):
+        return False
+    if eh_pergunta_mudanca_endereco(msg_bruto or msg):
         return False
     if any(k in t for k in _CHAVES_MENSAGEM_PLANO):
         return True
@@ -2182,6 +2187,8 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     if fase == "cadastro" and estado.get("tem_cobertura") is True:
         if (
             not eh_pergunta_informativa_sobre_plano(msg, msg_bruto)
+            and not eh_pergunta_cancelamento(msg, msg_bruto)
+            and not eh_pergunta_mudanca_endereco(msg_bruto)
             and (
                 eh_mensagem_sobre_planos(msg, msg_bruto)
                 or Evento.PEDIU_TROCAR_PLANO.value in eventos

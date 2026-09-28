@@ -1518,6 +1518,41 @@ def test_quero_na_promocao_nao_confirma_plano_atual() -> None:
     _assert(dec.aguardando != "nome", f"aguardando={dec.aguardando}")
 
 
+def test_cancelamento_no_cadastro_nao_resolve_plano() -> None:
+    """'Taxa se cancelar' no meio do cadastro — explica multa, não busca plano."""
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "email",
+        "tem_cobertura": True,
+        "plano_confirmado": "MOV INFINITY",
+        "plano_confirmado_id": 1215,
+        "nome": "Edrei testes",
+        "cpf": "60421079096",
+        "documento_cpf_validado": True,
+    }
+    msg = "Quero tbm ver se eu tenho que pagar taxa se cancelar"
+    from app.parser import parse_interpretacao, eh_mensagem_sobre_planos
+
+    _assert(not eh_mensagem_sobre_planos(msg, msg), msg)
+    i = parse_interpretacao(
+        _raw({"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9}),
+        msg,
+        estado,
+    )
+    _assert(Evento.PLANO_INFORMADO.value not in i.eventos, i.eventos)
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(
+        dec.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR",
+        dec.objetivo_resposta,
+    )
+    txt = gerar_resposta(dec, {**estado, **(dec.atualizar_dados or {})})
+    _assert("nao encontrei um plano" not in txt.casefold(), txt)
+
+
 def test_preco_mov_up_nao_usa_plano_em_negociacao() -> None:
     estado = {
         "fase": "vendas",
@@ -1676,6 +1711,7 @@ def main() -> None:
         test_pedido_lista_completa_planos,
         test_mais_forte_resolve_premium,
         test_quero_na_promocao_nao_confirma_plano_atual,
+        test_cancelamento_no_cadastro_nao_resolve_plano,
         test_preco_mov_up_nao_usa_plano_em_negociacao,
         test_detalhe_mov_up_no_cadastro,
         test_detalhe_mov_up_na_pergunta_mostra_plano_correto,

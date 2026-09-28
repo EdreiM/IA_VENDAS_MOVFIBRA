@@ -1519,49 +1519,121 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                 },
             )
 
+    # Cadastro — cancelamento/mudança de endereço ≠ troca de plano (ex.: "taxa se cancelar")
+    if fase == "cadastro":
+        from app.parser import (
+            eh_pergunta_cancelamento,
+            eh_pergunta_mudanca_endereco,
+            extrair_referencia_plano_na_mensagem,
+            normalizar_texto,
+        )
+
+        msg_aux = str(
+            resolucao.get("mensagem") or resolucao.get("pergunta_original") or msg_cliente
+        )
+        texto_aux = normalizar_texto(msg_aux)
+        topico_aux = str(resolucao.get("topico_contexto") or "")
+        pendente_aux = _proximo_cadastro(estado, dados_base) or aguardando
+        ref_plano_aux = extrair_referencia_plano_na_mensagem(texto_aux, msg_aux)
+
+        if not ref_plano_aux and eh_pergunta_cancelamento(
+            msg_aux, msg_aux, topico=topico_aux
+        ):
+            d = dict(dados_base)
+            pergunta_valor = any(
+                x in texto_aux
+                for x in ("quanto", "valor", "ficaria", "fica", "custa", "taxa", "multa", "pagar")
+            )
+            ja_antes = bool(
+                d.get("cancelamento_esclarecido") or estado.get("cancelamento_esclarecido")
+            )
+            d["cancelamento_esclarecido"] = True
+            return dec(
+                "RESPONDER",
+                "INFORMAR_CANCELAMENTO_E_RETOMAR",
+                fase,
+                pendente_aux,
+                d,
+                "Cancelamento no cadastro — não resolver plano",
+                "GLOBAL_PERGUNTA",
+                pergunta=resolucao.get("pergunta") or msg_aux,
+                contexto={
+                    "pendente": pendente_aux,
+                    "topico_contexto": "cancelamento",
+                    "pergunta_valor_multa": pergunta_valor,
+                    "cancelamento_ja_esclarecido_antes": ja_antes,
+                },
+            )
+
+        if not ref_plano_aux and (
+            eh_pergunta_mudanca_endereco(msg_aux) or topico_aux == "mudanca_endereco"
+        ):
+            d = dict(dados_base)
+            return dec(
+                "RESPONDER",
+                "RESPONDER_PERGUNTA_E_RETOMAR",
+                fase,
+                pendente_aux,
+                d,
+                "Mudança de endereço no cadastro — não resolver plano",
+                "GLOBAL_PERGUNTA",
+                pergunta=resolucao.get("pergunta") or msg_aux,
+                contexto={
+                    "pendente": pendente_aux,
+                    "topico_contexto": "mudanca_endereco",
+                    "pergunta_original": msg_aux,
+                },
+            )
+
     # Plano informado (nome/referência)
     if plano.get("informado") and not plano.get("repetido"):
-        if estado.get("tem_cobertura") is True:
-            from app.plans import normalizar_referencia_plano
+        from app.parser import extrair_referencia_plano_na_mensagem, normalizar_texto as _norm_pl
+        from app.plans import normalizar_referencia_plano
 
-            d = _salvar_desvio_cadastro(estado, dados_base)
-            d["limpar_plano_em_negociacao"] = True
-            if fase == "cadastro":
-                d["invalidar_plano"] = True
-            else:
-                d.pop("invalidar_plano", None)
-            ref = normalizar_referencia_plano(plano.get("valor") or msg_cliente) or (
-                plano.get("valor") or ""
-            )
+        ref_bruto = _texto(plano.get("valor") or msg_cliente)
+        ref_msg = extrair_referencia_plano_na_mensagem(_norm_pl(msg_cliente), msg_cliente)
+        ref_norm = normalizar_referencia_plano(ref_bruto)
+        pular_resolver = fase == "cadastro" and not ref_msg and not ref_norm and len(ref_bruto) > 20
+
+        if not pular_resolver:
+            if estado.get("tem_cobertura") is True:
+                d = _salvar_desvio_cadastro(estado, dados_base)
+                d["limpar_plano_em_negociacao"] = True
+                if fase == "cadastro":
+                    d["invalidar_plano"] = True
+                else:
+                    d.pop("invalidar_plano", None)
+                ref = ref_msg or ref_norm or ref_bruto
+                return dec(
+                    "RESOLVER_PLANO",
+                    None,
+                    "vendas",
+                    "resultado_plano",
+                    d,
+                    "Resolver referência de plano",
+                    "GLOBAL_PLANO",
+                    contexto={"referencia_plano": ref},
+                )
+        if not pular_resolver:
+            if loc.get("completa") and estado.get("tem_cobertura") is not False:
+                return dec(
+                    "CHECAR_COBERTURA",
+                    None,
+                    "viabilidade",
+                    "resultado_cobertura",
+                    dados_base,
+                    "Plano antes da cobertura",
+                    "GLOBAL_PLANO",
+                )
             return dec(
-                "RESOLVER_PLANO",
-                None,
-                "vendas",
-                "resultado_plano",
-                d,
-                "Resolver referência de plano",
-                "GLOBAL_PLANO",
-                contexto={"referencia_plano": ref},
-            )
-        if loc.get("completa") and estado.get("tem_cobertura") is not False:
-            return dec(
-                "CHECAR_COBERTURA",
-                None,
+                "RESPONDER",
+                "PEDIR_LOCALIZACAO",
                 "viabilidade",
-                "resultado_cobertura",
+                "localizacao",
                 dados_base,
-                "Plano antes da cobertura",
+                "Precisa localização antes do plano",
                 "GLOBAL_PLANO",
             )
-        return dec(
-            "RESPONDER",
-            "PEDIR_LOCALIZACAO",
-            "viabilidade",
-            "localizacao",
-            dados_base,
-            "Precisa localização antes do plano",
-            "GLOBAL_PLANO",
-        )
 
     # Quer ver planos mas ainda falta localização/cobertura → não cai na RAG
     from app.parser import PEDIDOS_LISTA_COMPLETA, PEDIDOS_LISTAR_PLANOS, normalizar_texto
