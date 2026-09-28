@@ -129,8 +129,8 @@ class Settings(BaseSettings):
     inactivity_followup_enabled: bool = False
     inactivity_followup_delay_minutes: int = 15
     inactivity_followup_max: int = 3
-    # Webhook Chatwoot: desligado por padrão (n8n já pode agrupar; evita debounce duplo)
-    chatwoot_buffer_enabled: bool = False
+    # Webhook Chatwoot: fallback herda message_buffer_enabled quando não configurado no painel
+    chatwoot_buffer_enabled: bool = True
 
     # Chatwoot (contato + mensagens outgoing na inbox Meta)
     chatwoot_base_url: str = "https://chatwoot.mov.pro.br"

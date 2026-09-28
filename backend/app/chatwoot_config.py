@@ -75,7 +75,10 @@ def resolver_buffer_enabled(*, unidade_id: int | None = None) -> bool:
         return True
     if db in {"0", "false", "nao", "não", "no", "off"}:
         return False
-    return bool(get_settings().chatwoot_buffer_enabled)
+    from app.ia_config import resolver_message_buffer_enabled
+
+    # Sem override no painel Chatwoot → usa Config IA (evita debounce desligado por padrão)
+    return resolver_message_buffer_enabled(unidade_id=unidade_id)
 
 
 def resolver_webhook_token(*, unidade_id: int | None = None) -> str:

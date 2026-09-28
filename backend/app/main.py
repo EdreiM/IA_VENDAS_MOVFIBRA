@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import traceback
 from typing import Any
 
@@ -548,9 +549,15 @@ async def webhook_chatwoot(
 
     try:
         if chatwoot_config.resolver_buffer_enabled():
-            result = processar_com_buffer(id_cliente, evento["mensagem"], _process)
+            # Thread separada: não bloqueia o event loop — 2ª mensagem entra no debounce
+            result = await asyncio.to_thread(
+                processar_com_buffer,
+                id_cliente,
+                evento["mensagem"],
+                _process,
+            )
         else:
-            result = _process(id_cliente, evento["mensagem"])
+            result = await asyncio.to_thread(_process, id_cliente, evento["mensagem"])
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
