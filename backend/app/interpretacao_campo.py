@@ -69,10 +69,13 @@ def mensagem_tem_intencao_nao_dado(
         normalizar_texto,
         tem_duvida_informativa,
     )
+    from app.pos_venda_mensagens import eh_pedido_encerrar
 
     bruto = _texto(msg_bruto or msg)
     t = normalizar_texto(bruto)
 
+    if eh_pedido_encerrar(bruto):
+        return True
     if tem_duvida_informativa(msg, bruto, aguardando=aguardando or None):
         return True
     if eh_mensagem_sobre_planos(msg, bruto):
@@ -257,7 +260,30 @@ def aplicar_guards_interpretacao(
     Ajusta eventos (PERGUNTA vs DADO_INFORMADO).
     """
     from app.parser import extrair_parte_pergunta, tem_duvida_informativa
+    from app.pos_venda_mensagens import eh_pedido_encerrar
     from app.state_machine import ORDEM_CADASTRO
+
+    bruto_guard = _texto(msg_bruto or msg)
+    if eh_pedido_encerrar(bruto_guard):
+        for campo in CAMPOS_DADOS:
+            setattr(dados, campo, "")
+        eventos[:] = [
+            e
+            for e in eventos
+            if e
+            not in {
+                Evento.DADO_INFORMADO.value,
+                Evento.PLANO_INFORMADO.value,
+                Evento.LOCALIZACAO_INFORMADA.value,
+                Evento.CONFIRMACAO.value,
+                Evento.PERGUNTA.value,
+                Evento.OUTRO.value,
+                Evento.CONVERSA_SOCIAL.value,
+            }
+        ]
+        if Evento.NEGACAO.value not in eventos:
+            eventos.append(Evento.NEGACAO.value)
+        return ""
 
     corrigidos = {c.lower() for c in campos_corrigidos}
     aguardando = _texto(aguardando)

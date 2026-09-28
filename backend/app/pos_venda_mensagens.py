@@ -2,6 +2,72 @@
 
 from __future__ import annotations
 
+import re
+
+
+def _norm_encerrar(msg: str) -> str:
+    t = " ".join(str(msg or "").strip().casefold().split())
+    for a, b in [
+        ("á", "a"), ("à", "a"), ("ã", "a"), ("â", "a"),
+        ("é", "e"), ("ê", "e"), ("í", "i"),
+        ("ó", "o"), ("ô", "o"), ("õ", "o"),
+        ("ú", "u"), ("ç", "c"),
+    ]:
+        t = t.replace(a, b)
+    return re.sub(r"[!?.,;:]+", " ", t).strip()
+
+
+_FRASES_PEDIDO_ENCERRAR = (
+    "pode encerrar",
+    "pode finalizar",
+    "pode fechar",
+    "encerrar o atendimento",
+    "encerrar atendimento",
+    "encerrar por aqui",
+    "finalizar o atendimento",
+    "finalizar atendimento",
+    "finalizar por aqui",
+    "quero encerrar",
+    "quero finalizar",
+    "quero sair",
+    "desistir do atendimento",
+    "desistir do cadastro",
+    "nao quero continuar",
+    "não quero continuar",
+    "nao quero mais",
+    "não quero mais",
+    "cancelar o atendimento",
+    "cancelar atendimento",
+    "para o atendimento",
+    "parar o atendimento",
+    "deixa pra la",
+    "deixa pra lá",
+    "deixa quieto",
+    "esquece o atendimento",
+    "nao preciso mais",
+    "não preciso mais",
+)
+
+_ENCERRAR_CURTOS = frozenset({
+    "tchau",
+    "ate logo",
+    "até logo",
+    "ate mais",
+    "até mais",
+    "encerrar",
+    "finalizar",
+})
+
+
+def eh_pedido_encerrar(msg: str) -> bool:
+    """Cliente quer encerrar/desistir do atendimento — não é dado de cadastro."""
+    t = _norm_encerrar(msg)
+    if not t:
+        return False
+    if t in _ENCERRAR_CURTOS:
+        return True
+    return any(f in t for f in _FRASES_PEDIDO_ENCERRAR)
+
 
 def mensagem_sem_duvidas(msg: str) -> bool:
     """Cliente não tem mais dúvidas ou quer encerrar."""

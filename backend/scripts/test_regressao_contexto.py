@@ -213,6 +213,8 @@ def test_agendamento_sim_mais_duvida() -> None:
         "aguardando": "confirmacao_horario",
         "horario_escolhido": "8h às 9h",
         "data_agendamento": "01/09/2026",
+        "cadastro_completo": True,
+        "plano_confirmado": "MOV SUPER+",
     }
     i = parse_interpretacao(raw, msg, estado)
     _assert(Evento.CONFIRMACAO.value in i.eventos, "sim]+duvida → CONFIRMACAO")
@@ -543,6 +545,8 @@ def test_termos_ok_nao_lista_planos() -> None:
         "aguardando": "aceite_termos",
         "termos_enviados": True,
         "plano_confirmado": "MOV SUPER+",
+        "cadastro_completo": True,
+        "ixc_cliente_id": "12345",
         "nome": "Edrei",
         "id_contrato_ixc": "67890",
     }
@@ -886,6 +890,8 @@ def test_ack_curto_confirmacao_horario() -> None:
         "aguardando": "confirmacao_horario",
         "horario_escolhido": "8h às 9h",
         "data_agendamento": "01/09/2026",
+        "cadastro_completo": True,
+        "plano_confirmado": "MOV SUPER+",
     }
     i = parse_interpretacao(
         _raw({"eventos": [], "dados": {}, "confianca": 0.9}),
@@ -907,6 +913,8 @@ def test_termos_si_aceita_quando_nao_cancelamento() -> None:
         "aguardando": "aceite_termos",
         "termos_enviados": True,
         "plano_confirmado": "MOV SUPER+",
+        "cadastro_completo": True,
+        "ixc_cliente_id": "12345",
         "nome": "Edrei",
     }
     dec = _decidir_sem_executar(
@@ -992,6 +1000,56 @@ def test_mov_essencial_repetido_no_cadastro_nao_reabre_vendas() -> None:
     res["mensagem"] = "Mov essencial"
     dec = decidir(estado, res)
     _assert(dec.acao != "RESOLVER_PLANO", f"{dec.acao} {dec.motivo}")
+
+
+def test_encerrar_no_cadastro_nao_anota_nome() -> None:
+    from app.pos_venda_mensagens import eh_pedido_encerrar
+
+    msg = "Pode encerrar o atendimento"
+    _assert(eh_pedido_encerrar(msg), msg)
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "nome",
+        "plano_confirmado": "MOV SUPER+",
+        "plano_confirmado_id": 1214,
+        "tem_cobertura": True,
+    }
+    i = parse_interpretacao(
+        _raw(
+            {
+                "eventos": ["DADO_INFORMADO"],
+                "dados": {"nome": "Pode encerrar o atendimento"},
+                "confianca": 0.9,
+            }
+        ),
+        msg,
+        estado,
+    )
+    _assert(i.dados.nome == "", f"nome={i.dados.nome!r}")
+    _assert(Evento.NEGACAO.value in i.eventos, i.eventos)
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {"eventos": ["NEGACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.acao == "ENCERRAR_ATENDIMENTO", f"{dec.acao} {dec.motivo}")
+
+
+def test_cadastro_sem_plano_volta_vendas() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "nome",
+        "plano_em_negociacao": "MOV SUPER+",
+        "plano_em_negociacao_id": 1212,
+        "tem_cobertura": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "João Silva",
+        {"eventos": ["DADO_INFORMADO"], "dados": {"nome": "João Silva"}, "confianca": 0.9},
+    )
+    _assert(dec.fase == "vendas", dec.fase)
+    _assert(dec.objetivo_resposta == "PRIORIZAR_PLANO_ANTES_CADASTRO", dec.objetivo_resposta)
 
 
 def test_sim_apos_cancelamento_no_cadastro_continua() -> None:
@@ -1415,6 +1473,8 @@ def test_agendamento_sim_sem_horario() -> None:
         "data_agendamento": "22/09/2026",
         "horarios_manha": "[]",
         "horarios_tarde": '["16h às 17h", "17h às 18h"]',
+        "cadastro_completo": True,
+        "plano_confirmado": "MOV SUPER+",
     }
     dec = _decidir_sem_executar(
         base,
@@ -1937,6 +1997,8 @@ def main() -> None:
         test_rua_cadastro_nao_revalida_cobertura,
         test_si_e_confirmacao,
         test_mov_essencial_repetido_no_cadastro_nao_reabre_vendas,
+        test_encerrar_no_cadastro_nao_anota_nome,
+        test_cadastro_sem_plano_volta_vendas,
         test_sim_apos_cancelamento_no_cadastro_continua,
         test_oi_quero_instalar_nao_transfere,
         test_quero_contratar_nao_grava_localizacao,

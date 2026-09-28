@@ -86,6 +86,11 @@ _CHAVES_NOME_INVALIDO = (
     "instalar",
     "cancelar",
     "multa",
+    "encerrar",
+    "finalizar",
+    "atendimento",
+    "desistir",
+    "continuar",
     " mano",
     " po ",
     "pooo",
@@ -96,6 +101,7 @@ _PALAVRAS_NAO_NOME = frozenset({
     "sim", "nao", "não", "ta", "tá", "atende", "isso", "ai", "aí", "pra", "por",
     "favor", "cadastra", "manda", "passa", "coloca", "corre", "bora", "vamo",
     "pooo", "aff", "puts", "caraca", "bro", "vei", "cara",
+    "pode", "encerrar", "finalizar", "atendimento", "desistir", "continuar", "parar",
 })
 
 

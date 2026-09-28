@@ -1007,6 +1007,104 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     if fase == "finalizado":
         return dec("AGUARDAR", None, "finalizado", None, {}, "Já finalizado", "TERMINAL")
 
+    msg_cliente = str(resolucao.get("mensagem") or "")
+    from app.pos_venda_mensagens import eh_pedido_encerrar
+
+    if eh_pedido_encerrar(msg_cliente) and fase not in {"pos_venda"}:
+        return dec(
+            "ENCERRAR_ATENDIMENTO",
+            None,
+            fase,
+            "resultado_encerrar",
+            dict(dados_base),
+            "Cliente pediu encerramento do atendimento",
+            "GLOBAL_ENCERRAR",
+        )
+
+    # Funil incoerente — não gravar cadastro sem plano; não agendar/aceitar termos sem cadastro
+    cadastro_info = list((cadastro.get("campos_informados") or []))
+    if (
+        fase == "cadastro"
+        and not estado.get("plano_confirmado")
+        and (cadastro_info or aguardando in ORDEM_CADASTRO)
+    ):
+        d = dict(dados_base)
+        for c in ORDEM_CADASTRO:
+            d.pop(c, None)
+        ag_plano = (
+            "confirmacao_plano"
+            if estado.get("plano_em_negociacao_id") or estado.get("plano_apresentado_id")
+            else "resultado_plano"
+        )
+        return dec(
+            "RESPONDER",
+            "PRIORIZAR_PLANO_ANTES_CADASTRO",
+            "vendas",
+            ag_plano,
+            d,
+            "Cadastro bloqueado — plano ainda não confirmado",
+            "GLOBAL_PLANO",
+            contexto={
+                "pendente": ag_plano,
+                "aguardando_cadastro": aguardando or "nome",
+            },
+        )
+
+    avanca_agenda = (
+        aguardando in {"escolha_horario", "confirmacao_horario"}
+        and (
+            flags.get("confirmacao")
+            or flags.get("negacao")
+            or "turno_escolhido" in cadastro_info
+            or _texto(dados_base.get("turno_escolhido"))
+        )
+    )
+    if fase == "agendamento" and not estado.get("cadastro_completo") and avanca_agenda:
+        if _texto(estado.get("fase_anterior")) == "termos" or estado.get("termos_enviados"):
+            return dec(
+                "RESPONDER",
+                "PEDIR_ACEITE_TERMOS",
+                "termos",
+                "aceite_termos",
+                dict(dados_base),
+                "Agendamento bloqueado — aceite de termos pendente",
+                "TERMOS",
+                contexto={"pendente": "aceite_termos", "termos_enviados": True},
+            )
+        faltando = _proximo_cadastro(estado, dados_base) or "nome"
+        return dec(
+            "RESPONDER",
+            _objetivo_pedir(faltando),
+            "cadastro",
+            faltando,
+            dict(dados_base),
+            "Agendamento bloqueado — cadastro incompleto",
+            "CADASTRO",
+            contexto={"pendente": faltando},
+        )
+
+    if (
+        fase == "termos"
+        and not estado.get("cadastro_completo")
+        and aguardando == "aceite_termos"
+        and flags.get("confirmacao")
+    ):
+        topico_termos = _texto(
+            resolucao.get("topico_contexto") or estado.get("ultimo_topico") or ""
+        )
+        if topico_termos != "cancelamento":
+            faltando = _proximo_cadastro(estado, dados_base) or "nome"
+            return dec(
+                "RESPONDER",
+                _objetivo_pedir(faltando),
+                "cadastro",
+                faltando,
+                dict(dados_base),
+                "Termos bloqueados — cadastro incompleto",
+                "CADASTRO",
+                contexto={"pendente": faltando},
+            )
+
     # Pós-venda (após agendamento confirmado)
     if fase == "pos_venda":
         if flags.get("pediu_humano"):

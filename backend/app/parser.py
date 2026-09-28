@@ -1819,6 +1819,36 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         campos_corrigidos = []
         pergunta = ""
 
+    from app.pos_venda_mensagens import eh_pedido_encerrar
+
+    pedido_encerrar = eh_pedido_encerrar(msg_bruto) and fase not in {"transferido", "finalizado"}
+    if pedido_encerrar:
+        for campo in (
+            "cidade", "bairro", "plano", "nome", "cpf", "email", "telefone",
+            "data_nascimento", "rg", "cep", "rua", "numero", "complemento",
+            "metodo_pagamento", "data_vencimento_pref", "turno_escolhido",
+        ):
+            setattr(dados, campo, "")
+        eventos = [
+            e
+            for e in eventos
+            if e
+            not in {
+                Evento.DADO_INFORMADO.value,
+                Evento.PLANO_INFORMADO.value,
+                Evento.LOCALIZACAO_INFORMADA.value,
+                Evento.CONFIRMACAO.value,
+                Evento.PERGUNTA.value,
+                Evento.OUTRO.value,
+                Evento.CONVERSA_SOCIAL.value,
+                Evento.PEDIDO_CONTRATACAO.value,
+            }
+        ]
+        if Evento.NEGACAO.value not in eventos:
+            eventos.append(Evento.NEGACAO.value)
+        campos_corrigidos = []
+        pergunta = ""
+
     elif msg in REPETICAO_DADO and aguardando_cadastro:
         # "já disse" — reutiliza dado que já está no estado
         campo_map = {
@@ -2097,7 +2127,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         # Mantém dados.plano se já detectou o nome (contexto); não força escolha
 
     # E-mail antecipado ou em mensagem partida ("meu email" + "x@gmail.com")
-    if fase == "cadastro":
+    if fase == "cadastro" and not pedido_encerrar:
         email_detectado = _extrair_email(msg_bruto)
         if email_detectado and not _parece_cpf_cnpj(msg, msg_bruto):
             dados.email = email_detectado
@@ -2154,11 +2184,17 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             dados.cidade = ""
             dados.bairro = ""
 
+    # Encerrar atendimento — qualquer fase (cadastro, vendas, termos, agendamento)
+    if pedido_encerrar and fase != "pos_venda":
+        if Evento.NEGACAO.value not in eventos:
+            eventos.append(Evento.NEGACAO.value)
+        pergunta = ""
+
     # Pós-venda — "não", "obrigado", "pode encerrar" ≠ dúvida
     if fase == "pos_venda" and aguardando == "duvidas":
-        from app.pos_venda_mensagens import mensagem_sem_duvidas
+        from app.pos_venda_mensagens import eh_pedido_encerrar, mensagem_sem_duvidas
 
-        if mensagem_sem_duvidas(msg) or eh_recusa(msg):
+        if eh_pedido_encerrar(msg) or mensagem_sem_duvidas(msg) or eh_recusa(msg):
             eventos = [
                 e
                 for e in eventos
@@ -2333,7 +2369,8 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
 
     # Extração determinística do campo pendente (LLM falhou ou veio dado+pergunta)
     if (
-        fase == "cadastro"
+        not pedido_encerrar
+        and fase == "cadastro"
         and aguardando_cadastro
         and not pausa_cadastro_plano
         and not eh_pergunta_informativa_sobre_plano(msg, msg_bruto)
