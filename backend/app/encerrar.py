@@ -25,8 +25,31 @@ def encerrar_atendimento(estado: dict[str, Any]) -> dict[str, Any]:
             "erro": True,
         }
 
-    if provider == "webhook":
-        resultado = encerrar_atendimento_webhook(estado)
+    uid = None
+    try:
+        if estado.get("unidade_id") is not None:
+            uid = int(estado["unidade_id"])
+    except (TypeError, ValueError):
+        uid = None
+
+    from app.ferramentas_catalog import resolver_url_ferramenta
+
+    url = resolver_url_ferramenta(
+        "encerrar_atendimento",
+        unidade_id=uid,
+        fallback_env=settings.encerrar_webhook_url,
+    )
+    usar_webhook = bool(url) or provider == "webhook"
+
+    if usar_webhook:
+        if not url:
+            resultado = {
+                "resultado": "erro",
+                "motivo": "encerrar_atendimento sem webhook — cadastre no painel Ferramentas",
+                "erro": True,
+            }
+        else:
+            resultado = encerrar_atendimento_webhook(estado)
     else:
         resultado = {
             "resultado": "ok",

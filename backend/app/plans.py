@@ -194,6 +194,34 @@ def _tags_plano(plano: dict[str, Any]) -> set[str]:
     return {str(t).casefold() for t in (plano.get("tags") or [])}
 
 
+def _plano_tem_tag(plano: dict[str, Any], tag: str) -> bool:
+    aliases = _TAGS_ALIAS.get(tag, (tag,))
+    if _tags_plano(plano).intersection(aliases):
+        return True
+    blob = " ".join(
+        str(plano.get(campo) or "")
+        for campo in ("beneficios", "descricao", "nome")
+    ).casefold()
+    for alias in aliases:
+        chave = alias.replace("_", " ")
+        if alias in blob or chave in blob:
+            return True
+    return False
+
+
+def _filtrar_planos_por_tags(
+    planos: list[dict[str, Any]], tags: list[str]
+) -> list[dict[str, Any]]:
+    matches = list(planos)
+    for tag in tags:
+        filtrados = [p for p in matches if _plano_tem_tag(p, tag)]
+        if filtrados:
+            matches = filtrados
+        else:
+            return []
+    return matches
+
+
 def _resolver_por_preco(
     intencao: str,
     planos: list[dict[str, Any]],
@@ -332,23 +360,19 @@ def _resolver_por_tags(
     if not tags:
         return None
 
-    # Preço: resolve por valor, não por tag solta (evita dump do catálogo)
-    if "mais_barato" in tags:
-        return _resolver_por_preco("mais_barato", planos, plano_atual_id=plano_atual_id)
-    if "premium" in tags:
-        return _resolver_por_preco("premium", planos, plano_atual_id=plano_atual_id)
+    preco_tags = [t for t in tags if t in ("mais_barato", "premium")]
+    outras_tags = [t for t in tags if t not in ("mais_barato", "premium")]
 
     matches = list(planos)
-    for tag in tags:
-        aliases = _TAGS_ALIAS.get(tag, (tag,))
-        filtrados = [
-            p for p in matches if _tags_plano(p).intersection(aliases)
-        ]
-        if filtrados:
-            matches = filtrados
-        else:
-            # Tag pedida sem match → não “soltar” o catálogo inteiro
+    if outras_tags:
+        matches = _filtrar_planos_por_tags(matches, outras_tags)
+        if not matches:
             return None
+
+    if preco_tags:
+        return _resolver_por_preco(
+            preco_tags[0], matches, plano_atual_id=plano_atual_id
+        )
 
     if not matches:
         return None

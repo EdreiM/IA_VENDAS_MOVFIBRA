@@ -2389,16 +2389,39 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     # Confirmação + dúvida na mesma mensagem — planos
     if aguardando_plano and tem_duvida_informativa(msg, msg_bruto):
         if eh_confirmacao(msg) or msg == "quero":
-            pergunta_parte = extrair_parte_pergunta(msg_bruto, msg) or ""
-            if pergunta_parte and len(normalizar_texto(pergunta_parte).split()) > 2:
+            pergunta_parte = extrair_parte_pergunta(msg_bruto, msg) or msg_bruto.strip()
+            pergunta_n = normalizar_texto(pergunta_parte)
+            impede_confirmacao = (
+                eh_pergunta_informativa_sobre_plano(pergunta_n, pergunta_parte)
+                or eh_mensagem_sobre_planos(pergunta_n, pergunta_parte)
+                or any(k in pergunta_n for k in INTENCAO_PLANO_KEYWORDS)
+                or any(
+                    k in pergunta_n
+                    for k in (
+                        "disney",
+                        "mesh",
+                        "roteador",
+                        "inclui",
+                        "tem ",
+                        "tem?",
+                        "mais barato",
+                        "outro plano",
+                        "outra opcao",
+                    )
+                )
+                or (
+                    tem_duvida_informativa(pergunta_n, pergunta_parte)
+                    and not eh_pergunta_instalacao(pergunta_n, pergunta_parte)
+                )
+            )
+            if impede_confirmacao:
                 eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
-            else:
-                if Evento.CONFIRMACAO.value not in eventos:
-                    eventos.append(Evento.CONFIRMACAO.value)
+            elif Evento.CONFIRMACAO.value not in eventos:
+                eventos.append(Evento.CONFIRMACAO.value)
             if Evento.PERGUNTA.value not in eventos:
                 eventos.append(Evento.PERGUNTA.value)
             if not pergunta:
-                pergunta = pergunta_parte or msg_bruto.strip()
+                pergunta = pergunta_parte
             dados.plano = ""
 
     # Confirmação + dúvida — agendamento

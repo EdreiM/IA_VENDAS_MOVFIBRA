@@ -40,7 +40,9 @@ def _retomada_pendente(estado: dict[str, Any]) -> str:
     if fase == "agendamento":
         return "Qual horário de instalação fica melhor pra você?"
     if fase == "viabilidade":
-        return "Me passa sua *cidade* e *bairro* que eu verifico a cobertura."
+        from app.saudacao import texto_pedir_localizacao_instalacao
+
+        return texto_pedir_localizacao_instalacao(compacto=True)
     return "Como posso te ajudar a continuar?"
 
 

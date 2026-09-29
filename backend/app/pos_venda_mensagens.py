@@ -14,7 +14,9 @@ def _norm_encerrar(msg: str) -> str:
         ("ú", "u"), ("ç", "c"),
     ]:
         t = t.replace(a, b)
-    return re.sub(r"[!?.,;:]+", " ", t).strip()
+    t = re.sub(r"[*_~`]+", " ", t)
+    t = re.sub(r"[!?.,;:]+", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
 
 
 _FRASES_PEDIDO_ENCERRAR = (

@@ -58,28 +58,43 @@ def frase_cumprimento(mensagem: str, *, usar_relogio_se_padrao: bool = True) -> 
     return "Olá! Tudo bem?"
 
 
+def texto_pedir_localizacao_instalacao(*, compacto: bool = False) -> str:
+    """Prioriza pin de localização fixa; cidade/bairro como fallback."""
+    if compacto:
+        return (
+            "Me envia a *localização fixa* do endereço de instalação (pin no WhatsApp)? "
+            "Se não der, me passa *cidade* e *bairro*."
+        )
+    return (
+        "Para eu verificar a cobertura no endereço de instalação, "
+        "pode me enviar a *localização fixa* pelo WhatsApp?\n"
+        "(toque no *+* ou no 📎 → *Localização* → *Enviar localização*)\n\n"
+        "Se não conseguir enviar, me passa sua *cidade* e *bairro*."
+    )
+
+
 def mensagem_abertura(mensagem_cliente: str = "", *, quer_planos: bool = False) -> str:
-    """Primeira mensagem: cumprimento + apresentação + cidade/bairro."""
+    """Primeira mensagem: cumprimento + apresentação + localização."""
     from app import ia_config
 
     nome = ia_config.resolver_nome_ia()
     cumprimento = frase_cumprimento(mensagem_cliente, usar_relogio_se_padrao=True)
+    loc = texto_pedir_localizacao_instalacao()
     if quer_planos:
         return (
             f"{cumprimento} Sou a *{nome}*, atendente virtual da *MOV FIBRA*.\n\n"
-            "Claro! Pra eu te mostrar os planos da sua região, "
-            "me passa sua *cidade* e *bairro*?"
+            f"Claro! Pra te mostrar os planos certos da sua região:\n{loc}"
         )
     return (
         f"{cumprimento} Sou a *{nome}*, atendente virtual da *MOV FIBRA*.\n\n"
-        "Para eu te atender melhor, me passa sua *cidade* e *bairro*?"
+        f"{loc}"
     )
 
 
 def mensagem_pedir_local_para_planos() -> str:
     return (
-        "Claro! Pra te mostrar os planos certos da sua região, "
-        "me passa sua *cidade* e *bairro*."
+        "Claro! Pra te mostrar os planos certos da sua região:\n"
+        + texto_pedir_localizacao_instalacao()
     )
 
 
@@ -101,7 +116,7 @@ def mensagem_cumprimento_retomar(mensagem_cliente: str, pendente: str = "") -> s
         retoma = pedir_campos(list(par_de(pendente) or [pendente]))
     else:
         retomadas = {
-            "localizacao": "Me passa sua *cidade* e *bairro* pra eu seguir?",
+            "localizacao": texto_pedir_localizacao_instalacao(compacto=True),
             "confirmacao_plano": "Quer confirmar o plano que te indiquei?",
             "escolha_plano": "Qual plano você prefere?",
             "lista_planos": "Qual plano você prefere?",

@@ -246,7 +246,9 @@ def gerar_resposta(
                 f"Anotei o bairro *{bairro}*. "
                 "Qual a *cidade*?"
             )
-        return "Me passa sua *cidade* e *bairro* pra eu consultar a cobertura."
+        from app.saudacao import texto_pedir_localizacao_instalacao
+
+        return texto_pedir_localizacao_instalacao(compacto=True)
 
     if decisao.objetivo_resposta == "CUMPRIMENTAR_E_RETOMAR":
         ctx = decisao.contexto_resposta or {}
@@ -606,15 +608,54 @@ def gerar_resposta(
         return confirmar_plano_e_avancar(nome, valor)
 
     if decisao.objetivo_resposta == "CONFIRMAR_PLANO_E_RESPONDER_PERGUNTA":
+        from app.parser import eh_pergunta_instalacao, normalizar_texto
+        from app.state_machine import _detectar_beneficio_pergunta
+
         ctx = decisao.contexto_resposta or {}
         plano = _plano_do_estado(estado, ctx)
         nome = str(plano.get("nome") or estado.get("plano_confirmado") or "")
         valor = _fmt_money(plano.get("valor") or plano.get("valor_pontualidade"))
         preco = f" — *{valor}*" if valor else ""
-        base = f"Perfeito! Vamos seguir com o *{nome}*{preco}."
+        pergunta_txt = normalizar_texto(
+            str(ctx.get("pergunta_original") or decisao.pergunta or "")
+        )
+        topico = str(ctx.get("topico_contexto") or "")
+        beneficio = _detectar_beneficio_pergunta(pergunta_txt)
+        if beneficio or topico == "beneficio_plano":
+            from app.plans_catalog import listar_planos
+
+            catalogo = listar_planos(estado)
+            chave = (beneficio or "benefício").casefold().replace("+", "")
+            com = [
+                p
+                for p in catalogo
+                if chave in " ".join(str(t) for t in (p.get("tags") or [])).casefold()
+                or chave in str(p.get("beneficios") or p.get("descricao") or "").casefold()
+                or chave in str(p.get("nome") or "").casefold()
+            ]
+            return informar_planos_por_beneficio(
+                beneficio or "benefício", com, plano_atual=plano
+            )
+        if topico == "instalacao" or eh_pergunta_instalacao(
+            pergunta_txt, str(ctx.get("pergunta_original") or decisao.pergunta or "")
+        ):
+            inst = informar_instalacao_e_retomar(
+                pendente="confirmacao_plano",
+                plano_nome=nome,
+                pergunta_custo=bool(ctx.get("pergunta_custo_instalacao")),
+            )
+            from app.cadastro_mensagens import pedir_campos
+
+            return (
+                f"Perfeito! Vamos seguir com o *{nome}*{preco}.\n\n"
+                f"{inst}\n\n{pedir_campos(['nome', 'cpf'])}"
+            )
         from app.cadastro_mensagens import pedir_campos
 
-        return f"{base} Sobre sua dúvida: vou te explicar em seguida. {pedir_campos(['nome', 'cpf'])}"
+        return (
+            f"Perfeito! Vamos seguir com o *{nome}*{preco}. "
+            f"Sobre sua dúvida: vou te explicar em seguida. {pedir_campos(['nome', 'cpf'])}"
+        )
 
     if decisao.objetivo_resposta == "CONFIRMAR_HORARIO_E_RESPONDER_PERGUNTA":
         from app.parser import normalizar_texto

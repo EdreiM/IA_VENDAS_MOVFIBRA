@@ -1002,6 +1002,49 @@ def test_mov_essencial_repetido_no_cadastro_nao_reabre_vendas() -> None:
     _assert(dec.acao != "RESOLVER_PLANO", f"{dec.acao} {dec.motivo}")
 
 
+def test_encerrar_explicito_na_vendas_dispara_ferramenta() -> None:
+    """'Pode encerrar o atendimento' no meio de vendas — ação ENCERRAR, não cadastro."""
+    from app.pos_venda_mensagens import eh_pedido_encerrar
+
+    msg = "Pode encerrar o atendimento"
+    _assert(eh_pedido_encerrar(msg), msg)
+    _assert(eh_pedido_encerrar("**Pode encerrar o atendimento**"), msg)
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "tem_cobertura": True,
+        "plano_em_negociacao": "MOV SUPER+",
+        "plano_em_negociacao_id": 1212,
+        "nome": "Edrei",
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {"eventos": ["NEGACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.acao == "ENCERRAR_ATENDIMENTO", f"{dec.acao} {dec.motivo}")
+    _assert(dec.aguardando == "resultado_encerrar", dec.aguardando)
+
+
+def test_encerrar_usa_webhook_quando_url_no_painel() -> None:
+    """Com URL da ferramenta configurada, dispara webhook mesmo com provider mock."""
+    from unittest.mock import patch
+
+    from app.encerrar import encerrar_atendimento
+
+    estado = {"id_cliente": "teste-encerrar-webhook", "conversation_id": "999"}
+    with patch(
+        "app.ferramentas_catalog.resolver_url_ferramenta",
+        return_value="https://n8n.example/encerrar",
+    ), patch(
+        "app.encerrar.encerrar_atendimento_webhook",
+        return_value={"resultado": "ok", "motivo": "Encerrado", "erro": False},
+    ) as mock_hook:
+        r = encerrar_atendimento(estado)
+    _assert(r.get("resultado") == "ok", r)
+    _assert(mock_hook.called, "webhook de encerrar deveria ter sido chamado")
+
+
 def test_encerrar_no_cadastro_nao_anota_nome() -> None:
     from app.pos_venda_mensagens import eh_pedido_encerrar
 
@@ -1923,6 +1966,87 @@ def test_resolver_plano_preco_promocional_6950() -> None:
         _assert(r["plano"]["nome"] == "MOV SUPER+", f"{msg} → {r}")
 
 
+def test_beleza_mas_tem_disney_nao_confirma_plano() -> None:
+    """'Beleza mas tem disney?' — responde benefício, não pede cadastro."""
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "tem_cobertura": True,
+        "plano_em_negociacao": "MOV SUPER+",
+        "plano_em_negociacao_id": 1212,
+        "plano_apresentado": "MOV SUPER+",
+        "plano_apresentado_id": 1212,
+    }
+    msg = "Beleza mas tem disney?"
+    raw = _raw({"eventos": ["CONFIRMACAO", "PERGUNTA"], "dados": {}, "confianca": 0.9})
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(Evento.CONFIRMACAO.value not in i.eventos, f"eventos={i.eventos}")
+    _assert(Evento.PERGUNTA.value in i.eventos, f"eventos={i.eventos}")
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_PLANOS_POR_BENEFICIO", dec.objetivo_resposta)
+    _assert(dec.fase == "vendas", dec.fase)
+    _assert(dec.aguardando == "confirmacao_plano", dec.aguardando)
+    txt = gerar_resposta(dec, {**estado, **(dec.atualizar_dados or {})})
+    _assert("disney" in txt.casefold(), txt)
+    _assert("cpf" not in txt.casefold(), txt)
+
+
+def test_mais_barato_com_disney_resolve_plano() -> None:
+    planos = [
+        {"id": 1, "nome": "MOV SUPER+", "valor": 139.0, "tags": [], "beneficios": ""},
+        {"id": 2, "nome": "MOV ONE+", "valor": 149.0, "tags": ["disney"], "beneficios": "Disney+"},
+        {"id": 3, "nome": "MOV UP+", "valor": 169.0, "tags": ["disney"], "beneficios": "Disney+"},
+        {"id": 4, "nome": "MOV INFINITY", "valor": 189.0, "tags": ["disney"], "beneficios": "Disney+"},
+    ]
+    r = resolver_plano("quero o mais barato que tem disney", planos, plano_atual_id=1)
+    _assert(r.get("evento") == "PLANO_RESOLVIDO", r)
+    _assert(r["plano"]["nome"] == "MOV ONE+", r)
+
+
+def test_mais_barato_disney_dispara_resolver_nao_detalhe() -> None:
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "tem_cobertura": True,
+        "plano_em_negociacao": "MOV SUPER+",
+        "plano_em_negociacao_id": 1212,
+        "plano_apresentado": "MOV SUPER+",
+        "plano_apresentado_id": 1212,
+    }
+    msg = "Quero o mais barato que tem Disney"
+    raw = _raw({"eventos": ["PLANO_INFORMADO", "PERGUNTA"], "dados": {"plano": msg}, "confianca": 0.9})
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(
+        Evento.PLANO_INFORMADO.value in i.eventos or Evento.PERGUNTA.value in i.eventos,
+        i.eventos,
+    )
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {
+            "eventos": list(i.eventos),
+            "dados": {"plano": msg} if Evento.PLANO_INFORMADO.value in i.eventos else {},
+            "confianca": 0.9,
+        },
+    )
+    _assert(dec.acao == "RESOLVER_PLANO", f"{dec.acao} {dec.objetivo_resposta}")
+    _assert(dec.objetivo_resposta != "INFORMAR_DETALHES_PLANO", dec.objetivo_resposta)
+
+
+def test_abertura_prioriza_localizacao_fixa() -> None:
+    from app.saudacao import mensagem_abertura, texto_pedir_localizacao_instalacao
+
+    txt = mensagem_abertura("oi")
+    _assert("localização fixa" in txt.casefold(), txt)
+    _assert("cidade" in txt.casefold() and "bairro" in txt.casefold(), txt)
+    compacto = texto_pedir_localizacao_instalacao(compacto=True)
+    _assert("localização fixa" in compacto.casefold(), compacto)
+
+
 def test_listar_todos_quando_pediu_outras_opcoes() -> None:
     estado = {
         "fase": "vendas",
@@ -1958,6 +2082,10 @@ def main() -> None:
         test_detalhe_mov_up_na_pergunta_mostra_plano_correto,
         test_qual_o_de_6950_nao_trata_como_escolha,
         test_resolver_plano_preco_promocional_6950,
+        test_beleza_mas_tem_disney_nao_confirma_plano,
+        test_mais_barato_com_disney_resolve_plano,
+        test_mais_barato_disney_dispara_resolver_nao_detalhe,
+        test_abertura_prioriza_localizacao_fixa,
         test_listar_todos_quando_pediu_outras_opcoes,
         test_confirmacoes_typo,
         test_cadastro_telefone_mais_pergunta,
@@ -1997,6 +2125,8 @@ def main() -> None:
         test_rua_cadastro_nao_revalida_cobertura,
         test_si_e_confirmacao,
         test_mov_essencial_repetido_no_cadastro_nao_reabre_vendas,
+        test_encerrar_explicito_na_vendas_dispara_ferramenta,
+        test_encerrar_usa_webhook_quando_url_no_painel,
         test_encerrar_no_cadastro_nao_anota_nome,
         test_cadastro_sem_plano_volta_vendas,
         test_sim_apos_cancelamento_no_cadastro_continua,

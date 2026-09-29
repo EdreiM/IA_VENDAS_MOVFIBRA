@@ -77,7 +77,7 @@ def _resolver_plano_da_pergunta(
     ref_plano = extrair_referencia_plano_na_mensagem(texto, msg_bruta)
     ref = ref_plano or ""
     if not ref_plano and usar_fallback_negociacao:
-        if eh_pergunta_generica_plano_em_foco(texto, msg_bruta) or not ref:
+        if eh_pergunta_generica_plano_em_foco(texto, msg_bruta):
             ref = (
                 _texto(estado.get("plano_em_negociacao"))
                 or _texto(estado.get("plano_confirmado"))
@@ -111,6 +111,191 @@ def _detectar_beneficio_pergunta(texto_q: str) -> str | None:
     for keys, rotulo in mapa:
         if any(k in texto_q for k in keys):
             return rotulo
+    return None
+
+
+def _pergunta_impede_confirmacao_plano(
+    resolucao: dict[str, Any],
+    flags: dict[str, Any],
+    *,
+    plano: dict[str, Any] | None = None,
+    estado: dict[str, Any] | None = None,
+) -> bool:
+    """Dúvida sobre plano/benefício/troca — não avançar cadastro."""
+    from app.parser import (
+        INTENCAO_PLANO_KEYWORDS,
+        eh_mensagem_sobre_planos,
+        eh_pergunta_informativa_sobre_plano,
+        eh_pergunta_instalacao,
+        extrair_referencia_plano_na_mensagem,
+        normalizar_texto,
+        tem_duvida_informativa,
+    )
+    from app.plans import normalizar_referencia_plano
+
+    plano = plano or {}
+    estado = estado or {}
+    msg_bruta = str(resolucao.get("mensagem") or resolucao.get("pergunta_original") or "")
+    if plano.get("informado"):
+        ref_bruto = _texto(plano.get("valor") or msg_bruta)
+        ref_msg = extrair_referencia_plano_na_mensagem(
+            normalizar_texto(msg_bruta), msg_bruta
+        )
+        ref = ref_msg or normalizar_referencia_plano(ref_bruto) or ref_bruto
+        if ref and _referencia_mesmo_plano_negociacao(estado, ref):
+            return False
+        if ref and not plano.get("repetido"):
+            return True
+    texto_q = normalizar_texto(
+        str(resolucao.get("mensagem") or resolucao.get("pergunta") or msg_bruta)
+    )
+    if any(k in texto_q for k in INTENCAO_PLANO_KEYWORDS):
+        return True
+    if eh_mensagem_sobre_planos(texto_q, msg_bruta):
+        return True
+    if _detectar_beneficio_pergunta(texto_q):
+        return True
+    if eh_pergunta_informativa_sobre_plano(texto_q, msg_bruta):
+        return True
+    if flags.get("tem_pergunta") and tem_duvida_informativa(texto_q, msg_bruta):
+        return not eh_pergunta_instalacao(texto_q, msg_bruta, topico=str(resolucao.get("topico_contexto") or ""))
+    return False
+
+
+def _decidir_duvida_plano_vendas(
+    estado: dict[str, Any],
+    resolucao: dict[str, Any],
+    flags: dict[str, Any],
+    plano: dict[str, Any],
+    dados_base: dict[str, Any],
+    aguardando: str,
+    dec,
+) -> Any | None:
+    """Benefício, preço ou troca de plano — antes de confirmar e pedir cadastro."""
+    from app.parser import (
+        INTENCAO_PLANO_KEYWORDS,
+        PERGUNTAS_PRECO,
+        eh_pergunta_custo_instalacao,
+        eh_pergunta_instalacao,
+        eh_pergunta_preco_plano_nomeado,
+        extrair_referencia_plano_na_mensagem,
+        normalizar_texto,
+    )
+    from app.plans import normalizar_referencia_plano
+
+    if estado.get("tem_cobertura") is not True:
+        return None
+
+    msg_bruta = str(resolucao.get("mensagem") or resolucao.get("pergunta_original") or "")
+    texto_q = normalizar_texto(
+        str(resolucao.get("mensagem") or resolucao.get("pergunta") or msg_bruta)
+    )
+    topico = str(resolucao.get("topico_contexto") or "")
+    aguard = aguardando or "confirmacao_plano"
+
+    if plano.get("informado") and not plano.get("repetido"):
+        ref_bruto = _texto(plano.get("valor") or msg_bruta)
+        ref_msg = extrair_referencia_plano_na_mensagem(normalizar_texto(msg_bruta), msg_bruta)
+        ref_norm = normalizar_referencia_plano(ref_bruto)
+        ref = ref_msg or ref_norm or ref_bruto
+        if ref and not _referencia_mesmo_plano_negociacao(estado, ref):
+            d = _salvar_desvio_cadastro(estado, dict(dados_base))
+            d["limpar_plano_em_negociacao"] = True
+            d.pop("invalidar_plano", None)
+            return dec(
+                "RESOLVER_PLANO",
+                None,
+                "vendas",
+                "resultado_plano",
+                d,
+                "Cliente pediu outro plano — resolver antes de cadastro",
+                "GLOBAL_PLANO",
+                contexto={"referencia_plano": ref},
+            )
+
+    if not flags.get("tem_pergunta"):
+        return None
+
+    if topico == "cancelamento":
+        return None
+    if eh_pergunta_instalacao(texto_q, msg_bruta, topico=topico):
+        return dec(
+            "RESPONDER",
+            "INFORMAR_INSTALACAO_E_RETOMAR",
+            "vendas",
+            aguard,
+            dict(dados_base),
+            "Pergunta sobre instalação — resposta fixa e retomar plano",
+            "GLOBAL_PERGUNTA",
+            contexto={
+                "pendente": aguard,
+                "topico_contexto": "instalacao",
+                "pergunta_custo_instalacao": eh_pergunta_custo_instalacao(texto_q, msg_bruta),
+                "plano_nome": _texto(
+                    estado.get("plano_em_negociacao") or estado.get("plano_apresentado")
+                ),
+            },
+        )
+    if any(p in texto_q for p in PERGUNTAS_PRECO) or eh_pergunta_preco_plano_nomeado(
+        texto_q, msg_bruta
+    ):
+        plano_ctx, ref, _ = _resolver_plano_da_pergunta(
+            estado, resolucao, usar_fallback_negociacao=True
+        )
+        d_preco = dict(dados_base)
+        d_preco.update(_dados_plano_ctx(plano_ctx if isinstance(plano_ctx, dict) else {}))
+        return dec(
+            "RESPONDER",
+            "INFORMAR_PRECO_PLANO_E_RETOMAR",
+            "vendas",
+            aguard,
+            d_preco,
+            "Pergunta de preço do plano",
+            "GLOBAL_PERGUNTA",
+            contexto={
+                "pendente": aguard,
+                "plano": plano_ctx,
+                "referencia_plano": ref,
+                "mensagem_cliente": msg_bruta,
+            },
+        )
+
+    if any(k in texto_q for k in INTENCAO_PLANO_KEYWORDS):
+        ref = normalizar_referencia_plano(msg_bruta) or msg_bruta
+        if ref and not _referencia_mesmo_plano_negociacao(estado, ref):
+            d = _salvar_desvio_cadastro(estado, dict(dados_base))
+            d["limpar_plano_em_negociacao"] = True
+            d.pop("invalidar_plano", None)
+            return dec(
+                "RESOLVER_PLANO",
+                None,
+                "vendas",
+                "resultado_plano",
+                d,
+                "Intenção de outro plano — resolver antes de cadastro",
+                "GLOBAL_PLANO",
+                contexto={"referencia_plano": ref},
+            )
+
+    beneficio = _detectar_beneficio_pergunta(texto_q)
+    if beneficio:
+        plano_ctx, ref, _ = _resolver_plano_da_pergunta(estado, resolucao)
+        return dec(
+            "RESPONDER",
+            "INFORMAR_PLANOS_POR_BENEFICIO",
+            "vendas",
+            aguard,
+            dict(dados_base),
+            f"Pergunta sobre benefício {beneficio}",
+            "GLOBAL_PERGUNTA",
+            contexto={
+                "pendente": aguard,
+                "beneficio": beneficio,
+                "plano": plano_ctx,
+                "referencia_plano": ref,
+                "mensagem_cliente": msg_bruta,
+            },
+        )
     return None
 
 
@@ -1007,7 +1192,12 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     if fase == "finalizado":
         return dec("AGUARDAR", None, "finalizado", None, {}, "Já finalizado", "TERMINAL")
 
-    msg_cliente = str(resolucao.get("mensagem") or "")
+    msg_cliente = str(
+        resolucao.get("mensagem")
+        or resolucao.get("pergunta_original")
+        or resolucao.get("pergunta")
+        or ""
+    )
     from app.pos_venda_mensagens import eh_pedido_encerrar
 
     if eh_pedido_encerrar(msg_cliente) and fase not in {"pos_venda"}:
@@ -1490,15 +1680,28 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             contexto={"lista_completa": True},
         )
 
+    # Dúvida/troca de plano — prioridade sobre confirmação e cadastro
+    if fase == "vendas":
+        decisao_duvida = _decidir_duvida_plano_vendas(
+            estado, resolucao, flags, plano, dados_base, aguardando, dec
+        )
+        if decisao_duvida is not None:
+            return decisao_duvida
+
     # Confirmação de plano (vendas) — com retorno ao cadastro se houver desvio
     confirma_plano_vendas = (
-        flags.get("confirmacao")
-        and (not plano.get("informado") or plano.get("repetido"))
-    ) or (
-        plano.get("informado")
-        and _referencia_mesmo_plano_negociacao(
-            estado, plano.get("valor") or msg_cliente
+        (
+            flags.get("confirmacao")
+            and (not plano.get("informado") or plano.get("repetido"))
         )
+        or (
+            plano.get("informado")
+            and _referencia_mesmo_plano_negociacao(
+                estado, plano.get("valor") or msg_cliente
+            )
+        )
+    ) and not _pergunta_impede_confirmacao_plano(
+        resolucao, flags, plano=plano, estado=estado
     )
     if (
         fase == "vendas"
@@ -2147,20 +2350,50 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                         "cancelamento_ja_esclarecido_antes": ja_antes,
                     },
                 )
-            if topico == "beneficio_plano" or any(
-                k in texto_q for k in ("roteador", "direito", "comodato", "disney", "mesh", "inclui")
+            beneficio_cad = _detectar_beneficio_pergunta(texto_q)
+            if (
+                topico == "beneficio_plano"
+                or beneficio_cad
+                or any(
+                    k in texto_q
+                    for k in ("roteador", "direito", "comodato", "disney", "mesh", "inclui")
+                )
             ):
                 d = dict(dados_base)
+                rotulo = beneficio_cad or "benefício"
+                plano_ctx, ref, _ = _resolver_plano_da_pergunta(estado, resolucao)
+                if not estado.get("plano_confirmado"):
+                    return dec(
+                        "RESPONDER",
+                        "INFORMAR_PLANOS_POR_BENEFICIO",
+                        "vendas",
+                        "confirmacao_plano",
+                        d,
+                        "Benefício no cadastro sem plano fechado — voltar à escolha",
+                        "GLOBAL_PERGUNTA",
+                        contexto={
+                            "pendente": "confirmacao_plano",
+                            "beneficio": rotulo,
+                            "plano": plano_ctx,
+                            "referencia_plano": ref,
+                            "mensagem_cliente": msg_bruta,
+                        },
+                    )
                 return dec(
                     "RESPONDER",
-                    "RESPONDER_PERGUNTA_E_RETOMAR",
+                    "INFORMAR_PLANOS_POR_BENEFICIO",
                     fase,
                     pendente_ef,
                     d,
                     "Pergunta sobre benefícios/equipamentos",
                     "GLOBAL_PERGUNTA",
-                    pergunta=resolucao.get("pergunta") or resolucao.get("mensagem") or "",
-                    contexto={**ctx_perg, "topico_contexto": "beneficio_plano"},
+                    contexto={
+                        **ctx_perg,
+                        "topico_contexto": "beneficio_plano",
+                        "beneficio": rotulo,
+                        "plano": plano_ctx,
+                        "referencia_plano": ref,
+                    },
                 )
 
     # Pergunta durante agendamento (antes de processar horário)
