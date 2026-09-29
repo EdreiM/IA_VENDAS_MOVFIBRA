@@ -241,7 +241,6 @@ def _enriquecer_com_rag(
         return decisao
     if decisao.objetivo_resposta in {
         "INFORMAR_CANCELAMENTO_E_RETOMAR",
-        "CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA",
         "PEDIR_ACEITE_TERMOS",
     }:
         return decisao

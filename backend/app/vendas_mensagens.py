@@ -51,6 +51,49 @@ def prioritizar_plano_antes_cadastro(*, aguardando_cadastro: str = "") -> str:
     )
 
 
+def frase_voltar_ao_cadastro(pendente: str = "") -> str:
+    """Retomada natural após desvio (planos, dúvida)."""
+    rotulo = rotulo_pendente_cadastro(pendente) if pendente else ""
+    if rotulo:
+        return f"Beleza, voltando ao cadastro — {rotulo}"
+    return "Beleza, voltando ao cadastro."
+
+
+def informar_plano_bloqueado_pos_cadastro(plano_nome: str = "") -> str:
+    ref = f" O plano registrado é *{plano_nome}*." if plano_nome else ""
+    return (
+        f"Seu cadastro já foi concluído no sistema.{ref} "
+        "A partir daqui, *alteração de plano* precisa ser feita com nossa equipe — "
+        "posso te encaminhar para um atendente?"
+    )
+
+
+def informar_alteracao_bloqueada_pos_cadastro() -> str:
+    return (
+        "Seus dados já foram registrados no sistema e não consigo alterar "
+        "daqui pelo chat automaticamente. Posso *encaminhar você para um atendente* "
+        "da equipe para ajustar, tudo bem?"
+    )
+
+
+def confirmar_troca_plano_e_retomar_cadastro(
+    plano: dict[str, Any] | None = None,
+    *,
+    pendente: str = "nome",
+) -> str:
+    """Confirma troca de plano e retoma cadastro de forma natural."""
+    plano = plano or {}
+    nome = str(plano.get("nome") or "").strip()
+    preco = _preco_exibicao(plano) if plano else ""
+    if nome:
+        ref = f"*{nome}*" + (f" — {preco}" if preco else "")
+        intro = f"Perfeito! Anotei a troca — ficou {ref}."
+    else:
+        intro = "Perfeito! Anotei a troca de plano."
+    retomada = rotulo_pendente_cadastro(pendente) or "Quando quiser, seguimos nos seus dados."
+    return f"{intro}\n\n{retomada}"
+
+
 def informar_plano_nao_encontrado(referencia: str = "") -> str:
     ref = f" (*{referencia}*)" if referencia else ""
     return (

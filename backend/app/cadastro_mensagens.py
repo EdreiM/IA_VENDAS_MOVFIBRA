@@ -100,6 +100,7 @@ def anotar_e_pedir_proximo(
     campos_corrigidos: list[str],
     pendente: str,
     estado: dict[str, Any],
+    retomada_cadastro: bool = False,
 ) -> str:
     vistos: set[str] = set()
     teve_correcao = False
@@ -153,10 +154,20 @@ def anotar_e_pedir_proximo(
         faltam = campos_para_pedir(estado) or ([pendente] if pendente else [])
         return pedir_campos(faltam)
 
+    prefixo_retomada = ""
+    if retomada_cadastro:
+        from app.vendas_mensagens import frase_voltar_ao_cadastro
+
+        prefixo_retomada = frase_voltar_ao_cadastro(pendente)
+        if corpo:
+            return f"{corpo} {prefixo_retomada}"
     if pendente and pendente != "confirmacao_dados":
         faltam = campos_para_pedir(estado) or [pendente]
-        return f"{corpo} {pedir_campos(faltam)}"
-    return corpo
+        prox = pedir_campos(faltam)
+        if prefixo_retomada and not corpo:
+            return f"{prefixo_retomada} {prox}".strip()
+        return f"{corpo} {prox}".strip()
+    return corpo or prefixo_retomada
 
 
 def confirmar_plano_e_avancar(plano_nome: str, valor: str = "") -> str:

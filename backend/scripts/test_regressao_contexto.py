@@ -2212,8 +2212,147 @@ def test_listar_todos_quando_pediu_outras_opcoes() -> None:
     _assert(dec.acao == "LISTAR_TODOS_PLANOS", dec.acao)
 
 
+def test_plano_nao_encontrado_instalacao_redireciona() -> None:
+    """Barreira final: RESOLVER_PLANO com pergunta de instalação ≠ 'plano não encontrado'."""
+    from app.state_machine import decidir_plano_resolvido
+
+    msg = "E quando vai ser a instalação?\nTem taxa para instalar?"
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "data_nascimento",
+        "fase_anterior": "cadastro",
+        "aguardando_anterior": "data_nascimento",
+        "plano_confirmado": "MOV UP+",
+        "nome": "Edrei testes",
+        "email": "edreitestes@gmail.com",
+        "telefone": "93992219098",
+    }
+    dec = decidir_plano_resolvido(
+        {"evento": "PLANO_NAO_ENCONTRADO", "referencia": msg},
+        estado,
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR", dec.objetivo_resposta)
+    _assert(dec.fase == "cadastro", dec.fase)
+    txt = gerar_resposta(dec, estado)
+    _assert("nao encontrei um plano" not in txt.casefold(), txt)
+    _assert("instala" in txt.casefold(), txt)
+
+
+def test_plano_bloqueado_pos_cadastro() -> None:
+    estado = {
+        "fase": "termos",
+        "aguardando": "aceite_termos",
+        "cadastro_completo": True,
+        "plano_confirmado": "MOV SUPER+",
+        "plano_confirmado_id": 1212,
+        "tem_cobertura": True,
+        "nome": "João Silva",
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "quero trocar pro mov up",
+        {
+            "eventos": ["PLANO_INFORMADO", "PEDIU_TROCAR_PLANO"],
+            "dados": {"plano": "mov up"},
+            "confianca": 0.9,
+        },
+    )
+    _assert(
+        dec.objetivo_resposta == "INFORMAR_PLANO_BLOQUEADO_POS_CADASTRO",
+        dec.objetivo_resposta,
+    )
+    txt = gerar_resposta(dec, estado)
+    _assert("atendente" in txt.casefold() or "equipe" in txt.casefold(), txt)
+    _assert("super+" in txt.casefold(), txt)
+
+
+def test_alteracao_bloqueada_pos_cadastro() -> None:
+    estado = {
+        "fase": "agendamento",
+        "aguardando": "escolha_horario",
+        "cadastro_completo": True,
+        "plano_confirmado": "MOV SUPER+",
+        "nome": "João Silva",
+        "email": "joao@mail.com",
+        "tem_cobertura": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "meu email é outro@mail.com",
+        {
+            "eventos": ["DADO_INFORMADO", "CORRECAO_DADO"],
+            "dados": {"email": "outro@mail.com"},
+            "confianca": 0.9,
+        },
+    )
+    _assert(
+        dec.objetivo_resposta == "INFORMAR_ALTERACAO_BLOQUEADA_POS_CADASTRO",
+        dec.objetivo_resposta,
+    )
+    txt = gerar_resposta(dec, estado)
+    _assert("atendente" in txt.casefold() or "equipe" in txt.casefold(), txt)
+
+
+def test_troca_plano_retoma_cadastro() -> None:
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "fase_anterior": "cadastro",
+        "aguardando_anterior": "cpf",
+        "nome": "João Silva",
+        "plano_em_negociacao": "MOV UP+",
+        "plano_em_negociacao_id": 1211,
+        "plano_confirmado": "MOV ESSENCIAL",
+        "plano_confirmado_id": 1214,
+        "tem_cobertura": True,
+        "cidade": "Santarem",
+        "bairro": "Centro",
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "sim quero o up",
+        {"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(
+        dec.objetivo_resposta == "CONFIRMAR_TROCA_PLANO_E_RETOMAR_CADASTRO",
+        f"{dec.objetivo_resposta} {dec.motivo}",
+    )
+    _assert(dec.fase == "cadastro", dec.fase)
+    _assert(dec.aguardando == "cpf", dec.aguardando)
+    txt = gerar_resposta(dec, {**estado, **(dec.atualizar_dados or {})})
+    _assert("up" in txt.casefold(), txt)
+    _assert("cpf" in txt.casefold(), txt)
+
+
+def test_preco_plano_no_cadastro_retoma() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "cpf",
+        "nome": "João Silva",
+        "plano_confirmado": "MOV SUPER+",
+        "plano_confirmado_id": 1212,
+        "tem_cobertura": True,
+        "cidade": "Santarem",
+        "bairro": "Centro",
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Quanto custa o mov up?",
+        {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_PRECO_PLANO_E_RETOMAR", dec.objetivo_resposta)
+    txt = gerar_resposta(dec, {**estado, **(dec.atualizar_dados or {})})
+    _assert("up" in txt.casefold() or "149" in txt, txt)
+    _assert("voltando ao cadastro" in txt.casefold() or "cpf" in txt.casefold(), txt)
+
+
 def main() -> None:
     tests = [
+        test_plano_nao_encontrado_instalacao_redireciona,
+        test_plano_bloqueado_pos_cadastro,
+        test_alteracao_bloqueada_pos_cadastro,
+        test_troca_plano_retoma_cadastro,
+        test_preco_plano_no_cadastro_retoma,
         test_correcao_rua_natural_confirmacao_dados,
         test_plano_no_meio_do_cadastro_nao_vai_para_rua,
         test_titulo_categoria_sem_chip_indevido,

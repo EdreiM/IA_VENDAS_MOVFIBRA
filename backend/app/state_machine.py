@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.models import Decisao
+from app.models import Decisao, Evento
 from app.validation import rua_parece_eco_nome, rua_parece_frase_invalida, validar_campo
 
 TENTATIVAS_MAX = 3
@@ -913,6 +913,10 @@ def _decisao_retomar_cadastro(
         "campos_anotados": campos_anotados or [],
         "campos_corrigidos": campos_corrigidos or [],
         "pendente": faltando or "confirmacao_dados",
+        "retomada_cadastro": bool(
+            _texto(estado.get("fase_anterior")) == "cadastro"
+            or _texto(estado.get("aguardando_anterior"))
+        ),
     }
     if faltando:
         return Decisao(
@@ -1402,7 +1406,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
         and not estado.get("plano_confirmado")
         and (cadastro_info or aguardando in ORDEM_CADASTRO)
     ):
-        d = dict(dados_base)
+        d = _salvar_desvio_cadastro(estado, dict(dados_base))
         for c in ORDEM_CADASTRO:
             d.pop(c, None)
         ag_plano = (
@@ -1558,6 +1562,24 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             "Cadastro já fechado — plano não muda mais",
             "GLOBAL_PLANO",
             contexto={"plano_atual": estado.get("plano_confirmado") or ""},
+        )
+
+    eventos_res = list(resolucao.get("eventos") or [])
+    campos_info_trav = list((resolucao.get("dados") or {}).get("campos_informados") or [])
+    campos_cad_trav = [c for c in campos_info_trav if c in ORDEM_CADASTRO]
+    if _cadastro_travado(estado) and (
+        campos_cad_trav
+        or resolucao.get("correcao_efetiva")
+        or Evento.CORRECAO_DADO.value in eventos_res
+    ):
+        return dec(
+            "RESPONDER",
+            "INFORMAR_ALTERACAO_BLOQUEADA_POS_CADASTRO",
+            fase,
+            aguardando,
+            {},
+            "Cadastro já fechado — alteração de dados só com humano",
+            "GLOBAL_CADASTRO",
         )
 
     # Localização
@@ -1991,6 +2013,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                     contexto={
                         "plano": {"nome": nome},
                         "pendente": retomada,
+                        "retomada_cadastro": True,
                     },
                 )
             if flags.get("tem_pergunta"):
@@ -2594,6 +2617,35 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                         "cancelamento_ja_esclarecido_antes": ja_antes,
                     },
                 )
+            from app.parser import eh_pergunta_preco_plano_nomeado
+
+            if topico not in ("cancelamento",) and (
+                any(p in texto_q for p in PERGUNTAS_PRECO)
+                or eh_pergunta_preco_plano_nomeado(texto_q, msg_bruta)
+            ):
+                plano_ctx, ref, _ = _resolver_plano_da_pergunta(
+                    estado, resolucao, usar_fallback_negociacao=True
+                )
+                d_preco = dict(dados_base)
+                if isinstance(plano_ctx, dict) and plano_ctx.get("nome"):
+                    d_preco.update(_dados_plano_ctx(plano_ctx))
+                return dec(
+                    "RESPONDER",
+                    "INFORMAR_PRECO_PLANO_E_RETOMAR",
+                    fase,
+                    pendente_ef,
+                    d_preco,
+                    "Preço de plano durante cadastro — catálogo, não RAG",
+                    "GLOBAL_PERGUNTA",
+                    contexto={
+                        **ctx_perg,
+                        "pendente": pendente_ef,
+                        "plano": plano_ctx,
+                        "referencia_plano": ref,
+                        "mensagem_cliente": msg_bruta,
+                    },
+                )
+
             beneficio_cad = _detectar_beneficio_pergunta(texto_q)
             if (
                 topico == "beneficio_plano"
@@ -3660,6 +3712,98 @@ def decidir_plano_inicial(
     )
 
 
+def _decidir_se_referencia_nao_e_plano(
+    referencia: str,
+    estado: dict[str, Any],
+    desvio: dict[str, Any],
+) -> Decisao | None:
+    """
+    Última barreira: pergunta informativa nunca vira 'plano não encontrado'.
+    Cobre falhas do LLM (PLANO_INFORMADO fantasma) que escaparam dos guards.
+    """
+    from app.interpretacao_contexto import (
+        classificar_pergunta_informativa,
+        referencia_parece_pergunta_nao_plano,
+    )
+    from app.parser import (
+        eh_pergunta_custo_instalacao,
+        eh_pergunta_cancelamento,
+        normalizar_texto,
+    )
+
+    ref = _texto(referencia)
+    if not ref or not referencia_parece_pergunta_nao_plano(ref, ref):
+        return None
+
+    topico = classificar_pergunta_informativa(ref, ref)
+    fase_ant = _texto(desvio.get("fase_anterior") or estado.get("fase_anterior"))
+    aguard_ant = _texto(desvio.get("aguardando_anterior") or estado.get("aguardando_anterior"))
+    fase_atual = _texto(estado.get("fase") or "vendas")
+    fase = fase_ant if fase_ant == "cadastro" else fase_atual
+    pendente = aguard_ant or _texto(estado.get("aguardando") or "confirmacao_plano")
+    texto = normalizar_texto(ref)
+
+    if topico == "instalacao":
+        return Decisao(
+            acao="RESPONDER",
+            objetivo_resposta="INFORMAR_INSTALACAO_E_RETOMAR",
+            fase=fase if fase in {"cadastro", "vendas", "termos", "agendamento"} else "vendas",
+            aguardando=pendente,
+            atualizar_dados=dict(desvio),
+            contexto_resposta={
+                "pendente": pendente,
+                "topico_contexto": "instalacao",
+                "pergunta_custo_instalacao": eh_pergunta_custo_instalacao(texto, ref),
+                "plano_nome": _texto(
+                    estado.get("plano_confirmado")
+                    or estado.get("plano_em_negociacao")
+                    or estado.get("plano_apresentado")
+                ),
+                "pergunta_original": ref,
+            },
+            motivo="Referência não era plano — instalação",
+            prioridade="GLOBAL_PERGUNTA",
+        )
+
+    if topico == "cancelamento" or eh_pergunta_cancelamento(ref, ref):
+        pergunta_valor = any(
+            x in texto for x in ("quanto", "valor", "ficaria", "fica", "custa", "taxa", "multa")
+        )
+        return Decisao(
+            acao="RESPONDER",
+            objetivo_resposta="INFORMAR_CANCELAMENTO_E_RETOMAR",
+            fase=fase if fase in {"cadastro", "vendas", "termos"} else "vendas",
+            aguardando=pendente,
+            atualizar_dados={**desvio, "cancelamento_esclarecido": True},
+            contexto_resposta={
+                "pendente": pendente,
+                "topico_contexto": "cancelamento",
+                "pergunta_valor_multa": pergunta_valor,
+                "cancelamento_ja_esclarecido_antes": bool(estado.get("cancelamento_esclarecido")),
+            },
+            motivo="Referência não era plano — cancelamento",
+            prioridade="GLOBAL_PERGUNTA",
+        )
+
+    if topico in {"mudanca_endereco", "beneficio", "generica"}:
+        return Decisao(
+            acao="RESPONDER",
+            objetivo_resposta="RESPONDER_PERGUNTA_E_RETOMAR",
+            fase=fase if fase in {"cadastro", "vendas", "termos", "agendamento", "pos_venda"} else "vendas",
+            aguardando=pendente,
+            atualizar_dados=dict(desvio),
+            pergunta=ref,
+            contexto_resposta={
+                "pendente": pendente,
+                "topico_contexto": topico if topico != "generica" else "",
+                "pergunta_original": ref,
+            },
+            motivo="Referência não era plano — pergunta informativa",
+            prioridade="GLOBAL_PERGUNTA",
+        )
+    return None
+
+
 def decidir_plano_resolvido(resultado: dict[str, Any], estado: dict[str, Any] | None = None) -> Decisao:
     estado = estado or {}
     evento = resultado.get("evento")
@@ -3726,6 +3870,9 @@ def decidir_plano_resolvido(resultado: dict[str, Any], estado: dict[str, Any] | 
             prioridade="PLANO",
         )
     if evento == "PLANO_NAO_ENCONTRADO":
+        redirecionada = _decidir_se_referencia_nao_e_plano(referencia, estado, desvio)
+        if redirecionada is not None:
+            return redirecionada
         tentativas = int(estado.get("tentativas_plano_invalido") or 0) + 1
         if tentativas >= TENTATIVAS_MAX:
             return Decisao(
@@ -3747,6 +3894,9 @@ def decidir_plano_resolvido(resultado: dict[str, Any], estado: dict[str, Any] | 
             motivo="Plano não encontrado",
             prioridade="PLANO",
         )
+    redirecionada = _decidir_se_referencia_nao_e_plano(referencia, estado, desvio)
+    if redirecionada is not None:
+        return redirecionada
     return Decisao(
         acao="RESPONDER",
         objetivo_resposta="INFORMAR_PLANO_NAO_ENCONTRADO",

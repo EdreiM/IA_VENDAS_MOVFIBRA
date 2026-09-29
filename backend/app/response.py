@@ -43,10 +43,14 @@ from app.vendas_mensagens import (
     esclarecer_promocao_plano,
     identificar_plano_por_preco,
     informar_detalhes_plano,
+    confirmar_troca_plano_e_retomar_cadastro,
+    informar_alteracao_bloqueada_pos_cadastro,
+    informar_plano_bloqueado_pos_cadastro,
     informar_plano_nao_encontrado,
     informar_planos_por_beneficio,
     informar_preco_plano,
     informar_precos_planos,
+    frase_voltar_ao_cadastro,
     informar_sem_cobertura,
     insistencia_sem_cobertura,
     planos_citados_no_texto,
@@ -180,6 +184,37 @@ def _rotulo_pendente(pendente: str | None) -> str:
     if not pendente:
         return ""
     return mapa.get(pendente, pendente)
+
+
+_CAMPOS_CADASTRO = frozenset({
+    "nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero", "confirmacao_dados",
+})
+
+
+def _preco_com_retomada_cadastro(
+    base: str,
+    ctx: dict[str, Any],
+    decisao: Decisao,
+    estado: dict[str, Any],
+) -> str:
+    """Durante cadastro, responde preço e retoma o pendente — sem pedir confirmação de plano."""
+    pendente = str(ctx.get("pendente") or decisao.aguardando or "")
+    fase_ef = str(estado.get("fase") or decisao.fase or "")
+    if fase_ef != "cadastro" or pendente not in _CAMPOS_CADASTRO:
+        return base
+    linhas = base.strip().splitlines()
+    while linhas:
+        ult = linhas[-1].casefold()
+        if any(x in ult for x in ("quer ", "qual desses", "prefere", "seguir com")):
+            linhas.pop()
+            while linhas and not linhas[-1].strip():
+                linhas.pop()
+            continue
+        break
+    preco = "\n".join(linhas).strip()
+    if "\n\n" in preco and "quer confirmar" in preco.casefold():
+        preco = preco.split("\n\n", 1)[0].strip()
+    return f"{preco}\n\n{frase_voltar_ao_cadastro(pendente)}"
 
 
 def gerar_resposta(
@@ -336,10 +371,7 @@ def gerar_resposta(
                     for x in ("quanto", "valor", "ficaria", "multa", "taxa")
                 ),
             )
-        return (
-            "Entendi sua dúvida. Sobre os dados do resumo: se estiver tudo certo, "
-            "me confirma com *sim* ou *tá* que eu sigo com o cadastro no sistema."
-        )
+        # Demais dúvidas: LLM + RAG (não inventar resposta genérica)
 
     if decisao.objetivo_resposta == "INFORMAR_RECUSA_TERMOS":
         return recusou_termos()
@@ -452,6 +484,24 @@ def gerar_resposta(
         ctx = decisao.contexto_resposta or {}
         return informar_plano_nao_encontrado(str(ctx.get("referencia") or ""))
 
+    if decisao.objetivo_resposta == "INFORMAR_PLANO_BLOQUEADO_POS_CADASTRO":
+        ctx = decisao.contexto_resposta or {}
+        plano_n = str(
+            ctx.get("plano_atual")
+            or estado.get("plano_confirmado")
+            or ""
+        )
+        return informar_plano_bloqueado_pos_cadastro(plano_n)
+
+    if decisao.objetivo_resposta == "INFORMAR_ALTERACAO_BLOQUEADA_POS_CADASTRO":
+        return informar_alteracao_bloqueada_pos_cadastro()
+
+    if decisao.objetivo_resposta == "CONFIRMAR_TROCA_PLANO_E_RETOMAR_CADASTRO":
+        ctx = decisao.contexto_resposta or {}
+        plano = _plano_do_estado(estado, ctx)
+        pendente = str(ctx.get("pendente") or decisao.aguardando or "nome")
+        return confirmar_troca_plano_e_retomar_cadastro(plano, pendente=pendente)
+
     if decisao.objetivo_resposta == "PRIORIZAR_PLANO_ANTES_CADASTRO":
         from app.vendas_mensagens import prioritizar_plano_antes_cadastro
 
@@ -537,12 +587,14 @@ def gerar_resposta(
             id_atual = int(plano_atual.get("id") or -1) if plano_atual else -1
             # Citou alternativas além do atual, ou só as alternativas
             if len(citados) > 1 or (citados and id_atual not in ids_citados):
-                return informar_precos_planos(
+                base = informar_precos_planos(
                     citados,
                     plano_atual=plano_atual,
                     contexto="Sobre os planos que comentei:",
                 )
-        return informar_preco_plano(plano_atual)
+                return _preco_com_retomada_cadastro(base, ctx, decisao, estado)
+        base = informar_preco_plano(plano_atual)
+        return _preco_com_retomada_cadastro(base, ctx, decisao, estado)
 
     if decisao.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR":
         ctx = decisao.contexto_resposta or {}
@@ -654,12 +706,7 @@ def gerar_resposta(
                 f"Perfeito! Vamos seguir com o *{nome}*{preco}.\n\n"
                 f"{inst}\n\n{pedir_campos(['nome', 'cpf'])}"
             )
-        from app.cadastro_mensagens import pedir_campos
-
-        return (
-            f"Perfeito! Vamos seguir com o *{nome}*{preco}. "
-            f"Sobre sua dúvida: vou te explicar em seguida. {pedir_campos(['nome', 'cpf'])}"
-        )
+        # Demais dúvidas: LLM + RAG abaixo
 
     if decisao.objetivo_resposta == "CONFIRMAR_HORARIO_E_RESPONDER_PERGUNTA":
         from app.parser import normalizar_texto
@@ -693,6 +740,7 @@ def gerar_resposta(
             campos_corrigidos=list(ctx.get("campos_corrigidos") or []),
             pendente=str(ctx.get("pendente") or decisao.aguardando or ""),
             estado=dados,
+            retomada_cadastro=bool(ctx.get("retomada_cadastro")),
         )
 
     if decisao.objetivo_resposta and decisao.objetivo_resposta.startswith("PEDIR_"):
