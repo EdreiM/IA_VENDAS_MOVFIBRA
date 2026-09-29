@@ -254,6 +254,7 @@ def aplicar_guards_interpretacao(
     aguardando: str,
     fase: str,
     campos_corrigidos: list[str],
+    confianca: float = 1.0,
 ) -> str:
     """
     Remove dados extraídos quando a mensagem não responde ao pendente.
@@ -372,6 +373,28 @@ def aplicar_guards_interpretacao(
         ]
         dados.cidade = ""
         dados.bairro = ""
+
+    from app.interpretacao_confianca import CONFIANCA_MINIMA_CADASTRO
+    from app.state_machine import ORDEM_CADASTRO
+
+    if fase == "cadastro" and 0 < confianca < CONFIANCA_MINIMA_CADASTRO:
+        for campo in list(CAMPOS_DADOS):
+            if campo in corrigidos:
+                continue
+            valor = _texto(getattr(dados, campo, ""))
+            if not valor:
+                continue
+            if campo == aguardando:
+                if _valor_parece_resposta_campo(
+                    campo, valor, msg=msg, msg_bruto=bruto, aguardando=aguardando
+                ):
+                    continue
+            elif campo in ORDEM_CADASTRO and not _valor_parece_resposta_campo(
+                campo, valor, msg=msg, msg_bruto=bruto, aguardando=aguardando
+            ):
+                setattr(dados, campo, "")
+                if Evento.DADO_INFORMADO.value in eventos and not _campos_com_valor(dados):
+                    eventos[:] = [e for e in eventos if e != Evento.DADO_INFORMADO.value]
 
     return pergunta
 

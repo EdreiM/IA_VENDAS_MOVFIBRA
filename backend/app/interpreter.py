@@ -104,8 +104,14 @@ Formato:
   }},
   "campos_corrigidos": [],
   "pergunta": "",
-  "confianca": 0
+  "confianca": 0.95
 }}
+
+confianca (0 a 1): quão certo você está da interpretação.
+- 0.95+: mensagem clara (dado explícito, confirmação óbvia, pergunta direta).
+- 0.7–0.9: razoável, mas com alguma ambiguidade.
+- Abaixo de 0.7: incerto — mensagem confusa, múltiplas intenções ou não sabe classificar.
+Sempre informe confianca honestamente; nunca use 0.
 """
 
 

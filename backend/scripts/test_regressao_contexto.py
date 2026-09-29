@@ -64,6 +64,7 @@ def _turno(estado: dict, msg: str, llm: dict) -> tuple[dict, object]:
     res["pergunta"] = interp.pergunta
     res["topico_contexto"] = ctx.get("topico")
     res["pergunta_original"] = msg
+    res["confianca"] = float(interp.confianca or 0)
     dec = decidir(estado, res)
     for _ in range(5):
         if dec.acao in {"RESPONDER", "TRANSFERIR_HUMANO", "AGUARDAR"}:
@@ -684,6 +685,7 @@ def _decidir_sem_executar(estado: dict, msg: str, llm: dict):
     res["pergunta"] = interp.pergunta
     res["topico_contexto"] = ctx.get("topico")
     res["pergunta_original"] = msg
+    res["confianca"] = float(interp.confianca or 0)
     return decidir(estado, res)
 
 
@@ -1586,6 +1588,76 @@ def test_termos_cancelamento_explica_sem_opcoes_vagas() -> None:
     _assert("opções" not in txt.casefold() and "opcoes" not in txt.casefold(), txt)
 
 
+def test_baixa_confianca_outro_clarifica() -> None:
+    estado = {"fase": "vendas", "aguardando": "confirmacao_plano", "tem_cobertura": True}
+    dec = _decidir_sem_executar(
+        estado,
+        "ah sla pow nem sei",
+        {"eventos": ["OUTRO"], "dados": {}, "confianca": 0.35},
+    )
+    _assert(dec.objetivo_resposta == "CLARIFICAR_INTENCAO", dec.objetivo_resposta)
+    txt = gerar_resposta(dec, estado)
+    _assert("entendi" in txt.casefold(), txt)
+
+
+def test_baixa_confianca_frase_como_nome_clarifica() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "nome",
+        "plano_confirmado": "MOV SUPER+",
+        "tem_cobertura": True,
+    }
+    msg = "Nossa fiquei confuso com essa parte toda"
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {
+            "eventos": ["DADO_INFORMADO", "OUTRO"],
+            "dados": {"nome": msg},
+            "confianca": 0.4,
+        },
+    )
+    _assert(dec.objetivo_resposta == "CLARIFICAR_INTENCAO", dec.objetivo_resposta)
+    _assert(not (dec.atualizar_dados or {}).get("nome"), dec.atualizar_dados)
+
+
+def test_alta_confianca_cpf_continua_cadastro() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "cpf",
+        "nome": "Maria Silva",
+        "plano_confirmado": "MOV SUPER+",
+        "tem_cobertura": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "03225928283",
+        {"eventos": ["DADO_INFORMADO"], "dados": {"cpf": "03225928283"}, "confianca": 0.95},
+    )
+    _assert(dec.objetivo_resposta != "CLARIFICAR_INTENCAO", dec.objetivo_resposta)
+    _assert(dec.acao in {"VALIDAR_CPF", "RESPONDER"}, dec.acao)
+
+
+def test_confianca_zero_mantem_fluxo_anterior() -> None:
+    """confianca=0 = LLM não informou — não forçar clarificação (regressão)."""
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "nome",
+        "plano_confirmado": "MOV SUPER+",
+        "tem_cobertura": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Tem como instalar amanhã?",
+        {
+            "eventos": ["PERGUNTA"],
+            "dados": {},
+            "confianca": 0,
+        },
+    )
+    _assert(dec.objetivo_resposta != "CLARIFICAR_INTENCAO", dec.objetivo_resposta)
+
+
 def test_agendamento_sim_sem_horario() -> None:
     base = {
         "fase": "agendamento",
@@ -2223,6 +2295,10 @@ def main() -> None:
         test_cadastro_email_telefone_mais_cancelamento,
         test_esclarecer_promo_6950_nao_50,
         test_termos_cancelamento_explica_sem_opcoes_vagas,
+        test_baixa_confianca_outro_clarifica,
+        test_baixa_confianca_frase_como_nome_clarifica,
+        test_alta_confianca_cpf_continua_cadastro,
+        test_confianca_zero_mantem_fluxo_anterior,
         test_agendamento_sim_sem_horario,
     ]
     falhas = 0

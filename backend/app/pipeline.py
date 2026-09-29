@@ -339,6 +339,7 @@ def process_message(
     resolucao["pergunta"] = interpretacao.pergunta
     resolucao["topico_contexto"] = ctx_perg.get("topico")
     resolucao["pergunta_original"] = ctx_perg.get("mensagem_original") or mensagem
+    resolucao["confianca"] = float(interpretacao.confianca or 0)
 
     decisao = decidir(estado, resolucao)
     if decisao.acao == "RESOLVER_PLANO":

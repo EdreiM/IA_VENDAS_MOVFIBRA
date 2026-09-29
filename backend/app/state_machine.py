@@ -1370,6 +1370,31 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             "GLOBAL_ENCERRAR",
         )
 
+    from app.interpretacao_confianca import (
+        avaliar_necessidade_clarificacao,
+        dados_sem_campos_suspeitos,
+    )
+
+    confianca = float(resolucao.get("confianca") or 0)
+    ctx_clar = avaliar_necessidade_clarificacao(
+        estado,
+        resolucao,
+        confianca=confianca,
+        msg=msg_cliente,
+    )
+    if ctx_clar is not None:
+        d_clar = dados_sem_campos_suspeitos(dados_base, ctx_clar)
+        return dec(
+            "RESPONDER",
+            "CLARIFICAR_INTENCAO",
+            fase,
+            aguardando,
+            d_clar,
+            f"Interpretação incerta (conf={confianca:.2f})",
+            "GLOBAL_CLARIFICAR",
+            contexto=ctx_clar,
+        )
+
     # Funil incoerente — não gravar cadastro sem plano; não agendar/aceitar termos sem cadastro
     cadastro_info = list((cadastro.get("campos_informados") or []))
     if (

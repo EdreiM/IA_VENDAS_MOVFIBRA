@@ -28,6 +28,7 @@ from app.pos_venda_mensagens import (
     pedir_falar_duvida,
     retomar_duvidas,
 )
+from app.conversacao_mensagens import clarificar_intencao
 from app.saudacao import (
     mensagem_abertura,
     mensagem_cumprimento_retomar,
@@ -254,6 +255,9 @@ def gerar_resposta(
         ctx = decisao.contexto_resposta or {}
         pendente = str(ctx.get("pendente") or decisao.aguardando or "")
         return mensagem_cumprimento_retomar(mensagem_cliente, pendente)
+
+    if decisao.objetivo_resposta == "CLARIFICAR_INTENCAO":
+        return clarificar_intencao(decisao.contexto_resposta or {})
 
     if decisao.objetivo_resposta == "PEDIR_QUAL_DADO_CORRIGIR":
         return (

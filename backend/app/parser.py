@@ -2571,6 +2571,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         aguardando=aguardando,
         fase=fase,
         campos_corrigidos=campos_corrigidos,
+        confianca=confianca,
     )
 
     return Interpretacao(

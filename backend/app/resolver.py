@@ -286,4 +286,5 @@ def resolver(estado: dict[str, Any], interpretacao: Interpretacao) -> dict[str, 
         "correcao_efetiva": correcao_efetiva,
         "campos_alterados": campos_alterados,
         "campos_novos": campos_novos,
+        "confianca": float(interpretacao.confianca or 0),
     }
