@@ -297,8 +297,17 @@ def aplicar_guards_interpretacao(
         msg, bruto, aguardando=aguardando if fase == "cadastro" else None
     )
 
-    if Evento.PLANO_INFORMADO.value in eventos or Evento.PEDIU_TROCAR_PLANO.value in eventos:
-        return pergunta
+    from app.interpretacao_contexto import sanitizar_plano_informado_llm
+
+    pergunta = sanitizar_plano_informado_llm(
+        dados=dados,
+        eventos=eventos,
+        pergunta=pergunta,
+        msg=msg,
+        msg_bruto=bruto,
+        intencao_nao_dado=intencao_nao_dado,
+        tem_duvida=tem_duvida,
+    )
 
     for campo in list(CAMPOS_DADOS):
         if campo in corrigidos:

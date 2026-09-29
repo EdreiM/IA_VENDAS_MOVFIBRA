@@ -162,6 +162,153 @@ def _pergunta_impede_confirmacao_plano(
     return False
 
 
+def _decidir_pergunta_informativa_global(
+    estado: dict[str, Any],
+    resolucao: dict[str, Any],
+    flags: dict[str, Any],
+    plano: dict[str, Any],
+    dados_base: dict[str, Any],
+    aguardando: str | None,
+    fase: str,
+    dec,
+) -> Decisao | None:
+    """
+    Rede de segurança: pergunta/conversa ≠ troca de plano ou dado cadastral.
+    Roda cedo, antes de RESOLVER_PLANO e avanços cegos do funil.
+    """
+    from app.interpretacao_contexto import (
+        classificar_pergunta_informativa,
+        referencia_parece_plano,
+    )
+    from app.parser import (
+        eh_mensagem_sobre_planos,
+        eh_pedido_contratacao,
+        eh_pergunta_custo_instalacao,
+        normalizar_texto,
+    )
+
+    if fase not in {"cadastro", "vendas", "termos", "agendamento", "pos_venda"}:
+        return None
+
+    msg_aux = str(
+        resolucao.get("mensagem") or resolucao.get("pergunta_original") or ""
+    )
+    if not msg_aux.strip():
+        return None
+
+    topico_ctx = str(resolucao.get("topico_contexto") or "")
+    topico_inf = classificar_pergunta_informativa(
+        msg_aux, msg_aux, topico=topico_ctx
+    )
+    if not topico_inf or topico_inf == "generica":
+        return None
+    if referencia_parece_plano(_texto(plano.get("valor") or msg_aux), msg_aux):
+        return None
+    if eh_mensagem_sobre_planos(normalizar_texto(msg_aux), msg_aux):
+        return None
+    if flags.get("confirmacao") and flags.get("tem_pergunta"):
+        return None
+    if topico_inf == "instalacao" and eh_pedido_contratacao(msg_aux, msg_aux):
+        return None
+
+    campos_info = list((resolucao.get("dados") or {}).get("campos_informados") or [])
+    anotados = [c for c in campos_info if c != "cpf"]
+    pendente = (
+        _pendente_cadastro_apos_anotacao(estado, dados_base, aguardando, anotados)
+        if fase == "cadastro"
+        else (aguardando or "")
+    )
+    ctx_base = {
+        "pendente": pendente,
+        "topico_contexto": topico_inf,
+        "pergunta_original": msg_aux,
+        "campos_anotados": anotados,
+    }
+    d = dict(dados_base)
+
+    if topico_inf == "instalacao":
+        return dec(
+            "RESPONDER",
+            "INFORMAR_INSTALACAO_E_RETOMAR",
+            fase,
+            pendente,
+            d,
+            "Pergunta sobre instalação — resposta fixa",
+            "GLOBAL_PERGUNTA",
+            pergunta=resolucao.get("pergunta") or msg_aux,
+            contexto={
+                **ctx_base,
+                "pergunta_custo_instalacao": eh_pergunta_custo_instalacao(
+                    normalizar_texto(msg_aux), msg_aux
+                ),
+                "plano_nome": _texto(
+                    estado.get("plano_confirmado")
+                    or estado.get("plano_em_negociacao")
+                    or estado.get("plano_apresentado")
+                ),
+            },
+        )
+
+    if topico_inf == "cancelamento":
+        pergunta_valor = any(
+            x in normalizar_texto(msg_aux)
+            for x in ("quanto", "valor", "ficaria", "fica", "custa", "taxa", "multa")
+        )
+        ja_antes = bool(
+            d.get("cancelamento_esclarecido") or estado.get("cancelamento_esclarecido")
+        )
+        d["cancelamento_esclarecido"] = True
+        return dec(
+            "RESPONDER",
+            "INFORMAR_CANCELAMENTO_E_RETOMAR",
+            fase,
+            pendente,
+            d,
+            "Pergunta sobre cancelamento",
+            "GLOBAL_PERGUNTA",
+            pergunta=resolucao.get("pergunta") or msg_aux,
+            contexto={
+                **ctx_base,
+                "pergunta_valor_multa": pergunta_valor,
+                "cancelamento_ja_esclarecido_antes": ja_antes,
+            },
+        )
+
+    if topico_inf == "beneficio" and fase in {"cadastro", "vendas"}:
+        rotulo = _detectar_beneficio_pergunta(normalizar_texto(msg_aux)) or "benefício"
+        plano_ctx, ref, _ = _resolver_plano_da_pergunta(estado, resolucao)
+        aguard_plano = "confirmacao_plano" if fase == "cadastro" else (aguardando or "confirmacao_plano")
+        return dec(
+            "RESPONDER",
+            "INFORMAR_PLANOS_POR_BENEFICIO",
+            "vendas" if fase == "cadastro" and not estado.get("plano_confirmado") else fase,
+            aguard_plano if fase == "cadastro" and not estado.get("plano_confirmado") else pendente,
+            d,
+            f"Pergunta sobre benefício {rotulo}",
+            "GLOBAL_PERGUNTA",
+            contexto={
+                **ctx_base,
+                "beneficio": rotulo,
+                "plano": plano_ctx,
+                "referencia_plano": ref,
+            },
+        )
+
+    if topico_inf == "mudanca_endereco":
+        return dec(
+            "RESPONDER",
+            "RESPONDER_PERGUNTA_E_RETOMAR",
+            fase,
+            pendente,
+            d,
+            "Pergunta informativa — responder e retomar pendente",
+            "GLOBAL_PERGUNTA",
+            pergunta=resolucao.get("pergunta") or msg_aux,
+            contexto=ctx_base,
+        )
+    return None
+
+
 def _decidir_duvida_plano_vendas(
     estado: dict[str, Any],
     resolucao: dict[str, Any],
@@ -194,11 +341,17 @@ def _decidir_duvida_plano_vendas(
     aguard = aguardando or "confirmacao_plano"
 
     if plano.get("informado") and not plano.get("repetido"):
+        from app.interpretacao_contexto import deve_resolver_referencia_plano
+
         ref_bruto = _texto(plano.get("valor") or msg_bruta)
         ref_msg = extrair_referencia_plano_na_mensagem(normalizar_texto(msg_bruta), msg_bruta)
         ref_norm = normalizar_referencia_plano(ref_bruto)
         ref = ref_msg or ref_norm or ref_bruto
-        if ref and not _referencia_mesmo_plano_negociacao(estado, ref):
+        if (
+            ref
+            and not _referencia_mesmo_plano_negociacao(estado, ref)
+            and deve_resolver_referencia_plano(estado, resolucao, ref)
+        ):
             d = _salvar_desvio_cadastro(estado, dict(dados_base))
             d["limpar_plano_em_negociacao"] = True
             d.pop("invalidar_plano", None)
@@ -261,8 +414,14 @@ def _decidir_duvida_plano_vendas(
         )
 
     if any(k in texto_q for k in INTENCAO_PLANO_KEYWORDS):
+        from app.interpretacao_contexto import deve_resolver_referencia_plano
+
         ref = normalizar_referencia_plano(msg_bruta) or msg_bruta
-        if ref and not _referencia_mesmo_plano_negociacao(estado, ref):
+        if (
+            ref
+            and not _referencia_mesmo_plano_negociacao(estado, ref)
+            and deve_resolver_referencia_plano(estado, resolucao, ref)
+        ):
             d = _salvar_desvio_cadastro(estado, dict(dados_base))
             d["limpar_plano_em_negociacao"] = True
             d.pop("invalidar_plano", None)
@@ -1985,11 +2144,13 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                 },
             )
 
-    # Cadastro — cancelamento/mudança de endereço ≠ troca de plano (ex.: "taxa se cancelar")
+    # Cadastro — cancelamento/instalação/endereço ≠ troca de plano
     if fase == "cadastro":
         from app.parser import (
             eh_confirmacao,
             eh_pergunta_cancelamento,
+            eh_pergunta_custo_instalacao,
+            eh_pergunta_instalacao,
             eh_pergunta_mudanca_endereco,
             extrair_referencia_plano_na_mensagem,
             normalizar_texto,
@@ -2075,19 +2236,77 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                 },
             )
 
+        if not ref_plano_aux and (
+            topico_aux == "instalacao"
+            or eh_pergunta_instalacao(msg_aux, msg_aux, topico=topico_aux)
+        ):
+            campos_info = list((resolucao.get("dados") or {}).get("campos_informados") or [])
+            anotados = [c for c in campos_info if c != "cpf"]
+            pendente_ef = _pendente_cadastro_apos_anotacao(
+                estado, dados_base, aguardando, anotados
+            )
+            d = dict(dados_base)
+            return dec(
+                "RESPONDER",
+                "INFORMAR_INSTALACAO_E_RETOMAR",
+                fase,
+                pendente_ef,
+                d,
+                "Instalação/prazo no cadastro — não resolver plano",
+                "GLOBAL_PERGUNTA",
+                pergunta=resolucao.get("pergunta") or msg_aux,
+                contexto={
+                    "pendente": pendente_ef,
+                    "topico_contexto": "instalacao",
+                    "pergunta_custo_instalacao": eh_pergunta_custo_instalacao(
+                        texto_aux, msg_aux
+                    ),
+                    "plano_nome": _texto(
+                        estado.get("plano_confirmado")
+                        or estado.get("plano_em_negociacao")
+                        or estado.get("plano_apresentado")
+                    ),
+                    "pergunta_original": msg_aux,
+                },
+            )
+
     # Plano informado (nome/referência)
     if plano.get("informado") and not plano.get("repetido"):
+        from app.interpretacao_contexto import (
+            classificar_pergunta_informativa,
+            deve_resolver_referencia_plano,
+            referencia_parece_pergunta_nao_plano,
+        )
         from app.parser import extrair_referencia_plano_na_mensagem, normalizar_texto as _norm_pl
         from app.plans import normalizar_referencia_plano
 
         ref_bruto = _texto(plano.get("valor") or msg_cliente)
         ref_msg = extrair_referencia_plano_na_mensagem(_norm_pl(msg_cliente), msg_cliente)
         ref_norm = normalizar_referencia_plano(ref_bruto)
-        pular_resolver = fase == "cadastro" and not ref_msg and not ref_norm and len(ref_bruto) > 20
+        msg_plano_check = str(
+            resolucao.get("mensagem") or resolucao.get("pergunta_original") or msg_cliente
+        )
+        ref = ref_msg or ref_norm or ref_bruto
+        pular_resolver = (
+            referencia_parece_pergunta_nao_plano(ref, msg_plano_check)
+            or not deve_resolver_referencia_plano(estado, resolucao, ref)
+        )
+
+        if pular_resolver:
+            topico_falso = classificar_pergunta_informativa(
+                msg_plano_check,
+                msg_plano_check,
+                topico=str(resolucao.get("topico_contexto") or ""),
+            )
+            if topico_falso:
+                decisao_pergunta_plano = _decidir_pergunta_informativa_global(
+                    estado, resolucao, flags, plano, dados_base, aguardando, fase, dec
+                )
+                if decisao_pergunta_plano is not None:
+                    return decisao_pergunta_plano
 
         if not pular_resolver:
             if estado.get("tem_cobertura") is True:
-                ref = ref_msg or ref_norm or ref_bruto
                 if fase == "cadastro" and estado.get("plano_confirmado") and _referencia_mesmo_plano_confirmado(
                     estado, ref
                 ):

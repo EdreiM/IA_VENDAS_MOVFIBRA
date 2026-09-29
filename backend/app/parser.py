@@ -682,6 +682,8 @@ CHAVES_INSTALACAO = (
     "técnico",
     "visita",
     "quando vem",
+    "quando vai ser",
+    "quando sera",
     "quando instala",
     "vir instalar",
     "pra instalar",
@@ -717,6 +719,7 @@ CHAVES_CUSTO_INSTALACAO = (
     "quanto e a instala",
     "quanto é a instala",
     "tem taxa de instala",
+    "tem taxa para instala",
     "tem taxa instalacao",
     "instalacao gratuita",
     "instalação gratuita",
@@ -2314,6 +2317,17 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             pergunta = extrair_parte_pergunta(msg_bruto, msg) or msg_bruto.strip()
 
     if eh_pergunta_instalacao(msg, msg_bruto):
+        eventos = [
+            e
+            for e in eventos
+            if e
+            not in {
+                Evento.PLANO_INFORMADO.value,
+                Evento.PEDIU_TROCAR_PLANO.value,
+                Evento.CONFIRMACAO.value,
+            }
+        ]
+        dados.plano = ""
         if Evento.PERGUNTA.value not in eventos:
             eventos.append(Evento.PERGUNTA.value)
         if not pergunta:
@@ -2326,10 +2340,15 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             not eh_pergunta_informativa_sobre_plano(msg, msg_bruto)
             and not eh_pergunta_cancelamento(msg, msg_bruto)
             and not eh_pergunta_mudanca_endereco(msg_bruto)
+            and not eh_pergunta_instalacao(msg, msg_bruto)
             and (
                 eh_mensagem_sobre_planos(msg, msg_bruto)
                 or Evento.PEDIU_TROCAR_PLANO.value in eventos
-                or Evento.PLANO_INFORMADO.value in eventos
+                or (
+                    Evento.PLANO_INFORMADO.value in eventos
+                    and bool(str(dados.plano or "").strip())
+                    and not tem_duvida_informativa(msg, msg_bruto)
+                )
                 or any(k in msg for k in INTENCAO_PLANO_KEYWORDS)
             )
             and not eh_mensagem_correcao_cadastro(msg, msg_bruto)
@@ -2358,10 +2377,19 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
                 setattr(dados, campo, "")
             pergunta = ""
 
-    if fase == "cadastro" and (
-        eh_mensagem_sobre_planos(msg, msg_bruto)
-        or Evento.PEDIU_TROCAR_PLANO.value in eventos
-        or Evento.PLANO_INFORMADO.value in eventos
+    if (
+        fase == "cadastro"
+        and not eh_pergunta_instalacao(msg, msg_bruto)
+        and not eh_pergunta_cancelamento(msg, msg_bruto)
+        and (
+            eh_mensagem_sobre_planos(msg, msg_bruto)
+            or Evento.PEDIU_TROCAR_PLANO.value in eventos
+            or (
+                Evento.PLANO_INFORMADO.value in eventos
+                and bool(str(dados.plano or "").strip())
+                and not tem_duvida_informativa(msg, msg_bruto)
+            )
+        )
     ):
         for campo in ("rua", "numero", "cep", "nome", "cpf", "email", "telefone", "data_nascimento"):
             if campo != aguardando:

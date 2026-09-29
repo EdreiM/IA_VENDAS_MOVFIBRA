@@ -142,6 +142,83 @@ def test_data_nascimento_nao_preenche_rua_nem_numero() -> None:
     _assert(dec.aguardando == "rua", f"aguardando={dec.aguardando} acao={dec.acao}")
 
 
+def test_sanitizar_plano_informado_fantasma_llm() -> None:
+    """LLM marca PLANO_INFORMADO em pergunta — guards removem e viram PERGUNTA."""
+    from app.interpretacao_contexto import (
+        referencia_parece_pergunta_nao_plano,
+        sanitizar_plano_informado_llm,
+    )
+    from app.models import DadosExtraidos
+
+    msg = "E quando vai ser a instalação?\nTem taxa para instalar?"
+    _assert(referencia_parece_pergunta_nao_plano(msg, msg), msg)
+    dados = DadosExtraidos(plano=msg)
+    eventos = ["PLANO_INFORMADO", "PERGUNTA"]
+    pergunta = sanitizar_plano_informado_llm(
+        dados=dados,
+        eventos=eventos,
+        pergunta="",
+        msg=msg,
+        msg_bruto=msg,
+        intencao_nao_dado=True,
+        tem_duvida=True,
+    )
+    _assert(Evento.PLANO_INFORMADO.value not in eventos, eventos)
+    _assert(Evento.PERGUNTA.value in eventos, eventos)
+    _assert(dados.plano == "", dados.plano)
+    _assert(pergunta, "pergunta vazia")
+
+
+def test_mov_up_continua_plano_valido() -> None:
+    from app.interpretacao_contexto import referencia_parece_plano
+
+    _assert(referencia_parece_plano("mov up", "mov up"), "mov up")
+    _assert(not referencia_parece_plano("quanto custa instalar?", "quanto custa instalar?"), "instalar")
+
+
+def test_cadastro_instalacao_prazo_e_taxa_nao_resolve_plano() -> None:
+    """Perguntas sobre prazo/taxa de instalação no cadastro ≠ busca de plano."""
+    from app.response import gerar_resposta
+
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "data_nascimento",
+        "tem_cobertura": True,
+        "plano_confirmado": "MOV UP+",
+        "plano_confirmado_id": 1215,
+        "nome": "Edrei testes",
+        "cpf": "60421079096",
+        "email": "edreitestes@gmail.com",
+        "telefone": "93992219098",
+        "documento_cpf_validado": True,
+    }
+    msg = "E quando vai ser a instalação?\nTem taxa para instalar?"
+    raw = _raw(
+        {
+            "eventos": ["PLANO_INFORMADO", "PERGUNTA"],
+            "dados": {"plano": msg},
+            "confianca": 0.9,
+        }
+    )
+    i = parse_interpretacao(raw, msg, estado)
+    _assert(Evento.PLANO_INFORMADO.value not in i.eventos, f"eventos={i.eventos}")
+    _assert(Evento.PERGUNTA.value in i.eventos, f"eventos={i.eventos}")
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.acao == "RESPONDER", f"{dec.acao} {dec.motivo}")
+    _assert(
+        dec.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR",
+        dec.objetivo_resposta,
+    )
+    _assert(dec.acao != "RESOLVER_PLANO", dec.acao)
+    txt = gerar_resposta(dec, {**estado, **(dec.atualizar_dados or {})})
+    _assert("nao encontrei um plano" not in txt.casefold(), txt)
+    _assert("data de nascimento" in txt.casefold() or "cep" in txt.casefold(), txt)
+
+
 def test_cadastro_instalacao_gratis() -> None:
     from app.response import gerar_resposta
 
@@ -2090,6 +2167,9 @@ def main() -> None:
         test_confirmacoes_typo,
         test_cadastro_telefone_mais_pergunta,
         test_data_nascimento_nao_preenche_rua_nem_numero,
+        test_sanitizar_plano_informado_fantasma_llm,
+        test_mov_up_continua_plano_valido,
+        test_cadastro_instalacao_prazo_e_taxa_nao_resolve_plano,
         test_cadastro_instalacao_gratis,
         test_vendas_instalacao_hoje,
         test_cadastro_cep_mais_pergunta,
