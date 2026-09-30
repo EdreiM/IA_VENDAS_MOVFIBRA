@@ -227,17 +227,20 @@ def checar_cobertura(
         geo = geocode_endereco(endereco)
 
         if geo.get("status") == "REQUEST_DENIED":
-            # Escape geocoding — igual ao n8n: confirma só com cidade/bairro
-            logger.warning("Google geocode negado — escape geocoding")
-            return _resultado(
-                resultado="cobertura_confirmada",
-                tem_cobertura=True,
-                cidade=cidade,
-                bairro=bairro,
-                rua=rua,
-                localizacao_fixa=localizacao_fixa,
-                motivo="Endereço com cobertura (geocoding indisponível)",
-            )
+            logger.warning("Google geocode negado — tentando cidade/bairro")
+            if bairro and cidade:
+                geo = geocode_endereco(f"{bairro}, {cidade}")
+            if not geo.get("ok"):
+                return _resultado(
+                    resultado="erro_cobertura",
+                    tem_cobertura=False,
+                    cidade=cidade,
+                    bairro=bairro,
+                    motivo=(
+                        "Não consegui validar o endereço agora — "
+                        "envie o pin do GPS ou tente cidade e bairro de novo"
+                    ),
+                )
 
         if not geo.get("ok"):
             status = geo.get("status") or "ERRO"

@@ -183,4 +183,11 @@ def validar_campo(campo: str, valor: str, *, nome_cliente: str = "") -> str | No
             return "preciso do número da casa ou apartamento"
         return None
 
+    if campo in {"cidade", "bairro"}:
+        if len(v) < 2:
+            return f"preciso do nome {'da cidade' if campo == 'cidade' else 'do bairro'}"
+        if "?" in v or len(v.split()) > 6:
+            return "me passa só o nome da cidade ou bairro, por favor"
+        return None
+
     return None

@@ -24,6 +24,7 @@ class _Buffer:
     waiters: list[_Waiter] = field(default_factory=list)
     result: Any = None
     error: BaseException | None = None
+    processando: bool = False
 
 
 _buffers: dict[str, _Buffer] = {}
@@ -48,6 +49,22 @@ def _get_buffer(chave: str) -> _Buffer:
 def _juntar_mensagens(mensagens: list[str]) -> str:
     partes = [m.strip() for m in mensagens if m and m.strip()]
     return "\n".join(partes)
+
+
+def _resolver_mensagens_conflitantes(mensagens: list[str]) -> str:
+    """Se a leva mistura confirmação e negação, usa a última intenção."""
+    if len(mensagens) <= 1:
+        return _juntar_mensagens(mensagens)
+    try:
+        from app.parser import eh_confirmacao, eh_recusa, normalizar_texto
+
+        tem_conf = any(eh_confirmacao(normalizar_texto(m)) for m in mensagens)
+        tem_neg = any(eh_recusa(normalizar_texto(m)) for m in mensagens)
+        if tem_conf and tem_neg:
+            return mensagens[-1].strip()
+    except Exception:
+        pass
+    return _juntar_mensagens(mensagens)
 
 
 def processar_com_buffer(
@@ -80,6 +97,10 @@ def processar_com_buffer(
 
         def _flush() -> None:
             with buf.lock:
+                if buf.processando:
+                    buf.timer = threading.Timer(segundos, _flush)
+                    buf.timer.start()
+                    return
                 mensagens = list(buf.messages)
                 waiters = list(buf.waiters)
                 buf.messages.clear()
@@ -87,11 +108,12 @@ def processar_com_buffer(
                 buf.timer = None
                 buf.result = None
                 buf.error = None
+                buf.processando = True
 
             if waiters:
                 waiters[-1].enviar_resposta = True
 
-            combinada = _juntar_mensagens(mensagens)
+            combinada = _resolver_mensagens_conflitantes(mensagens)
             try:
                 resultado = process_fn(cid, combinada)
                 with buf.lock:
@@ -101,6 +123,8 @@ def processar_com_buffer(
                 with buf.lock:
                     buf.error = exc
             finally:
+                with buf.lock:
+                    buf.processando = False
                 for w in waiters:
                     w.event.set()
 

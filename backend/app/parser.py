@@ -264,9 +264,6 @@ INTENCAO_PLANO_KEYWORDS = (
     "dois wifi",
     "plano simples",
     "mais simples",
-    "simples",
-    "basico",
-    "economico",
 )
 
 
@@ -346,10 +343,21 @@ def extrair_referencia_plano_na_mensagem(msg: str, msg_bruto: str = "") -> str:
     return _detectar_plano_na_mensagem(t)
 
 
+_PLANOS_GENERICOS = frozenset(
+    {"ESSENCIAL", "FLEX", "SUPER", "COMBO", "COMBO TOTAL 12GB", "COMBO TOTAL 22GB"}
+)
+_CONTEXTO_PLANO_RE = re.compile(
+    r"\b(?:plano|mov|mega|fibra|internet|contratar|confirmar|trocar|escolher|combo|chip)\b"
+)
+
+
 def _detectar_plano_na_mensagem(msg: str) -> str:
     """Retorna referência de plano se a mensagem citar um plano conhecido."""
+    tem_contexto = bool(_CONTEXTO_PLANO_RE.search(msg))
     for padrao, rotulo in PLANOS_MENCAO:
         if re.search(padrao, msg):
+            if rotulo in _PLANOS_GENERICOS and not tem_contexto:
+                continue
             return rotulo
     # Preço só com contexto explícito de plano — evita confundir CPF (604...) com plano
     if re.search(r"\b(?:plano|de|por)\s+\d{2,3}(?:[.,]\d{2})?\b", msg):
@@ -1769,7 +1777,11 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     try:
         data = json.loads(_strip_markdown(raw))
     except json.JSONDecodeError:
-        return Interpretacao(eventos=[Evento.OUTRO.value], confianca=0)
+        return Interpretacao(
+            eventos=[Evento.OUTRO.value],
+            confianca=0.65,
+            pergunta=mensagem_cliente[:200],
+        )
 
     eventos_raw = data.get("eventos") or []
     if not isinstance(eventos_raw, list):
@@ -1991,8 +2003,13 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         dados.plano = ""
         pergunta = ""
 
-    if pode_trocar_plano and (
-        msg in PEDIDOS_ALTERNATIVA or any(p in msg for p in PEDIDOS_ALTERNATIVA if len(p) >= 8)
+    if (
+        fase != "agendamento"
+        and pode_trocar_plano
+        and (
+            msg in PEDIDOS_ALTERNATIVA
+            or any(p in msg for p in PEDIDOS_ALTERNATIVA if len(p) >= 8)
+        )
     ):
         eventos = [e for e in eventos if e not in {Evento.PERGUNTA.value, Evento.PLANO_INFORMADO.value}]
         if Evento.PEDIU_TROCAR_PLANO.value not in eventos:
@@ -2333,36 +2350,35 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
                     pergunta = ""
 
         elif aguardando == "escolha_horario":
-            if pediu_outro_horario(msg):
+            resultado = match_horario(msg_bruto, estado)
+            if resultado.slot:
+                eventos = [e for e in eventos if e != Evento.OUTRO.value]
+                if Evento.DADO_INFORMADO.value not in eventos:
+                    eventos.append(Evento.DADO_INFORMADO.value)
+                dados.turno_escolhido = resultado.slot
+                pergunta = ""
+            elif resultado.ambiguo:
+                eventos = [e for e in eventos if e != Evento.OUTRO.value]
+                if Evento.DADO_INFORMADO.value not in eventos:
+                    eventos.append(Evento.DADO_INFORMADO.value)
+                dados.turno_escolhido = f"__AMBIGUO__:{resultado.turno or 'geral'}"
+                pergunta = ""
+            elif pediu_outro_horario(msg):
                 eventos = [e for e in eventos if e not in {Evento.CONFIRMACAO.value, Evento.OUTRO.value}]
                 if Evento.NEGACAO.value not in eventos:
                     eventos.append(Evento.NEGACAO.value)
                 dados.complemento = msg_bruto[:300]
                 pergunta = ""
-            else:
-                resultado = match_horario(msg_bruto, estado)
-                if resultado.slot:
-                    eventos = [e for e in eventos if e != Evento.OUTRO.value]
-                    if Evento.DADO_INFORMADO.value not in eventos:
-                        eventos.append(Evento.DADO_INFORMADO.value)
-                    dados.turno_escolhido = resultado.slot
-                    pergunta = ""
-                elif resultado.ambiguo:
-                    eventos = [e for e in eventos if e != Evento.OUTRO.value]
-                    if Evento.DADO_INFORMADO.value not in eventos:
-                        eventos.append(Evento.DADO_INFORMADO.value)
-                    dados.turno_escolhido = f"__AMBIGUO__:{resultado.turno or 'geral'}"
-                    pergunta = ""
-                elif re.search(r"\d+\s*h", msg) or "manha" in msg or "tarde" in msg:
-                    eventos = [e for e in eventos if e != Evento.OUTRO.value]
-                    if Evento.DADO_INFORMADO.value not in eventos:
-                        eventos.append(Evento.DADO_INFORMADO.value)
-                    dados.turno_escolhido = "__INVALIDO__"
-                    pergunta = ""
-                elif eh_confirmacao(msg):
-                    eventos = [
-                        e for e in eventos if e != Evento.CONFIRMACAO.value
-                    ]
+            elif re.search(r"\d+\s*h", msg) or "manha" in msg or "tarde" in msg:
+                eventos = [e for e in eventos if e != Evento.OUTRO.value]
+                if Evento.DADO_INFORMADO.value not in eventos:
+                    eventos.append(Evento.DADO_INFORMADO.value)
+                dados.turno_escolhido = "__INVALIDO__"
+                pergunta = ""
+            elif eh_confirmacao(msg):
+                eventos = [
+                    e for e in eventos if e != Evento.CONFIRMACAO.value
+                ]
 
     if not eventos:
         eventos = [Evento.OUTRO.value]

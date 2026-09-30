@@ -175,7 +175,7 @@ def eh_followup_curto(texto: str) -> bool:
         )
     ):
         return True
-    if len(t.split()) <= 6 and any(
+    if len(t.split()) <= 4 and any(
         t == p or t.startswith(p + " ") or t.startswith(p)
         for p in (
             "quanto",
@@ -235,7 +235,13 @@ def enriquecer_pergunta(
             }
     except Exception:
         pass
-    topico = detectar_topico(bruto) or ultimo_topico or topico_do_historico(historico)
+    topico_novo = detectar_topico(bruto)
+    if topico_novo:
+        topico = topico_novo
+    elif eh_followup_curto(bruto):
+        topico = ultimo_topico or topico_do_historico(historico)
+    else:
+        topico = topico_novo
 
     pergunta_final = bruto
     if eh_followup_curto(bruto) and topico:

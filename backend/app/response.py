@@ -46,6 +46,7 @@ from app.vendas_mensagens import (
     confirmar_troca_plano_e_retomar_cadastro,
     informar_alteracao_bloqueada_pos_cadastro,
     informar_plano_bloqueado_pos_cadastro,
+    informar_instalacao_e_retomar,
     informar_plano_nao_encontrado,
     informar_planos_por_beneficio,
     informar_preco_plano,
@@ -376,6 +377,12 @@ def gerar_resposta(
     if decisao.objetivo_resposta == "INFORMAR_RECUSA_TERMOS":
         return recusou_termos()
 
+    if decisao.objetivo_resposta == "INFORMAR_ERRO_TERMOS_E_TRANSFERENCIA":
+        return (
+            "Não consegui enviar o contrato e o áudio de fidelidade agora. "
+            "Vou te encaminhar para nossa equipe continuar o atendimento, tudo bem?"
+        )
+
     if decisao.objetivo_resposta == "INFORMAR_ERRO_ATIVACAO_E_TRANSFERENCIA":
         return (
             "Tive um problema ao ativar seu contrato no sistema. "
@@ -479,6 +486,15 @@ def gerar_resposta(
 
     if decisao.objetivo_resposta == "TRANSFERIR_INSISTENCIA_SEM_COBERTURA":
         return transferir_apos_insistencia("cobertura")
+
+    if decisao.objetivo_resposta == "ESCLARECER_BAIRRO":
+        from app.vendas_mensagens import esclarecer_bairro
+
+        ctx = decisao.contexto_resposta or {}
+        return esclarecer_bairro(
+            str(ctx.get("bairro_informado") or ""),
+            list(ctx.get("bairros_sugeridos") or []),
+        )
 
     if decisao.objetivo_resposta == "INFORMAR_PLANO_NAO_ENCONTRADO":
         ctx = decisao.contexto_resposta or {}
@@ -665,7 +681,12 @@ def gerar_resposta(
         return confirmar_plano_e_avancar(nome, valor, estado)
 
     if decisao.objetivo_resposta == "CONFIRMAR_PLANO_E_RESPONDER_PERGUNTA":
-        from app.parser import eh_pergunta_instalacao, normalizar_texto
+        from app.parser import (
+            eh_pergunta_cancelamento,
+            eh_pergunta_instalacao,
+            eh_pergunta_preco_plano_nomeado,
+            normalizar_texto,
+        )
         from app.state_machine import _detectar_beneficio_pergunta
 
         ctx = decisao.contexto_resposta or {}
@@ -673,11 +694,33 @@ def gerar_resposta(
         nome = str(plano.get("nome") or estado.get("plano_confirmado") or "")
         valor = _fmt_money(plano.get("valor") or plano.get("valor_pontualidade"))
         preco = f" — *{valor}*" if valor else ""
-        pergunta_txt = normalizar_texto(
-            str(ctx.get("pergunta_original") or decisao.pergunta or "")
-        )
+        pergunta_bruta = str(ctx.get("pergunta_original") or decisao.pergunta or "")
+        pergunta_txt = normalizar_texto(pergunta_bruta)
         topico = str(ctx.get("topico_contexto") or "")
         beneficio = _detectar_beneficio_pergunta(pergunta_txt)
+        from app.cadastro_mensagens import campos_para_pedir, pedir_campos
+
+        prox_cad = campos_para_pedir(estado) or ["nome", "cpf"]
+        retomada = pedir_campos(prox_cad)
+        prefixo = f"Perfeito! Vamos seguir com o *{nome}*{preco}.\n\n"
+
+        if topico == "cancelamento" or eh_pergunta_cancelamento(
+            pergunta_bruta, pergunta_bruta, topico=topico
+        ):
+            return (
+                prefixo
+                + informar_cancelamento_e_retomar(
+                    pendente=prox_cad[0] if prox_cad else "nome",
+                    pergunta_valor=any(
+                        x in pergunta_txt
+                        for x in ("quanto", "valor", "ficaria", "multa", "taxa")
+                    ),
+                )
+            )
+        if topico == "preco_plano" or eh_pergunta_preco_plano_nomeado(
+            pergunta_txt, pergunta_bruta
+        ):
+            return prefixo + informar_preco_plano(plano if isinstance(plano, dict) else {}) + f"\n\n{retomada}"
         if beneficio or topico == "beneficio_plano":
             from app.plans_catalog import listar_planos
 
@@ -690,24 +733,18 @@ def gerar_resposta(
                 or chave in str(p.get("beneficios") or p.get("descricao") or "").casefold()
                 or chave in str(p.get("nome") or "").casefold()
             ]
-            return informar_planos_por_beneficio(
+            return prefixo + informar_planos_por_beneficio(
                 beneficio or "benefício", com, plano_atual=plano
-            )
-        if topico == "instalacao" or eh_pergunta_instalacao(
-            pergunta_txt, str(ctx.get("pergunta_original") or decisao.pergunta or "")
-        ):
+            ) + f"\n\n{retomada}"
+        if topico == "instalacao" or eh_pergunta_instalacao(pergunta_txt, pergunta_bruta):
             inst = informar_instalacao_e_retomar(
-                pendente="confirmacao_plano",
+                pendente=prox_cad[0] if prox_cad else "nome",
                 plano_nome=nome,
                 pergunta_custo=bool(ctx.get("pergunta_custo_instalacao")),
             )
-            from app.cadastro_mensagens import pedir_campos
-
-            return (
-                f"Perfeito! Vamos seguir com o *{nome}*{preco}.\n\n"
-                f"{inst}\n\n{pedir_campos(['nome', 'cpf'])}"
-            )
-        # Demais dúvidas: LLM + RAG abaixo
+            return prefixo + inst + f"\n\n{retomada}"
+        detalhe = informar_detalhes_plano(plano if isinstance(plano, dict) else {})
+        return prefixo + detalhe + f"\n\n{retomada}"
 
     if decisao.objetivo_resposta == "CONFIRMAR_HORARIO_E_RESPONDER_PERGUNTA":
         from app.parser import normalizar_texto
@@ -777,7 +814,30 @@ def gerar_resposta(
     if decisao.objetivo_resposta == "RESPONDER_SEM_BASE_RAG":
         ctx = decisao.contexto_resposta or {}
         pendente = str(ctx.get("pendente") or decisao.aguardando or "")
-        return responder_sem_base_rag(pendente)
+        topico = str(ctx.get("topico_contexto") or "")
+        if topico == "cancelamento":
+            return informar_cancelamento_e_retomar(
+                pendente=pendente,
+                pergunta_valor=bool(ctx.get("pergunta_valor_multa")),
+            )
+        if topico == "instalacao":
+            return informar_instalacao_e_retomar(
+                pendente=pendente,
+                plano_nome=str(
+                    estado.get("plano_confirmado")
+                    or estado.get("plano_em_negociacao")
+                    or ""
+                ),
+                pergunta_custo=bool(ctx.get("pergunta_custo_instalacao")),
+            )
+        if topico == "beneficio_plano":
+            plano = _plano_do_estado(estado, ctx)
+            return informar_detalhes_plano(plano if isinstance(plano, dict) else {}) + (
+                f"\n\n{responder_sem_base_rag(pendente).split('.')[0]}."
+                if pendente
+                else ""
+            )
+        return responder_sem_base_rag(pendente, topico=topico)
 
     if str(estado.get("fase") or "") == "cadastro" and decisao.objetivo_resposta in {
         "CONTINUAR_CONVERSA",

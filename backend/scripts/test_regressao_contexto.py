@@ -2557,6 +2557,61 @@ def test_perfil_dificil_desvios_e_dados_fora_ordem() -> None:
     _assert(dec.objetivo_resposta == "PEDIR_CPF", dec.objetivo_resposta)
 
 
+def test_flex_coloquial_nao_dispara_plano() -> None:
+    from app.parser import _detectar_plano_na_mensagem, parse_interpretacao
+
+    _assert(_detectar_plano_na_mensagem("preciso de algo mais flexivel") == "", "flex coloquial")
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "telefone",
+        "plano_confirmado": "MOV ONE+",
+        "nome": "Ana",
+        "cpf": "60421079096",
+        "email": "a@t.com",
+    }
+    i = parse_interpretacao(
+        _raw({"eventos": ["OUTRO"], "dados": {}, "confianca": 0.8}),
+        "preciso de algo mais flexivel",
+        estado,
+    )
+    _assert(Evento.PLANO_INFORMADO.value not in i.eventos, i.eventos)
+
+
+def test_agendamento_tem_outro_horario_nao_troca_plano() -> None:
+    estado = {
+        "fase": "agendamento",
+        "aguardando": "escolha_horario",
+        "horarios_manha": '["08h às 10h", "10h às 12h"]',
+        "horarios_tarde": '["14h às 16h"]',
+        "plano_confirmado": "MOV ONE+",
+    }
+    msg = "tem outro horario?"
+    i = parse_interpretacao(
+        _raw({"eventos": ["NEGACAO"], "dados": {}, "confianca": 0.9}),
+        msg,
+        estado,
+    )
+    _assert(Evento.PEDIU_TROCAR_PLANO.value not in i.eventos, i.eventos)
+    _assert(Evento.NEGACAO.value in i.eventos, i.eventos)
+
+
+def test_followup_nao_herda_topico_sem_ser_curto() -> None:
+    ctx = enriquecer_pergunta(
+        "quanto custa o mov up?",
+        ultimo_topico="cancelamento",
+        historico=[],
+        plano_nome="MOV ONE+",
+    )
+    _assert(ctx.get("topico") != "cancelamento", ctx.get("topico"))
+
+
+def test_buffer_conflito_usa_ultima_intencao() -> None:
+    from app.message_buffer import _resolver_mensagens_conflitantes
+
+    msg = _resolver_mensagens_conflitantes(["sim", "nao quero esse"])
+    _assert("nao" in msg.casefold(), msg)
+
+
 def test_preco_plano_no_cadastro_retoma() -> None:
     estado = {
         "fase": "cadastro",
@@ -2589,6 +2644,10 @@ def main() -> None:
         test_cadastro_buffer_cep_fora_ordem,
         test_preco_plano_limpa_topico,
         test_perfil_dificil_desvios_e_dados_fora_ordem,
+        test_flex_coloquial_nao_dispara_plano,
+        test_agendamento_tem_outro_horario_nao_troca_plano,
+        test_followup_nao_herda_topico_sem_ser_curto,
+        test_buffer_conflito_usa_ultima_intencao,
         test_confirmar_plano_resposta_pula_nome_ja_informado,
         test_ja_disse_o_nome_reconhece,
         test_sim_apos_cancelamento_com_nome_no_estado,

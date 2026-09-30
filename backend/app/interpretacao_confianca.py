@@ -65,7 +65,7 @@ def avaliar_necessidade_clarificacao(
     from app.pos_venda_mensagens import eh_pedido_encerrar
     from app.state_machine import ORDEM_CADASTRO
 
-    # confianca=0 → LLM não informou (testes/regressão) — não bloquear fluxo.
+    # confianca=0 → testes/LLM omitiu score — não bloquear fluxo determinístico.
     if confianca <= 0 or confianca >= CONFIANCA_ALTA:
         return None
 

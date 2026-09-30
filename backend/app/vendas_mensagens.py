@@ -22,6 +22,21 @@ def informar_sem_cobertura(cidade: str = "", bairro: str = "") -> str:
     )
 
 
+def esclarecer_bairro(bairro: str = "", sugeridos: list[str] | None = None) -> str:
+    b = str(bairro or "").strip()
+    opts = [str(s).strip() for s in (sugeridos or []) if str(s).strip()]
+    if opts:
+        lista = ", ".join(f"*{x}*" for x in opts[:5])
+        return (
+            f"Encontrei mais de uma opção para *{b or 'esse bairro'}*. "
+            f"Qual é o correto: {lista}?"
+        )
+    return (
+        f"Só para confirmar: o bairro é *{b}* mesmo? "
+        "Se quiser, me passe *cidade e bairro* completos."
+    )
+
+
 def insistencia_sem_cobertura(tentativa: int, max_tentativas: int = 3) -> str:
     restante = max_tentativas - tentativa
     if restante <= 0:
@@ -790,7 +805,7 @@ def esclarecer_promocao_plano(plano: dict[str, Any] | None = None) -> str:
     )
 
 
-def responder_sem_base_rag(pendente: str = "") -> str:
+def responder_sem_base_rag(pendente: str = "", *, topico: str = "") -> str:
     retomada = ""
     mapa = {
         "confirmacao_plano": "a confirmação do plano",
@@ -798,16 +813,25 @@ def responder_sem_base_rag(pendente: str = "") -> str:
         "lista_planos": "a escolha do plano",
         "escolha_horario": "o horário de instalação",
         "localizacao": "sua cidade e bairro",
+        "nome": "seu cadastro",
+        "cpf": "seu cadastro",
+        "email": "seu cadastro",
+        "telefone": "seu cadastro",
         "duvidas": "o encerramento do atendimento",
     }
     if pendente in mapa:
         retomada = f"\n\nQuando quiser, seguimos com {mapa[pendente]}."
+    elif pendente in {"data_nascimento", "cep", "rua", "numero", "confirmacao_dados"}:
+        retomada = "\n\nQuando quiser, seguimos com seu cadastro."
     if pendente == "duvidas":
         retomada = "\n\nMais alguma dúvida antes de encerrar?"
+    extra_topico = ""
+    if topico == "preco_plano":
+        extra_topico = " Sobre preço, posso te mostrar os planos disponíveis na região."
     return (
         "Boa pergunta! Não tenho essa informação confirmada aqui agora — "
         "prefiro não te passar algo impreciso."
-        f"{retomada}\n\n"
+        f"{extra_topico}{retomada}\n\n"
         "Se precisar de detalhe técnico ou comercial específico, posso encaminhar para a equipe."
     )
 

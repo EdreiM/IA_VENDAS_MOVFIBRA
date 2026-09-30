@@ -933,8 +933,10 @@ def _salvar_desvio_cadastro(estado: dict[str, Any], dados: dict[str, Any]) -> di
     d = dict(dados)
     if _texto(estado.get("fase")) == "cadastro" or _texto(estado.get("fase_anterior")) == "cadastro":
         d["fase_anterior"] = "cadastro"
+        prox = _proximo_cadastro(estado, d)
         d["aguardando_anterior"] = (
-            _texto(estado.get("aguardando_anterior"))
+            prox
+            or _texto(estado.get("aguardando_anterior"))
             or _texto(estado.get("aguardando"))
             or "nome"
         )
@@ -1393,6 +1395,8 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             "INFORMAR_PRECO_PLANO_E_RETOMAR",
             "INFORMAR_PLANOS_POR_BENEFICIO",
             "RESPONDER_PERGUNTA_E_RETOMAR",
+            "CONFIRMAR_PLANO_E_RESPONDER_PERGUNTA",
+            "RESPONDER_SEM_BASE_RAG",
         }:
             d_final["limpar_topico"] = True
         return Decisao(
@@ -1605,12 +1609,14 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                 if fase == "inicio" or flags.get("saudacao")
                 else "PEDIR_LOCALIZACAO"
             )
+            d_contr = dict(dados_base)
+            d_contr["tentativas_sem_cobertura"] = 0
             return dec(
                 "RESPONDER",
                 obj_loc,
                 "viabilidade",
                 "localizacao",
-                dict(dados_base),
+                d_contr,
                 "Cliente quer contratar — pedir localização",
                 "GLOBAL_PLANO",
             )
@@ -3219,6 +3225,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
         )
 
     if fase == "sem_cobertura":
+        loc_sc = resolucao.get("localizacao") or {}
         if flags.get("pedido_contratacao") or flags.get("pediu_trocar_localizacao_efetivo"):
             d = dict(dados_base)
             d["tentativas_sem_cobertura"] = 0
@@ -3231,7 +3238,70 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                 "Tentar outro endereço",
                 "FASE",
             )
-        tentativas = int(estado.get("tentativas_sem_cobertura") or 0) + 1
+        if loc_sc.get("informada") and not loc_sc.get("repetida"):
+            d = dict(dados_base)
+            d["tentativas_sem_cobertura"] = 0
+            return dec(
+                "CHECAR_COBERTURA",
+                None,
+                "viabilidade",
+                "resultado_cobertura",
+                d,
+                "Nova localização em sem_cobertura",
+                "FASE",
+            )
+        from app.parser import eh_confirmacao, tem_duvida_informativa, normalizar_texto
+
+        msg_sc = _texto(resolucao.get("mensagem"))
+        t_sc = normalizar_texto(msg_sc)
+        eh_ack = (
+            eh_confirmacao(msg_sc)
+            or flags.get("conversa_social")
+            or (len(t_sc.split()) <= 3 and not loc_sc.get("informada"))
+        )
+        eh_pergunta_sc = bool(flags.get("tem_pergunta")) or tem_duvida_informativa(
+            msg_sc, msg_sc
+        )
+        tentativas = int(estado.get("tentativas_sem_cobertura") or 0)
+        if eh_ack or eh_pergunta_sc:
+            if eh_pergunta_sc and not loc_sc.get("repetida"):
+                return dec(
+                    "RESPONDER",
+                    "RESPONDER_PERGUNTA_E_RETOMAR",
+                    "sem_cobertura",
+                    None,
+                    dict(dados_base),
+                    "Dúvida em sem_cobertura — sem contar insistência",
+                    "GLOBAL_PERGUNTA",
+                    pergunta=msg_sc,
+                    contexto={
+                        "pendente": "localizacao",
+                        "topico_contexto": str(resolucao.get("topico_contexto") or ""),
+                        "pergunta_original": msg_sc,
+                    },
+                )
+            return dec(
+                "RESPONDER",
+                "INSISTENCIA_SEM_COBERTURA",
+                "sem_cobertura",
+                None,
+                {**dados_base, "tentativas_sem_cobertura": tentativas},
+                "Ack/pergunta em sem_cobertura — sem incrementar",
+                "FASE",
+                contexto={"tentativa": max(tentativas, 1), "max": TENTATIVAS_MAX},
+            )
+        if not loc_sc.get("repetida"):
+            return dec(
+                "RESPONDER",
+                "INSISTENCIA_SEM_COBERTURA",
+                "sem_cobertura",
+                None,
+                {**dados_base, "tentativas_sem_cobertura": tentativas},
+                "Mensagem genérica — lembrar sem cobertura",
+                "FASE",
+                contexto={"tentativa": max(tentativas, 1), "max": TENTATIVAS_MAX},
+            )
+        tentativas += 1
         if tentativas >= TENTATIVAS_MAX:
             return dec(
                 "TRANSFERIR_HUMANO",
@@ -3648,19 +3718,21 @@ def decidir_resultado_termos(
         and str(resultado.get("provider") or "").lower() == "mock"
     )
 
-    if resultado.get("erro") and not enviados and not parcial:
+    if (resultado.get("erro") and not enviados and not parcial) or (
+        not termo and not audio and not mock_sem_anexo
+    ):
+        motivo_erro = _texto(resultado.get("motivo")) or "Erro ao enviar termos"
         return Decisao(
             acao="TRANSFERIR_HUMANO",
-            objetivo_resposta="INFORMAR_ERRO_E_TRANSFERENCIA",
+            objetivo_resposta="INFORMAR_ERRO_TERMOS_E_TRANSFERENCIA",
             fase="transferido",
             aguardando=None,
             atualizar_dados={
                 "transferido_humano": True,
-                "motivo_transferencia": _texto(resultado.get("motivo"))
-                or "Erro ao enviar termos",
+                "motivo_transferencia": motivo_erro,
             },
-            contexto_resposta={"motivo": _texto(resultado.get("motivo"))},
-            motivo=_texto(resultado.get("motivo")) or "Erro ao enviar termos",
+            contexto_resposta={"motivo": motivo_erro},
+            motivo=motivo_erro,
             prioridade="TERMOS",
         )
 
@@ -3694,7 +3766,7 @@ def decidir_resultado_ativacao(
         and not resultado.get("erro")
     ) or bool(resultado.get("ativado"))
 
-    if not ok:
+    if not ok or bool(resultado.get("transferir")):
         return Decisao(
             acao="TRANSFERIR_HUMANO",
             objetivo_resposta="INFORMAR_ERRO_ATIVACAO_E_TRANSFERENCIA",
