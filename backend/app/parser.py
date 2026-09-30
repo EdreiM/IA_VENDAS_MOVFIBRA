@@ -607,25 +607,69 @@ def eh_pedido_plano_promocional(msg: str) -> bool:
     )
 
 
-def cliente_confirmou_ver_planos_desconto(msg: str, ultima_eva: str) -> bool:
-    """'Sim' após Eva oferecer mostrar planos com desconto."""
+def cliente_confirmou_ver_planos_desconto(
+    msg: str,
+    ultima_eva: str,
+    *,
+    contexto_plano: str = "",
+) -> bool:
+    """'Sim' após Eva oferecer mostrar planos com desconto — não confirmação de plano único."""
     if not eh_confirmacao(msg):
+        return False
+    ctx = normalizar_texto(contexto_plano)
+    if ctx == "confirmacao_unico" or ctx == "apresentacao_inicial":
+        return False
+    if ctx == "oferta_lista_desconto":
+        return True
+    if ctx == "escolha_catalogo":
         return False
     u = normalizar_texto(ultima_eva)
     if not u:
         return False
-    return any(
+    # Confirmação de um plano já apresentado (benefícios citam pontualidade, mas não é lista).
+    if any(
         p in u
         for p in (
-            "planos com desconto",
-            "planos com esse beneficio",
-            "mostrar os planos com",
-            "te mostro os planos",
-            "mostro os planos com",
-            "desconto de pontualidade",
-            "beneficio de pontualidade",
+            "pode confirmar esse",
+            "quer confirmar esse",
+            "confirmar esse pra gente",
+            "ficou este",
+            "esse plano te atende",
         )
+    ):
+        return False
+    ofertas_lista = (
+        "planos com desconto",
+        "planos com esse beneficio",
+        "mostrar os planos",
+        "mostre os planos",
+        "te mostro os planos",
+        "te mostre os planos",
+        "mostro os planos com",
+        "ver os planos com",
+        "ver planos com",
+        "quer que eu te mostre",
+        "quer ver os planos",
+        "listar os planos",
     )
+    if any(p in u for p in ofertas_lista):
+        return True
+    if any(p in u for p in ("desconto de pontualidade", "beneficio de pontualidade")):
+        return any(
+            q in u
+            for q in (
+                "quer ver",
+                "te mostro",
+                "te mostre",
+                "mostro os",
+                "mostrar os",
+                "ver os planos",
+                "outras opcoes",
+                "outros planos",
+                "planos com",
+            )
+        )
+    return False
 
 
 # Pergunta informativa sobre mudança de endereço pós-contratação (≠ trocar cobertura agora)

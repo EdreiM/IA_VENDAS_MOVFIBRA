@@ -77,10 +77,16 @@ def enviar_imagem_plano(estado: dict[str, Any]) -> dict[str, Any]:
             "erro": False,
         }
 
-    # Chatwoot direto (token + arquivo local)
+    # Chatwoot direto (token + arquivo local) — só se provider não for webhook
+    # (evita imagem duplicada quando n8n também envia ao Chatwoot)
     from app.chatwoot_config import resolver_chatwoot_api_token
 
-    if local is not None and cid and resolver_chatwoot_api_token():
+    if (
+        provider != "webhook"
+        and local is not None
+        and cid
+        and resolver_chatwoot_api_token()
+    ):
         from app.integrations import chatwoot as chatwoot_api
 
         envio = chatwoot_api.enviar_anexo_imagem(cid, str(local))

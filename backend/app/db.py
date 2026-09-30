@@ -390,6 +390,7 @@ def _migrar_colunas(cur: Any) -> None:
         ("followup_count", "INTEGER DEFAULT 0"),
         ("last_client_message_at", "TIMESTAMPTZ"),
         ("last_followup_at", "TIMESTAMPTZ"),
+        ("contexto_plano", "TEXT"),
     ]
     for nome, tipo in extras:
         if nome not in cols:
@@ -706,6 +707,7 @@ def salvar_transicao(
         "ultima_pergunta_cliente", "termos_enviados", "audio_fidelidade_enviado",
         "fidelidade_aceita", "ativado_ixc", "imagem_plano_enviada",
         "imagens_plano_enviadas",
+        "contexto_plano",
     ]
 
     for chave in mapeamento:
@@ -784,6 +786,11 @@ def salvar_transicao(
         novo["aguardando_anterior"] = None
     if atualizar.get("limpar_topico"):
         novo["ultimo_topico"] = None
+    if "contexto_plano" in atualizar:
+        val_ctx = atualizar["contexto_plano"]
+        novo["contexto_plano"] = (
+            str(val_ctx).strip() if val_ctx is not None else None
+        ) or None
 
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -812,6 +819,7 @@ def salvar_transicao(
                     termos_enviados = %s, audio_fidelidade_enviado = %s,
                     fidelidade_aceita = %s, ativado_ixc = %s,
                     imagem_plano_enviada = %s, imagens_plano_enviadas = %s,
+                    contexto_plano = %s,
                     updated_at = %s
                 WHERE id_cliente = %s
                 """,
@@ -874,6 +882,7 @@ def salvar_transicao(
                     json.dumps(novo.get("imagens_plano_enviadas") or [], ensure_ascii=False)
                     if isinstance(novo.get("imagens_plano_enviadas"), list)
                     else (novo.get("imagens_plano_enviadas") or "[]"),
+                    novo.get("contexto_plano"),
                     _now(),
                     id_cliente,
                 ),

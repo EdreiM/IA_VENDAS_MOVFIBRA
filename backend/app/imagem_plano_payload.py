@@ -78,7 +78,11 @@ def montar_payload_imagem_plano(estado: dict[str, Any]) -> dict[str, Any]:
     payload["imagem_mime_type"] = _mime_type(file_name)
     payload["chatwoot_attachment_field"] = "attachments[]"
 
-    content = legenda_imagem_plano(plano_db)
+    # Texto completo do plano vem na mensagem seguinte — legenda vazia evita duplicata no WhatsApp
+    if estado.get("_omitir_legenda_imagem"):
+        content = ""
+    else:
+        content = legenda_imagem_plano(plano_db)
     payload["content"] = content
     payload["descricao"] = content
 

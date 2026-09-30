@@ -613,8 +613,17 @@ def _dec_apresentar_plano_unico(
     contexto_extra: dict[str, Any] | None = None,
 ) -> Decisao:
     """Apresenta um plano; envia imagem antes (se pendente). Nunca usar para lista completa."""
+    from app.plano_intencao import CTX_APRESENTACAO_INICIAL, CTX_CONFIRMACAO_UNICO
+
+    dados = dict(dados)
+    dados["contexto_plano"] = (
+        CTX_APRESENTACAO_INICIAL
+        if objetivo == "APRESENTAR_PLANO_INICIAL"
+        else CTX_CONFIRMACAO_UNICO
+    )
     extra = dict(contexto_extra or {})
     if _imagem_pendente_para_plano(estado, plano.get("id")):
+        dados["_omitir_legenda_imagem"] = True
         return Decisao(
             acao="ENVIAR_IMAGEM_PLANO",
             objetivo_resposta=None,
@@ -1877,29 +1886,46 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             "FASE_CADASTRO",
         )
 
-    # Promo/desconto/lista — antes de tratar como confirmação de plano
+    # Fase planos — intenção explícita (contexto_plano + aguardando), não heurística frágil
     from app.parser import (
-        cliente_confirmou_ver_planos_desconto,
         eh_esclarecimento_promo_plano,
         eh_pedido_lista_completa_planos,
         eh_pedido_plano_promocional,
-        eh_pedido_planos_com_desconto,
         normalizar_texto,
+    )
+    from app.plano_intencao import (
+        CTX_ESCOLHA_CATALOGO,
+        IntencaoPlano,
+        resolver_intencao_plano_vendas,
     )
 
     msg_n_plano = normalizar_texto(str(resolucao.get("mensagem") or ""))
+    from app.parser import eh_confirmacao as _eh_conf_vendas
+
     pediu_lista_completa = eh_pedido_lista_completa_planos(msg_n_plano)
-    pediu_planos_desconto = eh_pedido_planos_com_desconto(msg_n_plano) or (
-        flags.get("confirmacao")
-        and cliente_confirmou_ver_planos_desconto(
-            msg_n_plano, str(estado.get("ultima_mensagem_sofia") or "")
+    intencao_plano = IntencaoPlano.NENHUMA
+    if fase == "vendas" and estado.get("tem_cobertura") is True:
+        intencao_plano = resolver_intencao_plano_vendas(
+            estado, resolucao, flags, aguardando=aguardando or ""
         )
-    )
+
     pediu_listar_todos = (
         plano.get("pediu_troca_declarada")
         and (flags.get("tem_pergunta") or pediu_lista_completa)
         and fase == "vendas"
     ) or (pediu_lista_completa and fase == "vendas" and estado.get("tem_cobertura") is True)
+
+    if intencao_plano == IntencaoPlano.PEDIR_ESCOLHA:
+        return dec(
+            "RESPONDER",
+            "RETOMAR_ESCOLHA_PLANO",
+            "vendas",
+            "escolha_plano",
+            dict(dados_base),
+            "Sim após catálogo — precisa escolher plano pelo nome",
+            "GLOBAL_PLANO",
+            contexto={"pendente": "plano"},
+        )
 
     if (
         fase == "vendas"
@@ -1946,28 +1972,52 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     if (
         fase == "vendas"
         and estado.get("tem_cobertura") is True
-        and pediu_planos_desconto
-        and not pediu_lista_completa
-        and not eh_pedido_plano_promocional(msg_n_plano)
+        and intencao_plano == IntencaoPlano.LISTAR_DESCONTO
     ):
+        d_lista = dict(dados_base)
+        d_lista["contexto_plano"] = CTX_ESCOLHA_CATALOGO
         return dec(
             "LISTAR_TODOS_PLANOS",
             None,
             "vendas",
-            "lista_planos",
-            dict(dados_base),
+            "escolha_plano",
+            d_lista,
             "Cliente pediu planos com desconto/promoção",
             "GLOBAL_PLANO",
             contexto={"lista_completa": True, "filtro": "desconto"},
         )
 
-    if pediu_listar_todos and estado.get("tem_cobertura") is True:
+    if (
+        intencao_plano == IntencaoPlano.LISTAR_TODOS
+        and pediu_listar_todos
+        and estado.get("tem_cobertura") is True
+    ):
+        d_lista = dict(dados_base)
+        d_lista["contexto_plano"] = CTX_ESCOLHA_CATALOGO
         return dec(
             "LISTAR_TODOS_PLANOS",
             None,
             "vendas",
-            "lista_planos",
-            dict(dados_base),
+            "escolha_plano",
+            d_lista,
+            "Cliente pediu lista completa de planos",
+            "GLOBAL_PLANO",
+            contexto={"lista_completa": True},
+        )
+
+    if (
+        pediu_listar_todos
+        and estado.get("tem_cobertura") is True
+        and intencao_plano != IntencaoPlano.CONFIRMAR
+    ):
+        d_lista = dict(dados_base)
+        d_lista["contexto_plano"] = CTX_ESCOLHA_CATALOGO
+        return dec(
+            "LISTAR_TODOS_PLANOS",
+            None,
+            "vendas",
+            "escolha_plano",
+            d_lista,
             "Cliente pediu lista completa de planos",
             "GLOBAL_PLANO",
             contexto={"lista_completa": True},
@@ -1990,15 +2040,21 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
         and (_eh_conf_plano(msg_cliente) or flags.get("confirmacao"))
         and not flags.get("negacao")
     )
+    confirma_por_intencao = (
+        fase == "vendas"
+        and intencao_plano == IntencaoPlano.CONFIRMAR
+        and not flags.get("negacao")
+    )
     _impede_confirm = (
         False
-        if confirma_pura
+        if (confirma_pura or confirma_por_intencao)
         else _pergunta_impede_confirmacao_plano(
             resolucao, flags, plano=plano, estado=estado
         )
     )
     confirma_plano_vendas = (
-        confirma_pura
+        confirma_por_intencao
+        or confirma_pura
         or (
             (
                 flags.get("confirmacao")
@@ -2014,9 +2070,12 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     ) and not _impede_confirm
     if (
         fase == "vendas"
-        and aguardando == "confirmacao_plano"
         and confirma_plano_vendas
         and not plano.get("pediu_troca_declarada")
+        and (
+            aguardando == "confirmacao_plano"
+            or intencao_plano == IntencaoPlano.CONFIRMAR
+        )
     ):
         nome = _texto(estado.get("plano_em_negociacao") or estado.get("plano_apresentado"))
         pid = estado.get("plano_em_negociacao_id") or estado.get("plano_apresentado_id")
@@ -2029,6 +2088,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             d = _mesclar_dados_cadastro_resolucao(dict(dados_base), dados_base, cadastro)
             d["plano_confirmado"] = nome
             d["plano_confirmado_id"] = int(pid)
+            d["contexto_plano"] = ""
             vinha_cadastro = _texto(estado.get("fase_anterior")) == "cadastro"
 
             # Imagem: preferir na apresentação do plano único; na confirmação só se ainda não enviou
@@ -4147,6 +4207,8 @@ def decidir_lista_planos(
     sugerido = plano_destaque(estado) or ref or (planos[0] if planos else {})
 
     if lista_completa:
+        from app.plano_intencao import CTX_ESCOLHA_CATALOGO
+
         # Sem imagem — várias bolhas de texto; imagem só quando escolher 1 plano
         return Decisao(
             acao="RESPONDER",
@@ -4155,6 +4217,7 @@ def decidir_lista_planos(
             aguardando="escolha_plano",
             atualizar_dados={
                 **desvio,
+                "contexto_plano": CTX_ESCOLHA_CATALOGO,
                 "tentativas_plano_invalido": 0,
                 "plano_apresentado": sugerido.get("nome"),
                 "plano_apresentado_id": int(sugerido["id"]) if sugerido.get("id") is not None else None,
@@ -4186,8 +4249,11 @@ def decidir_lista_planos(
                 sugerido = p
                 break
 
+    from app.plano_intencao import CTX_ALTERNATIVAS
+
     dados_alt = {
         **desvio,
+        "contexto_plano": CTX_ALTERNATIVAS,
         "tentativas_plano_invalido": 0,
         "plano_apresentado": sugerido.get("nome"),
         "plano_apresentado_id": int(sugerido["id"]) if sugerido.get("id") is not None else None,

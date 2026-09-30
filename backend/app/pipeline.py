@@ -91,7 +91,7 @@ def _executar_acao(estado: dict[str, Any], decisao: Decisao) -> Decisao:
         )
         lista_completa = bool(ctx_lista.get("lista_completa"))
         # LISTAR_TODOS sempre mostra o catálogo completo (ou filtrado)
-        dec_lista = decidir_lista_planos(planos, ref, estado, lista_completa=True or lista_completa)
+        dec_lista = decidir_lista_planos(planos, ref, estado, lista_completa=lista_completa)
         if str(ctx_lista.get("filtro") or "").casefold() == "desconto":
             ctx_out = dict(dec_lista.contexto_resposta or {})
             ctx_out["filtro"] = "desconto"
@@ -157,6 +157,8 @@ def _executar_acao(estado: dict[str, Any], decisao: Decisao) -> Decisao:
 
     if acao == "ENVIAR_IMAGEM_PLANO":
         estado_efetivo = {**estado, **(decisao.atualizar_dados or {})}
+        if (decisao.atualizar_dados or {}).get("_omitir_legenda_imagem"):
+            estado_efetivo["_omitir_legenda_imagem"] = True
         ctx_img = decisao.contexto_resposta or {}
         plano_ctx = ctx_img.get("plano") if isinstance(ctx_img.get("plano"), dict) else {}
         if plano_ctx.get("id") is not None:
@@ -400,11 +402,18 @@ def process_message(
         )
         decisao = _executar_acao(estado, decisao)
 
+    from app.plano_intencao import contexto_por_objetivo_resposta
+
+    ctx_plano_auto = contexto_por_objetivo_resposta(decisao.objetivo_resposta)
+    dados_finais = dict(decisao.atualizar_dados or {})
+    if ctx_plano_auto and "contexto_plano" not in dados_finais:
+        dados_finais["contexto_plano"] = ctx_plano_auto
+
     estado = db.salvar_transicao(
         id_cliente,
         decisao.fase,
         decisao.aguardando,
-        decisao.atualizar_dados,
+        dados_finais,
     )
 
     chatwoot_handoff = None
@@ -462,9 +471,13 @@ def process_message(
     rag_hit = bool(rag.get("encontrado") or rag.get("chunks") or rag.get("resposta"))
 
     imagens = _imagens_plano_do_contexto(ctx_final)
+    # Painel local: registra imagem no histórico; Chatwoot já recebeu via webhook/API
+    cid_conv = str(estado.get("conversation_id") or conversation_id or "").strip()
     for img in imagens:
         url = str(img.get("url") or "").strip()
         if not url:
+            continue
+        if cid_conv:
             continue
         nome = str(img.get("plano_nome") or "").strip()
         legenda = f"📦 {nome}" if nome else "Imagem do plano"

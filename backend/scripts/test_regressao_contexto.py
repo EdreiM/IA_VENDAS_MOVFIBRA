@@ -463,18 +463,19 @@ def test_payload_imagem_plano_pronto_chatwoot() -> None:
         "beneficios": "Mesh\nUbook",
     }
 
-    class _Cfg:
-        public_base_url = "https://api.teste.mov"
-
     with __import__("unittest.mock", fromlist=["patch"]).patch(
         "app.planos_admin.obter_plano", return_value=plano
     ), __import__("unittest.mock", fromlist=["patch"]).patch(
-        "app.media_store.get_settings", return_value=_Cfg()
+        "app.chatwoot_config.resolver_public_base_url",
+        return_value="https://api.teste.mov",
     ):
         p = montar_payload_imagem_plano(estado)
 
     _assert(p["conversation_id"] == "3075", p)
-    _assert(p["imagem_url"] == "https://api.teste.mov/media/planos/plano_1212_test.jpg", p)
+    _assert(
+        p["imagem_url"] == "https://api.teste.mov/media/planos/plano_1212_test.jpg",
+        p.get("imagem_url"),
+    )
     _assert("Internet ilimitada" in p["content"], p["content"])
     _assert(p["imagem_file_name"] == "plano_1212_test.jpg", p)
     _assert(p["chatwoot_attachment_field"] == "attachments[]", p)
@@ -1886,10 +1887,38 @@ def test_pedido_planos_com_desconto_lista_filtrada() -> None:
     _assert((dec.contexto_resposta or {}).get("filtro") == "desconto", dec.contexto_resposta)
 
 
+def test_sim_confirma_plano_nao_lista_desconto() -> None:
+    """Sim após apresentar MOV FLEX confirma plano — não relista promoções."""
+    ultima = (
+        "Ficou este:\n\n"
+        "📦 PLANO MOV FLEX – R$ 119,00/mês\n"
+        "💰 Pagando até o vencimento, a mensalidade fica por apenas R$ 99,00\n"
+        "✅ Você economiza R$ 20,00 todos os meses com o desconto de pontualidade\n"
+        "Pode confirmar esse pra gente seguir?"
+    )
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "contexto_plano": "confirmacao_unico",
+        "plano_em_negociacao": "MOV FLEX",
+        "plano_em_negociacao_id": 1214,
+        "tem_cobertura": True,
+        "ultima_mensagem_sofia": ultima,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Sim",
+        {"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "CONFIRMAR_PLANO_E_AVANCAR", dec.objetivo_resposta)
+    _assert(dec.acao != "LISTAR_TODOS_PLANOS", dec.acao)
+
+
 def test_sim_apos_oferta_desconto_lista_planos() -> None:
     estado = {
         "fase": "vendas",
         "aguardando": "escolha_plano",
+        "contexto_plano": "oferta_lista_desconto",
         "tem_cobertura": True,
         "ultima_mensagem_sofia": "Quer que eu te mostre os planos com esse benefício?",
     }
@@ -1900,6 +1929,75 @@ def test_sim_apos_oferta_desconto_lista_planos() -> None:
     )
     _assert(dec.acao == "LISTAR_TODOS_PLANOS", dec.acao)
     _assert((dec.contexto_resposta or {}).get("filtro") == "desconto", dec.contexto_resposta)
+
+
+def test_sim_apos_lista_catalogo_confirma_plano_em_foco() -> None:
+    """Após lista errada, Sim com MOV FLEX em negociação confirma — não relista."""
+    estado = {
+        "fase": "vendas",
+        "aguardando": "escolha_plano",
+        "contexto_plano": "escolha_catalogo",
+        "plano_em_negociacao": "MOV FLEX",
+        "plano_em_negociacao_id": 1214,
+        "tem_cobertura": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Sim",
+        {"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "CONFIRMAR_PLANO_E_AVANCAR", dec.objetivo_resposta)
+    _assert(dec.acao != "LISTAR_TODOS_PLANOS", dec.acao)
+
+
+def test_fluxo_atendimento_mais_barato_sim_cadastro() -> None:
+    """Reproduz atendimento real: FLEX apresentado → Sim → cadastro."""
+    estado_flex = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "contexto_plano": "confirmacao_unico",
+        "plano_em_negociacao": "MOV FLEX",
+        "plano_em_negociacao_id": 1214,
+        "plano_apresentado": "MOV FLEX",
+        "plano_apresentado_id": 1214,
+        "tem_cobertura": True,
+        "cidade": "Santarem",
+        "bairro": "Diamantino",
+    }
+    dec = _decidir_sem_executar(
+        estado_flex,
+        "Sim",
+        {"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.95},
+    )
+    _assert(dec.fase == "cadastro", dec.fase)
+    _assert(dec.objetivo_resposta == "CONFIRMAR_PLANO_E_AVANCAR", dec.objetivo_resposta)
+    _assert(dec.acao != "LISTAR_TODOS_PLANOS", dec.acao)
+
+
+def test_omitir_legenda_imagem_quando_texto_segue() -> None:
+    from app.imagem_plano_payload import montar_payload_imagem_plano
+
+    estado = {
+        "conversation_id": "3075",
+        "plano_em_negociacao_id": "1212",
+        "_omitir_legenda_imagem": True,
+    }
+    plano = {
+        "id": 1212,
+        "nome": "MOV SUPER+",
+        "imagem_url": "/media/planos/plano_1212_test.jpg",
+    }
+
+    class _Cfg:
+        public_base_url = "https://api.teste.mov"
+
+    with __import__("unittest.mock", fromlist=["patch"]).patch(
+        "app.planos_admin.obter_plano", return_value=plano
+    ), __import__("unittest.mock", fromlist=["patch"]).patch(
+        "app.media_store.get_settings", return_value=_Cfg()
+    ):
+        p = montar_payload_imagem_plano(estado)
+    _assert(p.get("content") == "", p.get("content"))
 
 
 def test_pedido_lista_completa_planos() -> None:
@@ -2662,7 +2760,11 @@ def main() -> None:
         test_cancelamento_followup_nao_pede_data_nascimento_para_calcular,
         test_esclarecimento_promo_nao_lista_planos,
         test_pedido_planos_com_desconto_lista_filtrada,
+        test_sim_confirma_plano_nao_lista_desconto,
         test_sim_apos_oferta_desconto_lista_planos,
+        test_sim_apos_lista_catalogo_confirma_plano_em_foco,
+        test_fluxo_atendimento_mais_barato_sim_cadastro,
+        test_omitir_legenda_imagem_quando_texto_segue,
         test_pedido_lista_completa_planos,
         test_mais_forte_resolve_premium,
         test_quero_na_promocao_nao_confirma_plano_atual,
