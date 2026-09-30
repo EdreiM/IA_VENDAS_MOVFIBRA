@@ -40,6 +40,23 @@ from app.state_machine import (
 )
 
 
+def _imagens_plano_do_contexto(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extrai imagens de plano enviadas no turno (painel + Chatwoot)."""
+    img_url = str(ctx.get("imagem_url") or "").strip()
+    if not img_url or not (
+        bool(ctx.get("imagem_plano_enviada")) or bool(ctx.get("imagem_painel"))
+    ):
+        return []
+    plano_ctx = ctx.get("plano") if isinstance(ctx.get("plano"), dict) else {}
+    return [
+        {
+            "url": img_url,
+            "plano_id": plano_ctx.get("id"),
+            "plano_nome": plano_ctx.get("nome") or "",
+        }
+    ]
+
+
 def _executar_acao(estado: dict[str, Any], decisao: Decisao) -> Decisao:
     acao = decisao.acao
 
@@ -320,9 +337,15 @@ def process_message(
     if ctx_perg.get("pergunta"):
         interpretacao.pergunta = str(ctx_perg["pergunta"])
 
+    from app.parser import eh_apenas_dado_cadastro, eh_mensagem_correcao_cadastro
+
     topico_meta: dict[str, Any] = {}
     if ctx_perg.get("topico"):
         topico_meta["ultimo_topico"] = ctx_perg["topico"]
+    elif eh_apenas_dado_cadastro(mensagem, mensagem) or eh_mensagem_correcao_cadastro(
+        mensagem, mensagem
+    ):
+        topico_meta["limpar_topico"] = True
     if interpretacao.pergunta:
         topico_meta["ultima_pergunta_cliente"] = interpretacao.pergunta
     if topico_meta:
@@ -428,7 +451,8 @@ def process_message(
             resposta = "\n\n".join(outputs)
         elif (resposta or "").strip():
             outputs = [resposta]
-        db.salvar_resposta(id_cliente, resposta)
+        if (resposta or "").strip():
+            db.salvar_resposta(id_cliente, resposta)
 
     estado = db.carregar_ou_criar_estado(id_cliente)
 
@@ -437,30 +461,14 @@ def process_message(
     rag = ctx_final.get("rag") if isinstance(ctx_final.get("rag"), dict) else {}
     rag_hit = bool(rag.get("encontrado") or rag.get("chunks") or rag.get("resposta"))
 
-    imagens: list[dict[str, Any]] = []
-    img_url = str(ctx_final.get("imagem_url") or "").strip()
-    if img_url and (
-        bool(ctx_final.get("imagem_plano_enviada"))
-        or bool(ctx_final.get("imagem_painel"))
-    ):
-        plano_ctx = ctx_final.get("plano") if isinstance(ctx_final.get("plano"), dict) else {}
-        imagens.append(
-            {
-                "url": img_url,
-                "plano_id": plano_ctx.get("id"),
-                "plano_nome": plano_ctx.get("nome") or "",
-            }
-        )
-    # Evita bolha duplicada (mesmo plano / mesma URL) no chat local
-    vistos: set[str] = set()
-    imagens_uniq: list[dict[str, Any]] = []
+    imagens = _imagens_plano_do_contexto(ctx_final)
     for img in imagens:
-        chave = str(img.get("url") or "").strip() or f"id:{img.get('plano_id')}"
-        if chave in vistos:
+        url = str(img.get("url") or "").strip()
+        if not url:
             continue
-        vistos.add(chave)
-        imagens_uniq.append(img)
-    imagens = imagens_uniq
+        nome = str(img.get("plano_nome") or "").strip()
+        legenda = f"📦 {nome}" if nome else "Imagem do plano"
+        db.log_mensagem(id_cliente, "eva", legenda, imagem_url=url)
 
     db.log_turno(
         id_cliente,

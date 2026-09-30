@@ -140,6 +140,7 @@ export type MensagemHistorico = {
   id: number;
   remetente: string;
   mensagem: string;
+  imagem_url?: string | null;
   created_at: string | null;
 };
 

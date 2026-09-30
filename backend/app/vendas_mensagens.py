@@ -227,12 +227,18 @@ def informar_instalacao_e_retomar(
     pendente: str = "confirmacao_plano",
     plano_nome: str = "",
     pergunta_custo: bool = False,
+    ja_esclarecido: bool = False,
 ) -> str:
     """
     Resposta fixa sobre instalação — sem inventar 'hoje' nem fidelidade/taxa.
     Agenda só depois do cadastro.
     """
-    if pergunta_custo:
+    if ja_esclarecido:
+        corpo = (
+            "Sobre a instalação, já te expliquei — depois do cadastro você escolhe "
+            "um horário na agenda da região."
+        )
+    elif pergunta_custo:
         corpo = (
             "Sim! A *instalação é gratuita* — visita do técnico e configuração "
             "já estão inclusas no plano, sem taxa extra de instalação."

@@ -1601,6 +1601,13 @@ export default function App() {
                                 : ""}
                             </small>
                             <div>{m.mensagem}</div>
+                            {m.imagem_url ? (
+                              <img
+                                className="conv-plano-img"
+                                src={m.imagem_url}
+                                alt={m.mensagem || "Plano"}
+                              />
+                            ) : null}
                           </div>
                         ))
                       )}

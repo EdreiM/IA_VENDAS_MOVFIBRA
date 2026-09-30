@@ -170,9 +170,15 @@ def anotar_e_pedir_proximo(
     return corpo or prefixo_retomada
 
 
-def confirmar_plano_e_avancar(plano_nome: str, valor: str = "") -> str:
+def confirmar_plano_e_avancar(
+    plano_nome: str,
+    valor: str = "",
+    estado: dict[str, Any] | None = None,
+) -> str:
     preco = f" — *{valor}*" if valor else ""
+    estado = estado or {}
+    faltam = campos_para_pedir(estado) or (["cpf"] if str(estado.get("nome") or "").strip() else ["nome", "cpf"])
     return (
         f"Perfeito! Vamos seguir com o *{plano_nome}*{preco}. "
-        + pedir_campos(["nome", "cpf"])
+        + pedir_campos(faltam)
     )

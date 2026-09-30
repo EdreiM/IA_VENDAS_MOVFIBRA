@@ -87,6 +87,7 @@ SCHEMA_STATEMENTS = [
         id_cliente TEXT NOT NULL,
         remetente TEXT NOT NULL,
         mensagem TEXT NOT NULL,
+        imagem_url TEXT,
         created_at TIMESTAMPTZ
     )
     """,
@@ -433,6 +434,10 @@ def _migrar_painel(cur: Any) -> None:
     if "tags" not in planos_cols:
         cur.execute("ALTER TABLE planos ADD COLUMN tags TEXT DEFAULT '[]'")
 
+    hist_cols = _colunas_existentes(cur, "historico_mensagens_ia")
+    if hist_cols and "imagem_url" not in hist_cols:
+        cur.execute("ALTER TABLE historico_mensagens_ia ADD COLUMN imagem_url TEXT")
+
     promo_cols = _colunas_existentes(cur, "promocoes")
     if "unidade_id" not in promo_cols:
         cur.execute("ALTER TABLE promocoes ADD COLUMN unidade_id INTEGER")
@@ -570,16 +575,23 @@ def carregar_ou_criar_estado(id_cliente: str) -> dict[str, Any]:
             return _row_to_dict(cur.fetchone()) or {}
 
 
-def log_mensagem(id_cliente: str, remetente: str, mensagem: str) -> None:
+def log_mensagem(
+    id_cliente: str,
+    remetente: str,
+    mensagem: str,
+    *,
+    imagem_url: str = "",
+) -> None:
     now = _now()
+    img = str(imagem_url or "").strip() or None
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO historico_mensagens_ia (id_cliente, remetente, mensagem, created_at)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO historico_mensagens_ia (id_cliente, remetente, mensagem, imagem_url, created_at)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
-                (id_cliente, remetente, mensagem, now),
+                (id_cliente, remetente, mensagem, img, now),
             )
             if remetente == "cliente":
                 cur.execute(
@@ -770,6 +782,8 @@ def salvar_transicao(
     if atualizar.get("limpar_desvio"):
         novo["fase_anterior"] = None
         novo["aguardando_anterior"] = None
+    if atualizar.get("limpar_topico"):
+        novo["ultimo_topico"] = None
 
     with get_connection() as conn:
         with conn.cursor() as cur:

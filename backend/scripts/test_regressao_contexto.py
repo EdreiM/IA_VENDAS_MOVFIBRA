@@ -2238,6 +2238,111 @@ def test_plano_nao_encontrado_instalacao_redireciona() -> None:
     _assert("instala" in txt.casefold(), txt)
 
 
+def test_email_nao_herda_topico_instalacao() -> None:
+    ctx = enriquecer_pergunta(
+        "edreiteste@gmail.com",
+        ultimo_topico="instalacao",
+        plano_nome="MOV ONE+",
+    )
+    _assert(ctx.get("topico") is None, ctx)
+
+
+def test_cadastro_email_apos_instalacao_nao_repete() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "email",
+        "nome": "Edrei maciel testes",
+        "cpf": "60421079096",
+        "plano_confirmado": "MOV ONE+",
+        "documento_cpf_validado": True,
+        "ultimo_topico": "instalacao",
+        "tem_cobertura": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "edreiteste@gmail.com",
+        {
+            "eventos": ["DADO_INFORMADO"],
+            "dados": {"email": "edreiteste@gmail.com"},
+            "confianca": 0.9,
+        },
+    )
+    _assert(
+        dec.objetivo_resposta != "INFORMAR_INSTALACAO_E_RETOMAR",
+        dec.objetivo_resposta,
+    )
+    _assert(dec.aguardando == "telefone", dec.aguardando)
+
+
+def test_pode_ser_confirma_plano_mesmo_com_plano_informado_llm() -> None:
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "plano_em_negociacao": "MOV ONE+",
+        "plano_em_negociacao_id": 1211,
+        "tem_cobertura": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Pode ser",
+        {
+            "eventos": ["CONFIRMACAO", "PLANO_INFORMADO"],
+            "dados": {"plano": "pode ser"},
+            "confianca": 0.9,
+        },
+    )
+    _assert(dec.objetivo_resposta == "CONFIRMAR_PLANO_E_AVANCAR", dec.objetivo_resposta)
+    _assert(dec.fase == "cadastro", dec.fase)
+
+
+def test_confirmar_plano_resposta_pula_nome_ja_informado() -> None:
+    from app.cadastro_mensagens import confirmar_plano_e_avancar
+
+    estado = {"nome": "Edrei maciel testes"}
+    txt = confirmar_plano_e_avancar("MOV ONE+", "R$ 139,00", estado)
+    _assert("CPF" in txt, txt)
+    _assert("nome completo" not in txt.casefold(), txt)
+
+
+def test_ja_disse_o_nome_reconhece() -> None:
+    from app.parser import eh_mensagem_correcao_cadastro
+
+    _assert(
+        eh_mensagem_correcao_cadastro("Ja disse o nome", "Ja disse o nome"),
+        "ja disse o nome",
+    )
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "nome",
+        "nome": "Edrei maciel testes",
+        "plano_confirmado": "MOV ONE+",
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Ja disse o nome",
+        {"eventos": ["OUTRO"], "dados": {}, "confianca": 0.8},
+    )
+    _assert(dec.objetivo_resposta == "PEDIR_CPF", dec.objetivo_resposta)
+
+
+def test_sim_apos_cancelamento_com_nome_no_estado() -> None:
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "nome",
+        "nome": "Edrei maciel testes",
+        "plano_confirmado": "MOV ONE+",
+        "plano_confirmado_id": 1211,
+        "ultimo_topico": "cancelamento",
+        "tem_cobertura": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Sim",
+        {"eventos": ["CONFIRMACAO", "DADO_INFORMADO"], "dados": {"nome": "Edrei maciel testes"}, "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "PEDIR_CPF", dec.objetivo_resposta)
+
+
 def test_plano_bloqueado_pos_cadastro() -> None:
     estado = {
         "fase": "termos",
@@ -2349,6 +2454,12 @@ def test_preco_plano_no_cadastro_retoma() -> None:
 def main() -> None:
     tests = [
         test_plano_nao_encontrado_instalacao_redireciona,
+        test_email_nao_herda_topico_instalacao,
+        test_cadastro_email_apos_instalacao_nao_repete,
+        test_pode_ser_confirma_plano_mesmo_com_plano_informado_llm,
+        test_confirmar_plano_resposta_pula_nome_ja_informado,
+        test_ja_disse_o_nome_reconhece,
+        test_sim_apos_cancelamento_com_nome_no_estado,
         test_plano_bloqueado_pos_cadastro,
         test_alteracao_bloqueada_pos_cadastro,
         test_troca_plano_retoma_cadastro,

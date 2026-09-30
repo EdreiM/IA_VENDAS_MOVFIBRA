@@ -38,6 +38,7 @@
   --space-md: 16px;
   --space-lg: 24px;
   --space-xl: 32px;
+  color-scheme: dark;
 }
 
 * {
@@ -56,12 +57,44 @@ body {
   line-height: 1.5;
 }
 
-button,
+button {
+  font: inherit;
+}
+
 input,
 select,
 textarea {
   font: inherit;
-  color: inherit;
+}
+
+/* Controles de formulário — fundo escuro + texto legível (Windows/Chrome) */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
+select,
+textarea {
+  background-color: var(--surface-input);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+select {
+  cursor: pointer;
+  min-width: 8rem;
+}
+
+select option {
+  background-color: var(--panel2);
+  color: var(--text);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]):focus,
+select:focus,
+textarea:focus {
+  border-color: rgba(139, 92, 246, 0.55);
+  box-shadow: var(--glow);
 }
 
 .shell {
@@ -247,11 +280,6 @@ label textarea,
   padding: 10px 14px;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-select option {
-  background: #2b005c;
-  color: #ffffff;
 }
 
 .login-shell {
@@ -589,6 +617,8 @@ button.danger,
 
 .conv-list-tools input {
   width: 100%;
+  background-color: var(--surface-input);
+  color: var(--text);
 }
 
 .conv-list ul {
@@ -715,6 +745,16 @@ button.danger,
   max-width: none;
   background: rgba(122, 60, 255, 0.14);
   border-radius: 12px;
+}
+
+.conv-plano-img {
+  display: block;
+  max-width: min(320px, 100%);
+  width: auto;
+  height: auto;
+  margin-top: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(140, 90, 200, 0.45);
 }
 
 .conv-meta-bar {
@@ -1375,6 +1415,12 @@ button.chip:hover:not(:disabled) {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+}
+
+.page-header-action select {
+  min-width: 11rem;
+  background-color: var(--surface-input);
+  color: var(--text);
 }
 
 .page-split {

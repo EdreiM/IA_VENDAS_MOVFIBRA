@@ -481,11 +481,12 @@ _CHAVES_CANCELAMENTO = (
 
 
 def eh_apenas_dado_cadastro(msg: str, msg_bruto: str = "") -> bool:
-    """Mensagem só com dado cadastral (data, CEP, número…) — sem pergunta."""
-    t = normalizar_texto(msg_bruto or msg)
+    """Mensagem só com dado cadastral (email, CPF, telefone, data, CEP…) — sem pergunta."""
+    bruto = texto(msg_bruto or msg)
+    t = normalizar_texto(bruto)
     if not t:
         return False
-    if "?" in (msg_bruto or msg):
+    if "?" in bruto:
         return False
     if any(p in t for p in _CHAVES_CANCELAMENTO):
         return False
@@ -502,6 +503,16 @@ def eh_apenas_dado_cadastro(msg: str, msg_bruto: str = "") -> bool:
         )
     ):
         return False
+    if _extrair_email(bruto):
+        resto = EMAIL_RE.sub("", bruto).strip()
+        resto = re.sub(r"(?i)^(?:meu\s+)?(?:e-?mail|email)\s*(?:é|e|eh|:|-)?\s*", "", resto).strip()
+        if not resto or len(normalizar_texto(resto).split()) <= 2:
+            return True
+    if _parece_cpf_cnpj(msg, bruto):
+        return True
+    digits = _somente_digitos(bruto)
+    if len(digits) in {10, 11} and len(t.split()) <= 3:
+        return True
     compacto = re.sub(r"\s+", "", t)
     if re.fullmatch(r"\d{8}", compacto):
         return True
@@ -1099,6 +1110,8 @@ def eh_mensagem_correcao_cadastro(msg: str, msg_bruto: str = "") -> bool:
         )
     ):
         return any(c in t for c in ("rua", "nome", "email", "telefone", "cep", "numero", "bairro", "cpf"))
+    if any(p in t for p in REPETICAO_DADO):
+        return True
     return False
 
 
@@ -1655,11 +1668,19 @@ def eh_pergunta_instalacao(
     """Dúvida sobre instalação, prazo, técnico ou 'conseguem vir hoje?'."""
     if eh_pedido_contratacao(msg, msg_bruto):
         return False
+    if eh_apenas_dado_cadastro(msg, msg_bruto):
+        return False
+    if eh_mensagem_correcao_cadastro(msg, msg_bruto):
+        return False
     if eh_pergunta_custo_instalacao(msg, msg_bruto):
         return True
-    if (topico or "").strip().casefold() == "instalacao":
-        return True
     t = normalizar_texto(msg_bruto or msg)
+    if (topico or "").strip().casefold() == "instalacao":
+        from app.contexto_conversa import eh_followup_curto
+
+        if eh_followup_curto(t) or any(k in t for k in CHAVES_INSTALACAO):
+            return True
+        return False
     if not t:
         return False
     if any(k in t for k in CHAVES_INSTALACAO):
@@ -1852,8 +1873,8 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         campos_corrigidos = []
         pergunta = ""
 
-    elif msg in REPETICAO_DADO and aguardando_cadastro:
-        # "já disse" — reutiliza dado que já está no estado
+    elif aguardando_cadastro and any(p in msg for p in REPETICAO_DADO):
+        # "já disse o nome" — reutiliza dado que já está no estado
         campo_map = {
             "nome": "nome",
             "cpf": "cpf",
@@ -1864,7 +1885,13 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             "rua": "rua",
             "numero": "numero",
         }
-        campo = campo_map.get(aguardando)
+        campo = None
+        for chave in campo_map:
+            if chave in msg:
+                campo = chave
+                break
+        if not campo:
+            campo = campo_map.get(aguardando)
         if campo and estado.get(campo):
             eventos = [e for e in eventos if e != Evento.OUTRO.value]
             if Evento.DADO_INFORMADO.value not in eventos:
@@ -2559,6 +2586,29 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
 
         dados.plano = normalizar_referencia_plano(dados.plano) or dados.plano
 
+    # Confirmação pura do plano — não deixar PLANO_INFORMADO/PERGUNTA fantasma do LLM
+    if (
+        aguardando_plano
+        and eh_confirmacao(msg)
+        and not eh_pedido_contratacao(msg, msg_bruto)
+        and not tem_duvida_informativa(msg, msg_bruto)
+    ):
+        eventos = [
+            e
+            for e in eventos
+            if e
+            not in {
+                Evento.PERGUNTA.value,
+                Evento.PLANO_INFORMADO.value,
+                Evento.PEDIU_TROCAR_PLANO.value,
+                Evento.OUTRO.value,
+            }
+        ]
+        if Evento.CONFIRMACAO.value not in eventos:
+            eventos.append(Evento.CONFIRMACAO.value)
+        dados.plano = ""
+        pergunta = ""
+
     from app.interpretacao_campo import aplicar_guards_interpretacao
 
     pergunta = aplicar_guards_interpretacao(
@@ -2573,6 +2623,28 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         campos_corrigidos=campos_corrigidos,
         confianca=confianca,
     )
+
+    if (
+        aguardando_plano
+        and eh_confirmacao(msg)
+        and not eh_pedido_contratacao(msg, msg_bruto)
+        and not tem_duvida_informativa(msg, msg_bruto)
+    ):
+        eventos = [
+            e
+            for e in eventos
+            if e
+            not in {
+                Evento.PERGUNTA.value,
+                Evento.PLANO_INFORMADO.value,
+                Evento.PEDIU_TROCAR_PLANO.value,
+                Evento.OUTRO.value,
+            }
+        ]
+        if Evento.CONFIRMACAO.value not in eventos:
+            eventos.append(Evento.CONFIRMACAO.value)
+        dados.plano = ""
+        pergunta = ""
 
     return Interpretacao(
         eventos=eventos,

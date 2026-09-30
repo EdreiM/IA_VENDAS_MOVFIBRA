@@ -621,6 +621,7 @@ def gerar_resposta(
             pendente=str(ctx.get("pendente") or decisao.aguardando or "confirmacao_plano"),
             plano_nome=nome,
             pergunta_custo=bool(ctx.get("pergunta_custo_instalacao")),
+            ja_esclarecido=bool(ctx.get("instalacao_ja_esclarecido_antes")),
         )
 
     if decisao.objetivo_resposta == "INFORMAR_PLANOS_POR_BENEFICIO":
@@ -661,7 +662,7 @@ def gerar_resposta(
         plano = _plano_do_estado(estado, ctx)
         nome = str(plano.get("nome") or estado.get("plano_confirmado") or "")
         valor = _fmt_money(plano.get("valor") or plano.get("valor_pontualidade"))
-        return confirmar_plano_e_avancar(nome, valor)
+        return confirmar_plano_e_avancar(nome, valor, estado)
 
     if decisao.objetivo_resposta == "CONFIRMAR_PLANO_E_RESPONDER_PERGUNTA":
         from app.parser import eh_pergunta_instalacao, normalizar_texto

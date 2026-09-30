@@ -125,7 +125,7 @@ def historico_mensagens(id_cliente: str, limite: int = 100) -> list[dict[str, An
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, remetente, mensagem, created_at
+                SELECT id, remetente, mensagem, imagem_url, created_at
                 FROM historico_mensagens_ia
                 WHERE id_cliente = %s
                 ORDER BY id ASC
