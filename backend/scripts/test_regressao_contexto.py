@@ -2429,6 +2429,134 @@ def test_troca_plano_retoma_cadastro() -> None:
     _assert("cpf" in txt.casefold(), txt)
 
 
+def test_cadastro_buffer_cep_fora_ordem() -> None:
+    """Cliente manda CEP enquanto pendente é e-mail — aceita e pede o que falta."""
+    base = {
+        "fase": "cadastro",
+        "aguardando": "email",
+        "nome": "Edrei tester",
+        "cpf": "60421079096",
+        "plano_confirmado": "MOV FLEX",
+        "documento_cpf_validado": True,
+        "cidade": "Santarem",
+        "bairro": "Centro",
+    }
+    msg = "68020000"
+    raw = _raw({"eventos": ["DADO_INFORMADO"], "dados": {"cep": "68020000"}, "confianca": 0.9})
+    interp = parse_interpretacao(raw, msg, base)
+    _assert(interp.dados.cep == "68020000", f"cep={interp.dados.cep}")
+    dec = _decidir_sem_executar(base, msg, {"eventos": ["DADO_INFORMADO"], "dados": {"cep": "68020000"}, "confianca": 0.9})
+    anotados = list((dec.contexto_resposta or {}).get("campos_anotados") or [])
+    _assert("cep" in anotados, f"anotados={anotados}")
+    _assert(dec.aguardando == "email", f"aguardando={dec.aguardando}")
+
+
+def test_pode_ser_com_nome_confirma_e_anota() -> None:
+    """'Pode ser, Nome Completo' confirma plano e já anota o nome."""
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "plano_em_negociacao": "MOV ONE+",
+        "plano_em_negociacao_id": 1211,
+        "tem_cobertura": True,
+    }
+    msg = "Pode ser, Edrei maciel testes"
+    raw = _raw(
+        {
+            "eventos": ["CONFIRMACAO", "DADO_INFORMADO"],
+            "dados": {"nome": "Edrei maciel testes"},
+            "confianca": 0.9,
+        }
+    )
+    interp = parse_interpretacao(raw, msg, estado)
+    _assert(Evento.CONFIRMACAO.value in interp.eventos, interp.eventos)
+    _assert(interp.dados.nome == "Edrei maciel testes", f"nome={interp.dados.nome}")
+    dec = _decidir_sem_executar(
+        estado,
+        msg,
+        {
+            "eventos": list(interp.eventos),
+            "dados": interp.dados.model_dump(),
+            "confianca": 0.9,
+        },
+    )
+    _assert(dec.objetivo_resposta == "CONFIRMAR_PLANO_E_AVANCAR", dec.objetivo_resposta)
+    _assert(dec.fase == "cadastro", dec.fase)
+    _assert(dec.aguardando == "cpf", f"aguardando={dec.aguardando} (nome já anotado)")
+    _assert(
+        (dec.atualizar_dados or {}).get("nome") == "Edrei maciel testes",
+        dec.atualizar_dados,
+    )
+
+
+def test_preco_plano_limpa_topico() -> None:
+    """Após responder preço, limpar_topico evita repetir a mesma dúvida."""
+    estado = {
+        "fase": "cadastro",
+        "aguardando": "cpf",
+        "nome": "João Silva",
+        "plano_confirmado": "MOV SUPER+",
+        "plano_confirmado_id": 1212,
+        "ultimo_topico": "preco",
+        "tem_cobertura": True,
+    }
+    dec = _decidir_sem_executar(
+        estado,
+        "Quanto custa o mov up?",
+        {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_PRECO_PLANO_E_RETOMAR", dec.objetivo_resposta)
+    _assert((dec.atualizar_dados or {}).get("limpar_topico") is True, dec.atualizar_dados)
+
+
+def test_perfil_dificil_desvios_e_dados_fora_ordem() -> None:
+    """Roteiro estilo Edrei: dúvida + dados fora de ordem sem travar."""
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "plano_em_negociacao": "MOV ONE+",
+        "plano_em_negociacao_id": 1211,
+        "tem_cobertura": True,
+        "cidade": "Santarem",
+        "bairro": "Centro",
+    }
+    estado, dec = _turno(
+        estado,
+        "Pode ser, Edrei maciel testes",
+        {
+            "eventos": ["CONFIRMACAO", "DADO_INFORMADO"],
+            "dados": {"nome": "Edrei maciel testes"},
+            "confianca": 0.9,
+        },
+    )
+    _assert(dec.objetivo_resposta == "CONFIRMAR_PLANO_E_AVANCAR", dec.objetivo_resposta)
+    _assert(estado.get("nome") == "Edrei maciel testes", estado.get("nome"))
+    _assert(estado.get("aguardando") == "cpf", estado.get("aguardando"))
+
+    estado, dec = _turno(
+        estado,
+        "68020000",
+        {"eventos": ["DADO_INFORMADO"], "dados": {"cep": "68020000"}, "confianca": 0.9},
+    )
+    _assert("cep" in list((dec.contexto_resposta or {}).get("campos_anotados") or []), dec.contexto_resposta)
+    _assert(estado.get("cep") == "68020000", estado.get("cep"))
+
+    estado, dec = _turno(
+        estado,
+        "tem multa se cancelar?",
+        {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR", dec.objetivo_resposta)
+    _assert((dec.atualizar_dados or {}).get("limpar_topico") is True, dec.atualizar_dados)
+
+    estado, dec = _turno(
+        estado,
+        "Sim",
+        {"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.9},
+    )
+    _assert(dec.objetivo_resposta == "PEDIR_CPF", dec.objetivo_resposta)
+
+
 def test_preco_plano_no_cadastro_retoma() -> None:
     estado = {
         "fase": "cadastro",
@@ -2457,6 +2585,10 @@ def main() -> None:
         test_email_nao_herda_topico_instalacao,
         test_cadastro_email_apos_instalacao_nao_repete,
         test_pode_ser_confirma_plano_mesmo_com_plano_informado_llm,
+        test_pode_ser_com_nome_confirma_e_anota,
+        test_cadastro_buffer_cep_fora_ordem,
+        test_preco_plano_limpa_topico,
+        test_perfil_dificil_desvios_e_dados_fora_ordem,
         test_confirmar_plano_resposta_pula_nome_ja_informado,
         test_ja_disse_o_nome_reconhece,
         test_sim_apos_cancelamento_com_nome_no_estado,

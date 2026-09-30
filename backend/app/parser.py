@@ -937,6 +937,25 @@ def _extrair_cpf_embutido(bruto: str) -> str:
     return "".join(m.groups())
 
 
+def _extrair_nome_apos_confirmacao(bruto: str) -> str:
+    """Nome após confirmação do plano ('Pode ser, Edrei Silva' / 'Sim, meu nome é João')."""
+    principal = _parte_principal_dado(bruto)
+    segs = _segmentos_mensagem(principal)
+    if len(segs) >= 2 and eh_confirmacao(segs[0]):
+        nome = _extrair_nome_livre(",".join(segs[1:]))
+        if nome:
+            return nome
+    rest = re.sub(
+        r"(?i)^(?:sim|si|ok|certo|beleza|blz|isso|pode ser|quero|confirmo|fechado)[,.:\s]+",
+        "",
+        principal,
+    ).strip()
+    if rest and rest != principal:
+        rest = re.sub(r"(?i)^(?:meu nome e|meu nome é|sou o|sou a|nome)\s+", "", rest).strip()
+        return _extrair_nome_livre(rest) or _extrair_nome_livre(principal)
+    return ""
+
+
 def _extrair_nome_livre(bruto: str) -> str:
     t = _strip_trailing_question_mark(_parte_principal_dado(bruto))
     t = re.sub(r"(?<!\d)(\d{3})\.?(\d{3})\.?(\d{3})-?(\d{2})(?!\d)", " ", t)
@@ -1502,6 +1521,21 @@ def eh_pergunta_mudanca_endereco(msg: str) -> bool:
     return False
 
 
+_CHAVES_DUVIDA_COM_BORDA = frozenset(
+    {"e se", "se eu", "tem mais", "o que tem", "quanto tempo", "quando vem", "quando instala"}
+)
+
+
+def _texto_tem_chave_duvida(t: str) -> bool:
+    for k in CHAVES_DUVIDA_INFORMATIVA:
+        if k in _CHAVES_DUVIDA_COM_BORDA:
+            if re.search(rf"(?<!\w){re.escape(k)}(?!\w)", t):
+                return True
+        elif k in t:
+            return True
+    return False
+
+
 def tem_duvida_informativa(
     msg: str,
     msg_bruto: str = "",
@@ -1517,18 +1551,18 @@ def tem_duvida_informativa(
     if len(partes_sep) >= 2:
         parte_duvida = partes_sep[1]
         t_duvida = normalizar_texto(parte_duvida)
-        if "?" in parte_duvida or any(k in t_duvida for k in CHAVES_DUVIDA_INFORMATIVA):
+        if "?" in parte_duvida or _texto_tem_chave_duvida(t_duvida):
             return True
         bruto = partes_sep[0]
     t = normalizar_texto(bruto)
     if aguardando and bruto.rstrip().endswith("?"):
         if _texto_parece_apenas_dado_cadastro(bruto, aguardando):
             sem_q = _strip_trailing_question_mark(bruto)
-            if not any(k in normalizar_texto(sem_q) for k in CHAVES_DUVIDA_INFORMATIVA):
+            if not _texto_tem_chave_duvida(normalizar_texto(sem_q)):
                 return False
     if "?" in bruto:
         return True
-    return any(k in t for k in CHAVES_DUVIDA_INFORMATIVA)
+    return _texto_tem_chave_duvida(t)
 
 
 def eh_pergunta_detalhe_plano(msg: str, msg_bruto: str = "") -> bool:
@@ -2645,6 +2679,17 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             eventos.append(Evento.CONFIRMACAO.value)
         dados.plano = ""
         pergunta = ""
+
+    if (
+        aguardando == "confirmacao_plano"
+        and eh_confirmacao(msg)
+        and not dados.nome
+    ):
+        nome_conf = _extrair_nome_apos_confirmacao(msg_bruto)
+        if nome_conf:
+            dados.nome = nome_conf
+            if Evento.DADO_INFORMADO.value not in eventos:
+                eventos.append(Evento.DADO_INFORMADO.value)
 
     return Interpretacao(
         eventos=eventos,

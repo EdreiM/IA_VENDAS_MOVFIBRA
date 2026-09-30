@@ -661,14 +661,32 @@ def _campos_cadastro_permitidos(
     return permitidos
 
 
+def _campos_cadastro_aceitaveis(
+    estado: dict[str, Any],
+    dados: dict[str, Any],
+    aguardando: str,
+    correcoes: list[str] | None = None,
+) -> set[str]:
+    """Pendente, seguintes, correções e campos ainda vazios (buffer fora de ordem)."""
+    if aguardando not in ORDEM_CADASTRO:
+        return set()
+    aceitaveis = _campos_cadastro_permitidos(aguardando, correcoes)
+    for c in ORDEM_CADASTRO:
+        if c not in aceitaveis and not _campo_ok(estado, dados, c):
+            aceitaveis.add(c)
+    return aceitaveis
+
+
 def _filtrar_campos_cadastro_pendente(
     aguardando: str | None,
     campos_info: list[str],
     correcoes: list[str],
+    estado: dict[str, Any] | None = None,
+    dados: dict[str, Any] | None = None,
 ) -> tuple[list[str], bool]:
     """
-    Aceita o campo pendente e campos seguintes na ordem do cadastro.
-    Eco do LLM em campos anteriores (ex.: nome quando pedimos rua) é ignorado.
+    Aceita pendente, campos seguintes e campos vazios fora de ordem.
+    Eco do LLM em campos anteriores já preenchidos (ex.: nome quando pedimos rua) é ignorado.
     """
     if not aguardando or aguardando == "confirmacao_dados":
         return campos_info, False
@@ -679,9 +697,11 @@ def _filtrar_campos_cadastro_pendente(
     if not cadastro_campos:
         return campos_info, False
 
-    permitidos = _campos_cadastro_permitidos(aguardando, correcoes)
-    aceitos = [c for c in cadastro_campos if c in permitidos]
-    rejeitados = [c for c in cadastro_campos if c not in permitidos]
+    aceitaveis = _campos_cadastro_aceitaveis(
+        estado or {}, dados or {}, aguardando, correcoes
+    )
+    aceitos = [c for c in cadastro_campos if c in aceitaveis]
+    rejeitados = [c for c in cadastro_campos if c not in aceitaveis]
     if rejeitados and not aceitos:
         return [], True
     return aceitos, False
@@ -690,13 +710,36 @@ def _filtrar_campos_cadastro_pendente(
 def _correcoes_no_par(
     aguardando: str | None,
     correcoes: list[str],
+    estado: dict[str, Any] | None = None,
+    dados: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Correções só em campos permitidos (pendente + seguintes)."""
+    """Correções em campos aceitáveis (pendente, seguintes, vazios ou explícitos)."""
     if not aguardando or aguardando not in ORDEM_CADASTRO:
         return list(correcoes)
 
-    permitidos = {c.lower() for c in _campos_cadastro_permitidos(aguardando, correcoes)}
-    return [c for c in correcoes if c.lower() in permitidos]
+    aceitaveis = {
+        c.lower()
+        for c in _campos_cadastro_aceitaveis(
+            estado or {}, dados or {}, aguardando, correcoes
+        )
+    }
+    return [c for c in correcoes if c.lower() in aceitaveis]
+
+
+def _mesclar_dados_cadastro_resolucao(
+    d: dict[str, Any],
+    dados_base: dict[str, Any],
+    cadastro: dict[str, Any],
+) -> dict[str, Any]:
+    """Inclui dados cadastrais antecipados na confirmação de plano."""
+    out = dict(d)
+    for c in ORDEM_CADASTRO:
+        if dados_base.get(c) and not _campo_ok({}, out, c):
+            out[c] = dados_base[c]
+    for c in cadastro.get("campos_informados") or []:
+        if c in ORDEM_CADASTRO and dados_base.get(c):
+            out[c] = dados_base[c]
+    return out
 
 
 def _dados_sem_campos_rejeitados(
@@ -1277,14 +1320,19 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     dados_base = dict((resolucao.get("dados") or {}).get("para_salvar") or {})
     dados_base.pop("plano", None)
 
-    # Correção implícita só em campos permitidos (pendente + seguintes).
-    # Não transformar a rua ("sergio henn") em troca de nome.
+    # Correção implícita só em campos aceitáveis (pendente, seguintes ou vazios).
+    # Não transformar a rua ("sergio henn") em troca de nome já preenchido.
     cadastro_permitidos = (
-        _campos_cadastro_permitidos(str(aguardando), correcoes)
+        _campos_cadastro_aceitaveis(estado, dados_base, str(aguardando), correcoes)
         if aguardando in ORDEM_CADASTRO
         else set()
     )
-    correcoes = _correcoes_no_par(aguardando if isinstance(aguardando, str) else None, correcoes)
+    correcoes = _correcoes_no_par(
+        aguardando if isinstance(aguardando, str) else None,
+        correcoes,
+        estado,
+        dados_base,
+    )
     for c in campos_alterados:
         if c in {"nome", "email", "telefone", "cpf"} and c not in correcoes:
             if cadastro_permitidos and c not in cadastro_permitidos:
@@ -1320,14 +1368,33 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     ) -> Decisao:
         d_final = dict(dados if dados is not None else dados_base)
         ctx_final = dict(contexto or {})
-        if objetivo == "INFORMAR_INSTALACAO_E_RETOMAR":
+        _objetivo_topico_esclarecido: dict[str, tuple[str, str, str]] = {
+            "INFORMAR_INSTALACAO_E_RETOMAR": (
+                "instalacao",
+                "instalacao_esclarecida",
+                "instalacao_ja_esclarecido_antes",
+            ),
+            "INFORMAR_CANCELAMENTO_E_RETOMAR": (
+                "cancelamento",
+                "cancelamento_esclarecido",
+                "cancelamento_ja_esclarecido_antes",
+            ),
+        }
+        if objetivo in _objetivo_topico_esclarecido:
+            topico_chave, flag_campo, ctx_campo = _objetivo_topico_esclarecido[objetivo]
             d_final["limpar_topico"] = True
-            d_final["instalacao_esclarecida"] = True
-            if "instalacao_ja_esclarecido_antes" not in ctx_final:
-                ctx_final["instalacao_ja_esclarecido_antes"] = bool(
-                    estado.get("instalacao_esclarecida")
-                    or _texto(estado.get("ultimo_topico")) == "instalacao"
+            d_final[flag_campo] = True
+            if ctx_campo not in ctx_final:
+                ctx_final[ctx_campo] = bool(
+                    estado.get(flag_campo)
+                    or _texto(estado.get("ultimo_topico")) == topico_chave
                 )
+        elif objetivo in {
+            "INFORMAR_PRECO_PLANO_E_RETOMAR",
+            "INFORMAR_PLANOS_POR_BENEFICIO",
+            "RESPONDER_PERGUNTA_E_RETOMAR",
+        }:
+            d_final["limpar_topico"] = True
         return Decisao(
             acao=acao,
             objetivo_resposta=objetivo,
@@ -1953,7 +2020,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                 nome = nome_res or nome
                 pid = pid_res
         if nome and pid is not None:
-            d = dict(dados_base)
+            d = _mesclar_dados_cadastro_resolucao(dict(dados_base), dados_base, cadastro)
             d["plano_confirmado"] = nome
             d["plano_confirmado_id"] = int(pid)
             vinha_cadastro = _texto(estado.get("fase_anterior")) == "cadastro"
@@ -2881,7 +2948,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     if campos_info and fase in {"cadastro", "vendas", "inicio"}:
         if fase == "cadastro":
             campos_info, fora_ordem = _filtrar_campos_cadastro_pendente(
-                aguardando, campos_info, correcoes
+                aguardando, campos_info, correcoes, estado, dados_base
             )
             if fora_ordem:
                 return dec(
@@ -2894,11 +2961,15 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
                     "GLOBAL_DADOS",
                     contexto={"pendente": aguardando},
                 )
-            # Pendente + campos seguintes — ignora eco do modelo em campos anteriores
+            # Pendente, seguintes e vazios — ignora eco em campos anteriores já preenchidos
             if aguardando in ORDEM_CADASTRO:
-                permitidos = _campos_cadastro_permitidos(str(aguardando), correcoes)
-                campos_info = [c for c in campos_info if c in permitidos]
-                correcoes = _correcoes_no_par(str(aguardando), correcoes)
+                aceitaveis = _campos_cadastro_aceitaveis(
+                    estado, dados_base, str(aguardando), correcoes
+                )
+                campos_info = [c for c in campos_info if c in aceitaveis]
+                correcoes = _correcoes_no_par(
+                    str(aguardando), correcoes, estado, dados_base
+                )
             dados_base = _dados_sem_campos_rejeitados(dados_base, campos_info)
 
         if campos_info:
