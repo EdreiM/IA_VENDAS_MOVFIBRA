@@ -1588,6 +1588,24 @@ def _texto_tem_chave_duvida(t: str) -> bool:
     return False
 
 
+_RE_ABERTURA_SOCIAL = re.compile(
+    r"\b(?:oi+e?|ola+|opa|e\s*ai|bom\s+dia|boa\s+tarde|boa\s+noite|"
+    r"(?:tudo|td)\s+(?:bem|bom|certo|joia|tranquilo)|como\s+(?:vai|esta|estao|vao))\b"
+)
+_RE_COMPLEMENTO_SOCIAL = re.compile(
+    r"\b(?:beleza|blz|com\s+(?:voce|vc|voces|vcs)|por\s+ai|eva|e|ai|a|o)\b"
+)
+
+
+def eh_so_saudacao(msg_bruto: str) -> bool:
+    """'oi, tudo bem?' / 'boa tarde, como vai?' — cumprimento, não dúvida."""
+    t = re.sub(r"[^\w\s]", " ", normalizar_texto(msg_bruto))
+    if not _RE_ABERTURA_SOCIAL.search(t):
+        return False
+    resto = _RE_COMPLEMENTO_SOCIAL.sub(" ", _RE_ABERTURA_SOCIAL.sub(" ", t))
+    return not resto.strip()
+
+
 def tem_duvida_informativa(
     msg: str,
     msg_bruto: str = "",
@@ -1595,6 +1613,8 @@ def tem_duvida_informativa(
     aguardando: str | None = None,
 ) -> bool:
     bruto = texto(msg_bruto or msg)
+    if eh_so_saudacao(bruto):
+        return False
     partes_sep = re.split(
         r"(?i)\s+(?:mas|porem|porém|e se|so que|só que)\s+",
         bruto,
@@ -1909,6 +1929,13 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         dados.plano = ""
         dados.cidade = ""
         dados.bairro = ""
+        pergunta = ""
+
+    # "oi, tudo bem?" — o "?" é do cumprimento, não uma dúvida para a base de conhecimento
+    if eh_so_saudacao(msg_bruto):
+        eventos = [e for e in eventos if e not in {Evento.PERGUNTA.value, Evento.OUTRO.value}]
+        if Evento.SAUDACAO.value not in eventos:
+            eventos.append(Evento.SAUDACAO.value)
         pergunta = ""
 
     # CPF/CNPJ — força extração quando o pendente é CPF (evita ir para telefone)

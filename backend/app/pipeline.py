@@ -15,7 +15,7 @@ from app.encerrar import encerrar_atendimento
 from app.ativacao import ativar_cliente
 from app.imagem_plano import enviar_imagem_plano
 from app.termos import enviar_termos
-from app.interpreter import interpretar
+from app.interpreter import interpretar, snapshot_estado
 from app.models import Decisao, TurnoResultado
 from app.parser import parse_interpretacao
 from app.plans import alternativas, resolver_plano
@@ -317,9 +317,11 @@ def process_message(
 
     db.log_mensagem(id_cliente, "cliente", mensagem)
 
-    historico_prev = db.historico_recente(id_cliente, limite=8)
+    # +1: a mensagem atual acabou de ser gravada e o interpretador a descarta
+    historico_prev = db.historico_recente(id_cliente, limite=9)
+    estado_antes = snapshot_estado(estado)
 
-    raw = interpretar(mensagem, estado)
+    raw = interpretar(mensagem, estado, historico=historico_prev)
     interpretacao = parse_interpretacao(raw, mensagem, estado)
 
     from app.contexto_conversa import enriquecer_pergunta
@@ -495,6 +497,9 @@ def process_message(
         rag_hit=rag_hit,
         duracao_ms=duracao_ms,
         message_id=message_id or "",
+        estado_antes=estado_antes,
+        interpretacao_llm=raw,
+        confianca=float(interpretacao.confianca or 0),
     )
 
     return TurnoResultado(

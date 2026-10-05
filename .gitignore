@@ -9,4 +9,6 @@ sofia_local.db
 frontend/node_modules/
 frontend/dist/
 backend/uploads/
+# Turnos reais exportados para avaliação — contêm dados pessoais de clientes
+backend/eval/reais/
 uploads/
