@@ -14,6 +14,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+# Avaliação do interpretador: docker exec iavendas-api python scripts/eval_interpretador.py rodar
+COPY scripts/eval_interpretador.py ./scripts/eval_interpretador.py
+COPY eval ./eval
 
 EXPOSE 8000
 

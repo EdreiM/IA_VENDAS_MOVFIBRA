@@ -137,6 +137,28 @@ def _limpar_nome_local(nome: str, *, preferir: str | None = None) -> str:
     return _titulo(n)
 
 
+# Saudações em frase inteira — "boa"/"bom" sozinhos existem em nomes (Boa Vista, Bom Jesus)
+_RE_SAUDACAO = re.compile(
+    r"^(?:oi+e?|ola+|opa|e\s*ai|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+(?:bem|bom|certo))\b"
+)
+_PALAVRAS_CONVERSA = frozenset({
+    "sim", "nao", "ok", "blz", "obrigado", "obrigada",
+    "quero", "queria", "gostaria", "preciso", "pode", "posso", "tem",
+    "voce", "voces", "vc", "vcs", "atende", "atendem",
+    "qual", "quais", "quanto", "como", "quando",
+    "internet", "plano", "planos", "instalar", "contratar", "saber", "ver",
+})
+
+
+def _parece_conversa(trecho: str) -> bool:
+    n = _norm(trecho)
+    if not n:
+        return False
+    if _RE_SAUDACAO.search(n):
+        return True
+    return any(p in _PALAVRAS_CONVERSA for p in n.split())
+
+
 def extrair_par_cidade_bairro(mensagem: str) -> dict[str, str] | None:
     """
     'Cidade santarém, diamantino' → cidade=Santarem, bairro=Diamantino
@@ -206,6 +228,12 @@ def extrair_par_cidade_bairro(mensagem: str) -> dict[str, str] | None:
         dir_ = _limpar_nome_local(dir_raw, preferir="bairro")
         esq_cls = classificar_token_unico(esq_raw) or classificar_token_unico(esq)
         dir_cls = classificar_token_unico(dir_raw) or classificar_token_unico(dir_)
+
+        # "oi, quero instalar" / "olá, tudo bem?" — vírgula de conversa, não cidade/bairro
+        if (not esq_cls and _parece_conversa(esq_raw)) or (
+            not dir_cls and _parece_conversa(dir_raw)
+        ):
+            return None
 
         if esq_cls == "bairro" and not dir_cls:
             cid = _extrair_conhecido_em(dir_raw, "cidade")

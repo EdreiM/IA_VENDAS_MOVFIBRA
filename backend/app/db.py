@@ -105,7 +105,10 @@ SCHEMA_STATEMENTS = [
         rag_hit INTEGER DEFAULT 0,
         duracao_ms INTEGER,
         message_id TEXT,
-        created_at TIMESTAMPTZ
+        created_at TIMESTAMPTZ,
+        estado_antes TEXT,
+        interpretacao_llm TEXT,
+        confianca REAL
     )
     """,
     """
@@ -334,6 +337,7 @@ def init_schema() -> None:
             for stmt in SCHEMA_STATEMENTS:
                 cur.execute(stmt)
             _migrar_colunas(cur)
+            _migrar_turno_log(cur)
             _migrar_painel(cur)
             _seed_unidades_se_vazio(cur)
             from app.planos_catalog_seed import seed_planos_do_catalogo
@@ -395,6 +399,19 @@ def _migrar_colunas(cur: Any) -> None:
     for nome, tipo in extras:
         if nome not in cols:
             cur.execute(f"ALTER TABLE estado_cliente_ia ADD COLUMN {nome} {tipo}")
+
+
+def _migrar_turno_log(cur: Any) -> None:
+    """Colunas para avaliação: estado antes do turno e interpretação bruta do LLM."""
+    cols = _colunas_existentes(cur, "turno_log_ia")
+    extras = [
+        ("estado_antes", "TEXT"),
+        ("interpretacao_llm", "TEXT"),
+        ("confianca", "REAL"),
+    ]
+    for nome, tipo in extras:
+        if nome not in cols:
+            cur.execute(f"ALTER TABLE turno_log_ia ADD COLUMN {nome} {tipo}")
 
 
 def _migrar_painel(cur: Any) -> None:
@@ -986,6 +1003,9 @@ def log_turno(
     rag_hit: bool = False,
     duracao_ms: int | None = None,
     message_id: str = "",
+    estado_antes: dict[str, Any] | None = None,
+    interpretacao_llm: str = "",
+    confianca: float | None = None,
 ) -> None:
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -993,8 +1013,9 @@ def log_turno(
                 """
                 INSERT INTO turno_log_ia (
                     id_cliente, mensagem_cliente, eventos, acao, objetivo,
-                    fase, aguardando, topico, rag_hit, duracao_ms, message_id, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    fase, aguardando, topico, rag_hit, duracao_ms, message_id, created_at,
+                    estado_antes, interpretacao_llm, confianca
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     id_cliente,
@@ -1009,6 +1030,9 @@ def log_turno(
                     duracao_ms,
                     message_id or None,
                     _now(),
+                    json.dumps(estado_antes, ensure_ascii=False) if estado_antes else None,
+                    (interpretacao_llm or "")[:4000] or None,
+                    confianca,
                 ),
             )
 
@@ -1068,6 +1092,62 @@ def turnos_recentes(id_cliente: str, limite: int = 20) -> list[dict[str, Any]]:
         out.append(item)
     out.reverse()
     return out
+
+
+def turnos_para_avaliacao(limite: int = 500) -> list[dict[str, Any]]:
+    """Turnos mais recentes de todos os clientes, com o histórico que o interpretador viu."""
+    limite = max(1, min(int(limite or 500), 5000))
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, id_cliente, mensagem_cliente, eventos, acao, objetivo,
+                       fase, aguardando, estado_antes,
+                       interpretacao_llm, confianca, created_at
+                FROM turno_log_ia
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (limite,),
+            )
+            turnos = [_row_to_dict(r) or {} for r in cur.fetchall()]
+            turnos.reverse()
+            for t in turnos:
+                cur.execute(
+                    """
+                    SELECT remetente, mensagem
+                    FROM historico_mensagens_ia
+                    WHERE id_cliente = %s AND created_at < %s
+                    ORDER BY id DESC
+                    LIMIT 16
+                    """,
+                    (t.get("id_cliente"), t.get("created_at")),
+                )
+                hist = [
+                    {"remetente": r["remetente"], "mensagem": r["mensagem"]}
+                    for r in cur.fetchall()
+                ]
+                hist.reverse()
+                # O log do turno é gravado depois da resposta — corta na mensagem do cliente
+                msg = str(t.get("mensagem_cliente") or "").strip()
+                for i in range(len(hist) - 1, -1, -1):
+                    if (
+                        hist[i]["remetente"] == "cliente"
+                        and str(hist[i]["mensagem"] or "").strip()[:2000] == msg
+                    ):
+                        hist = hist[:i]
+                        break
+                t["historico"] = hist[-8:]
+    for t in turnos:
+        try:
+            t["eventos"] = json.loads(t.get("eventos") or "[]")
+        except json.JSONDecodeError:
+            t["eventos"] = []
+        try:
+            t["estado_antes"] = json.loads(t.get("estado_antes") or "null")
+        except json.JSONDecodeError:
+            t["estado_antes"] = None
+    return turnos
 
 
 def limpar_historico(id_cliente: str) -> None:
