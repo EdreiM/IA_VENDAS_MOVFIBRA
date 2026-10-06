@@ -869,11 +869,36 @@ def eh_confirmacao(msg: str) -> bool:
         )
     ):
         return True
+    return _confirmacao_por_prefixo(bruto, t)
+
+
+# Depois de "tá" / "ok" / "sim": palavras que mostram objeção, erro ou adiamento
+_MARCAS_NAO_CONFIRMA = frozenset({
+    "caro", "cara", "carinho", "salgado", "errado", "errada", "erro", "incorreto", "incorreta",
+    "demora", "demorando", "demorado", "dificil", "complicado", "ruim",
+    "pensar", "pensando", "depois", "espera", "esperar", "calma", "pera", "duvida", "duvidas",
+    "nem", "nunca", "outro", "outra", "trocar", "troca", "mudar", "muda", "corrigir", "corrige",
+    "falta", "faltou", "faltando", "vendo", "ver", "olhando", "analisando",
+})
+
+
+def _confirmacao_por_prefixo(bruto: str, t: str) -> bool:
+    """'tá bom' / 'ok pode ser' confirmam; 'tá caro' / 'ok mas...' / 'tá errado o CPF' não."""
     # "pode instalar amanhã?" / "isso inclui wifi?" — pergunta, não confirmação
     if "?" in bruto:
         return False
-    primeira = t.split()[0] if t.split() else ""
-    return primeira in {"sim", "si", "s", "ta", "confirmo", "ok", "blz", "beleza", "fechado", "fechou"}
+    palavras = t.split()
+    if not palavras or palavras[0] not in {
+        "sim", "si", "s", "ta", "confirmo", "ok", "blz", "beleza", "fechado", "fechou"
+    }:
+        return False
+    # "sim, mas posso remarcar depois?" continua confirmando: o que vem após o "mas" é dúvida
+    resto: list[str] = []
+    for p in palavras[1:]:
+        if p in {"mas", "porem"}:
+            break
+        resto.append(p)
+    return not any(p in _MARCAS_NAO_CONFIRMA for p in resto)
 
 
 def eh_aceite_termos_explicito(msg: str) -> bool:
@@ -916,8 +941,17 @@ def eh_recusa(msg: str) -> bool:
         return False
     if t in RECUSAS_GENERICAS:
         return True
-    primeira = t.split()[0] if t.split() else ""
-    return primeira in {"nao", "não", "negativo"}
+    palavras = t.split()
+    if not palavras or palavras[0] not in {"nao", "não", "negativo"}:
+        return False
+    # "não entendi" / "não sei" / "não recebi" — pedido de ajuda, não recusa
+    return not any(p in _MARCAS_NAO_E_RECUSA for p in palavras[1:3])
+
+
+_MARCAS_NAO_E_RECUSA = frozenset({
+    "entendi", "entendo", "compreendi", "sei", "lembro", "consegui", "consigo",
+    "recebi", "chegou", "achei", "encontrei", "vi", "ouvi", "abriu", "carregou",
+})
 
 
 def eh_pergunta_cobertura_informativa(msg: str) -> bool:
@@ -1006,6 +1040,8 @@ _PALAVRAS_CONFIRMACAO_NAO_NOME = frozenset({
     "bom", "boa", "otimo", "otima", "perfeito", "show", "top", "legal",
     "obrigado", "obrigada", "valeu", "por", "favor", "pra", "para", "mim", "me",
     "primeiro", "segundo", "terceiro", "ultimo", "dia", "tarde", "noite",
+    "como", "assim", "que", "qual", "quais", "quanto", "quanta", "quando", "onde", "porque",
+    "voce", "voces", "vc", "vcs", "sao", "tem", "repetir", "explicar", "entendi",
 })
 
 
@@ -1014,6 +1050,32 @@ def _parece_nome_de_pessoa(candidato: str) -> bool:
     if len(partes) < 2:
         return False
     return not any(p in _PALAVRAS_CONFIRMACAO_NAO_NOME for p in partes)
+
+
+_RE_LOGRADOURO = re.compile(
+    r"\b(?:rua|r|av|avenida|travessa|tv|trav|alameda|estrada|rodovia|rod|br|pa|"
+    r"passagem|psg|vila|beco|ramal|quadra|qd|lote|conjunto|residencial)\b"
+)
+
+
+def _texto_livre_parece_dado(msg_bruto: str, aguardando: str, eventos_llm: set[str]) -> bool:
+    """Mesmo com o LLM lendo como conversa, o texto tem cara do dado pedido."""
+    t = re.sub(r"[^\w\s]", " ", normalizar_texto(msg_bruto))
+    # CPF, telefone, CEP ou e-mail na mesma mensagem ("Edrei Silva 604.210.790-96")
+    if "@" in msg_bruto or len(re.sub(r"\D", "", msg_bruto)) >= 8:
+        return True
+    if aguardando == "rua":
+        # "rua das flores" começa pelo logradouro; "não sei o nome da rua" não
+        return bool(re.search(r"\d", t) or _RE_LOGRADOURO.match(t.strip()))
+    if aguardando == "nome":
+        # Falha conhecida do LLM: "Maria Souza?" classificado como PERGUNTA
+        return (
+            Evento.PERGUNTA.value in eventos_llm
+            and texto(msg_bruto).rstrip().endswith("?")
+            and len(t.split()) <= 5
+            and _parece_nome_de_pessoa(t)
+        )
+    return False
 
 
 def _extrair_nome_apos_confirmacao(bruto: str) -> str:
@@ -1892,6 +1954,9 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     dados_in = data.get("dados") if isinstance(data.get("dados"), dict) else {}
     dados_dict = {campo: texto(dados_in.get(campo)) for campo in CAMPOS_DADOS}
     dados = DadosExtraidos(**dados_dict)
+    # Classificação original do LLM, antes das correções abaixo
+    eventos_llm = set(eventos)
+    llm_extraiu_dado = any(dados_dict.values())
 
     from app.geo_coords import extrair_gps_mensagem, parece_coordenada
 
@@ -2587,12 +2652,31 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             if campo != aguardando:
                 setattr(dados, campo, "")
 
+    # Nome e rua são texto livre: se o LLM leu a mensagem como conversa ("tá bom",
+    # "pera aí", "não entendi") e não extraiu nada, não gravar a frase como dado.
+    llm_leu_como_conversa = (
+        aguardando in {"nome", "rua"}
+        and bool(eventos_llm)
+        and not llm_extraiu_dado
+        and not (
+            eventos_llm
+            & {
+                Evento.DADO_INFORMADO.value,
+                Evento.CORRECAO_DADO.value,
+                Evento.LOCALIZACAO_INFORMADA.value,
+                Evento.PLANO_INFORMADO.value,
+            }
+        )
+        and not _texto_livre_parece_dado(msg_bruto, aguardando, eventos_llm)
+    )
+
     # Extração determinística do campo pendente (LLM falhou ou veio dado+pergunta)
     if (
         not pedido_encerrar
         and fase == "cadastro"
         and aguardando_cadastro
         and not pausa_cadastro_plano
+        and not llm_leu_como_conversa
         and not eh_pergunta_informativa_sobre_plano(msg, msg_bruto)
     ):
         _aplicar_extracao_campo_pendente(

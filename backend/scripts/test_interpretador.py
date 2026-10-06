@@ -18,7 +18,13 @@ import eval_interpretador as ev
 from app import interpreter
 from app.localizacao_heuristica import extrair_par_cidade_bairro
 from app.models import CAMPOS_DADOS
-from app.parser import eh_so_saudacao, parse_interpretacao, tem_duvida_informativa
+from app.parser import (
+    eh_confirmacao,
+    eh_recusa,
+    eh_so_saudacao,
+    parse_interpretacao,
+    tem_duvida_informativa,
+)
 from app.pos_venda_mensagens import eh_pedido_encerrar, mensagem_sem_duvidas
 
 JSON_OK = json.dumps(
@@ -299,6 +305,70 @@ def test_pode_fechar_no_meio_da_venda_nao_encerra() -> None:
     _assert(i.eventos == ["CONFIRMACAO"], f"{i.eventos}")
 
 
+def test_objecao_nao_e_confirmacao() -> None:
+    """'tá caro' confirmava plano, cadastro e horário por começar com 'tá'."""
+    for msg in ("tá caro", "tá errado o cpf", "ok vou pensar", "tá demorando", "sim depois eu vejo"):
+        _assert(not eh_confirmacao(msg), f"{msg!r} não é confirmação")
+    for msg in ("tá bom", "ok pode ser", "tá certo", "sim quero", "sim mas posso remarcar depois"):
+        _assert(eh_confirmacao(msg), f"{msg!r} é confirmação")
+    for aguardando, fase in (
+        ("confirmacao_plano", "vendas"),
+        ("confirmacao_dados", "cadastro"),
+        ("confirmacao_horario", "agendamento"),
+    ):
+        i = parse_interpretacao(
+            json.dumps({"eventos": ["OUTRO"], "dados": {}, "confianca": 0.9}),
+            "tá caro",
+            {"fase": fase, "aguardando": aguardando, "plano_em_negociacao_id": 7, "plano_confirmado": "MOV ESSENCIAL"},
+        )
+        _assert("CONFIRMACAO" not in i.eventos, f"{aguardando}: {i.eventos}")
+
+
+def test_nao_entendi_nao_e_recusa() -> None:
+    for msg in ("não entendi", "não sei", "não recebi o pdf"):
+        _assert(not eh_recusa(msg), f"{msg!r} não é recusa")
+    for msg in ("não", "não quero", "não gostei", "não, obrigado"):
+        _assert(eh_recusa(msg), f"{msg!r} é recusa")
+
+
+def test_conversa_nao_vira_nome_nem_rua() -> None:
+    base = {"fase": "cadastro", "plano_confirmado": "MOV ESSENCIAL", "plano_confirmado_id": 7, "tem_cobertura": True}
+    conversa = (
+        ("tá bom", ["CONFIRMACAO"]),
+        ("pera aí", ["CONVERSA_SOCIAL"]),
+        ("não entendi", ["OUTRO"]),
+        ("como assim?", ["PERGUNTA"]),
+        ("vou pensar", ["OUTRO"]),
+        ("bom dia", ["SAUDACAO"]),
+    )
+    for campo, extra in (("nome", {}), ("rua", {"nome": "João Silva", "cep": "68020000"})):
+        estado = dict(base, aguardando=campo, **extra)
+        for msg, eventos in conversa:
+            i = parse_interpretacao(
+                json.dumps({"eventos": eventos, "dados": {}, "confianca": 0.9}), msg, dict(estado)
+            )
+            _assert(not getattr(i.dados, campo), f"{campo}: {msg!r} gravou {getattr(i.dados, campo)!r}")
+    # O LLM errando a classificação de um dado de verdade — a extração continua valendo
+    i = parse_interpretacao(
+        json.dumps({"eventos": ["PERGUNTA"], "dados": {}, "pergunta": "Maria Souza?", "confianca": 0.8}),
+        "Maria Souza?",
+        dict(base, aguardando="nome"),
+    )
+    _assert(i.dados.nome == "Maria Souza", f"nome com '?': {i.dados.nome!r}")
+    i = parse_interpretacao(
+        json.dumps({"eventos": ["OUTRO"], "dados": {}, "confianca": 0.4}),
+        "Edrei Silva 604.210.790-96",
+        dict(base, aguardando="nome"),
+    )
+    _assert("Edrei" in i.dados.nome and i.dados.cpf == "60421079096", f"{i.dados.nome!r} {i.dados.cpf!r}")
+    i = parse_interpretacao(
+        json.dumps({"eventos": ["OUTRO"], "dados": {}, "confianca": 0.5}),
+        "Rua das Flores 123",
+        dict(base, aguardando="rua", nome="João Silva", cep="68020000"),
+    )
+    _assert("flores" in i.dados.rua.casefold(), f"rua: {i.dados.rua!r}")
+
+
 def test_plano_ecoado_em_duvida_continua_descartado() -> None:
     estado = {"fase": "vendas", "aguardando": "confirmacao_plano", "tem_cobertura": True}
     for msg in ("qual a taxa de instalação?", "e se eu cancelar antes?"):
@@ -331,7 +401,8 @@ def test_casos_de_avaliacao_batem_com_o_parser() -> None:
     _assert(len(ids) == len(set(ids)), "ids repetidos")
     for c in casos:
         esp = c["esperado"]
-        eventos = list(esp.get("eventos") or [])
+        # Caso só com proibições: o LLM "ideal" leu como conversa, sem evento específico
+        eventos = list(esp.get("eventos") or []) or ["OUTRO"]
         raw = json.dumps(
             {
                 "eventos": eventos,
@@ -386,6 +457,9 @@ def main() -> None:
         test_pode_ser_o_segundo_escolhe_nao_confirma,
         test_confirmacao_do_plano_nao_vira_nome,
         test_pode_fechar_no_meio_da_venda_nao_encerra,
+        test_objecao_nao_e_confirmacao,
+        test_nao_entendi_nao_e_recusa,
+        test_conversa_nao_vira_nome_nem_rua,
         test_plano_ecoado_em_duvida_continua_descartado,
         test_conferir_do_avaliador,
         test_casos_de_avaliacao_batem_com_o_parser,
