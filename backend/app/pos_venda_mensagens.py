@@ -19,10 +19,15 @@ def _norm_encerrar(msg: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+# "pode fechar" / "pode finalizar" sozinhos ficam de fora: no meio da venda querem dizer
+# fechar o negócio / finalizar o cadastro. No pós-venda quem trata é mensagem_sem_duvidas.
 _FRASES_PEDIDO_ENCERRAR = (
     "pode encerrar",
-    "pode finalizar",
-    "pode fechar",
+    "fechar o atendimento",
+    "fechar atendimento",
+    "fechar a conversa",
+    "finalizar a conversa",
+    "encerrar a conversa",
     "encerrar o atendimento",
     "encerrar atendimento",
     "encerrar por aqui",

@@ -351,6 +351,12 @@ _CONTEXTO_PLANO_RE = re.compile(
 )
 
 
+_RE_POSICAO_LISTA = re.compile(
+    r"\b(?:primeir[oa]|segund[oa]|terceir[oa]|quart[oa]|quint[oa]|sext[oa]|"
+    r"penultim[oa]|ultim[oa]|opcao\s+\d|numero\s+\d)\b"
+)
+
+
 def _detectar_plano_na_mensagem(msg: str) -> str:
     """Retorna referência de plano se a mensagem citar um plano conhecido."""
     tem_contexto = bool(_CONTEXTO_PLANO_RE.search(msg))
@@ -989,13 +995,34 @@ def _extrair_cpf_embutido(bruto: str) -> str:
     return "".join(m.groups())
 
 
+# Palavras de quem está confirmando o plano, não dizendo o próprio nome
+_PALAVRAS_CONFIRMACAO_NAO_NOME = frozenset({
+    "o", "a", "os", "as", "um", "uma", "esse", "essa", "este", "esta", "isso", "isto",
+    "aquele", "aquela", "mesmo", "mesma", "ai", "la", "aqui", "plano", "planos",
+    "sim", "nao", "ok", "certo", "beleza", "blz", "claro", "certeza", "com", "pode", "ser",
+    "quero", "queria", "vou", "vamos", "vamo", "bora", "nessa", "nesse", "entao", "agora", "ja",
+    "fechou", "fechado", "fechar", "fecha", "seguir", "segue", "continuar", "prosseguir",
+    "contratar", "instalar", "confirmo", "confirmado", "manda", "ver", "bala",
+    "bom", "boa", "otimo", "otima", "perfeito", "show", "top", "legal",
+    "obrigado", "obrigada", "valeu", "por", "favor", "pra", "para", "mim", "me",
+    "primeiro", "segundo", "terceiro", "ultimo", "dia", "tarde", "noite",
+})
+
+
+def _parece_nome_de_pessoa(candidato: str) -> bool:
+    partes = normalizar_texto(candidato).split()
+    if len(partes) < 2:
+        return False
+    return not any(p in _PALAVRAS_CONFIRMACAO_NAO_NOME for p in partes)
+
+
 def _extrair_nome_apos_confirmacao(bruto: str) -> str:
     """Nome após confirmação do plano ('Pode ser, Edrei Silva' / 'Sim, meu nome é João')."""
     principal = _parte_principal_dado(bruto)
     segs = _segmentos_mensagem(principal)
     if len(segs) >= 2 and eh_confirmacao(segs[0]):
         nome = _extrair_nome_livre(",".join(segs[1:]))
-        if nome:
+        if nome and _parece_nome_de_pessoa(nome):
             return nome
     rest = re.sub(
         r"(?i)^(?:sim|si|ok|certo|beleza|blz|isso|pode ser|quero|confirmo|fechado)[,.:\s]+",
@@ -1003,8 +1030,13 @@ def _extrair_nome_apos_confirmacao(bruto: str) -> str:
         principal,
     ).strip()
     if rest and rest != principal:
-        rest = re.sub(r"(?i)^(?:meu nome e|meu nome é|sou o|sou a|nome)\s+", "", rest).strip()
-        return _extrair_nome_livre(rest) or _extrair_nome_livre(principal)
+        sem_rotulo = re.sub(
+            r"(?i)^(?:meu nome e|meu nome é|sou o|sou a|nome)\s+", "", rest
+        ).strip()
+        nome = _extrair_nome_livre(sem_rotulo)
+        # "pode ser esse mesmo" / "ok vamos nessa" — confirmação, não nome
+        if nome and (sem_rotulo != rest or _parece_nome_de_pessoa(nome)):
+            return nome
     return ""
 
 
@@ -1898,6 +1930,17 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         "cep", "rua", "numero", "confirmacao_dados",
     }
     aguardando_agenda = aguardando in {"escolha_horario", "confirmacao_horario"}
+    # "pode ser o segundo" — escolha de um plano da lista (o LLM resolve o nome pelo
+    # histórico), não confirmação do plano que estava em negociação
+    escolha_por_posicao = (
+        aguardando_plano
+        and bool(_RE_POSICAO_LISTA.search(msg))
+        and bool(extrair_referencia_plano_na_mensagem(dados.plano))
+    )
+    if escolha_por_posicao:
+        eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
+        if Evento.PLANO_INFORMADO.value not in eventos:
+            eventos.append(Evento.PLANO_INFORMADO.value)
 
     # "Oi, quero instalar" — intenção de contratar, não plano/pergunta de instalação
     abertura_contratacao = eh_pedido_contratacao(msg, msg_bruto) and not (
@@ -2060,6 +2103,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         aguardando_plano
         and (eh_confirmacao(msg) or msg == "quero")
         and not eh_pedido_contratacao(msg, msg_bruto)
+        and not escolha_por_posicao
     ):
         eventos = [e for e in eventos if e not in {Evento.PLANO_INFORMADO.value, Evento.PEDIU_TROCAR_PLANO.value, Evento.NEGACAO.value}]
         if Evento.CONFIRMACAO.value not in eventos:
@@ -2713,6 +2757,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         and eh_confirmacao(msg)
         and not eh_pedido_contratacao(msg, msg_bruto)
         and not tem_duvida_informativa(msg, msg_bruto)
+        and not escolha_por_posicao
     ):
         eventos = [
             e
@@ -2750,6 +2795,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         and eh_confirmacao(msg)
         and not eh_pedido_contratacao(msg, msg_bruto)
         and not tem_duvida_informativa(msg, msg_bruto)
+        and not escolha_por_posicao
     ):
         eventos = [
             e

@@ -140,7 +140,7 @@ DADO_INFORMADO, CORRECAO_DADO, CONFIRMACAO, NEGACAO, PERGUNTA, PEDIU_HUMANO, OUT
 Regras rápidas:
 - "quero o Essencial" / "quero o de 189" → PLANO_INFORMADO + dados.plano
 - "pode ser esse" / "sim" / "quero esse" (sem nome de plano) → CONFIRMACAO, dados.plano=""
-- Depois de uma lista de planos da Eva: "o segundo" / "o último" → PLANO_INFORMADO + dados.plano com o nome do plano nessa posição da lista
+- Depois de uma lista de planos da Eva: "o segundo" / "pode ser o último" → PLANO_INFORMADO + dados.plano só com o nome do plano nessa posição da lista (ex.: "MOV SUPER+")
 - "tem outro?" / "quero outro plano" / "muda o plano" → PEDIU_TROCAR_PLANO
 - "esse não" → NEGACAO
 - cidade/bairro → LOCALIZACAO_INFORMADA
