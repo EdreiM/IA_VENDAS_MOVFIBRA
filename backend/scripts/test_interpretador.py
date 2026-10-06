@@ -25,7 +25,10 @@ from app.parser import (
     parse_interpretacao,
     tem_duvida_informativa,
 )
+from app.cadastro_mensagens import anotar_e_pedir_proximo, campos_para_pedir
 from app.pos_venda_mensagens import eh_pedido_encerrar, mensagem_sem_duvidas
+from app.utils.cpf import celular_e_nao_cpf, cpf_digitos_conferem
+from app.validation import validar_campo
 
 JSON_OK = json.dumps(
     {
@@ -369,6 +372,44 @@ def test_conversa_nao_vira_nome_nem_rua() -> None:
     _assert("flores" in i.dados.rua.casefold(), f"rua: {i.dados.rua!r}")
 
 
+def test_celular_nao_vira_cpf() -> None:
+    """Celular com DDD tem 11 dígitos como o CPF; os dígitos verificadores separam os dois."""
+    _assert(cpf_digitos_conferem("604.210.790-96") and cpf_digitos_conferem("12345678909"), "CPFs válidos")
+    _assert(not cpf_digitos_conferem("93992219098") and not cpf_digitos_conferem("11111111111"), "inválidos")
+    _assert(celular_e_nao_cpf("93992219098") and not celular_e_nao_cpf("60421079096"), "celular x cpf")
+    _assert(validar_campo("cpf", "12345678900") is not None, "CPF com dígito errado deve ser recusado")
+    _assert(validar_campo("cpf", "60421079096") is None, "CPF válido")
+
+    estado = {"fase": "cadastro", "aguardando": "cpf", "plano_confirmado": "MOV ESSENCIAL", "nome": "Edrei Tester"}
+    for dados in ({"cpf": "93992219098"}, {"telefone": "93992219098"}, {}):
+        i = parse_interpretacao(
+            json.dumps({"eventos": ["DADO_INFORMADO"], "dados": dados, "confianca": 0.9}),
+            "93992219098",
+            dict(estado),
+        )
+        _assert(not i.dados.cpf, f"llm={dados}: celular gravado como CPF {i.dados.cpf!r}")
+        _assert(i.dados.telefone == "93992219098", f"llm={dados}: telefone={i.dados.telefone!r}")
+    # CPF de verdade aguardando CPF continua indo para CPF
+    i = parse_interpretacao(
+        json.dumps({"eventos": ["DADO_INFORMADO"], "dados": {"telefone": "60421079096"}, "confianca": 0.9}),
+        "60421079096",
+        dict(estado),
+    )
+    _assert(i.dados.cpf == "60421079096" and not i.dados.telefone, f"{i.dados.cpf!r} {i.dados.telefone!r}")
+
+
+def test_texto_pede_o_campo_que_o_estado_aguarda() -> None:
+    # CPF salvo mas não validado: o estado aguarda CPF, então o texto pede CPF
+    estado = {"nome": "Edrei Tester", "cpf": "60421079096"}
+    _assert(campos_para_pedir(estado, "cpf") == ["cpf"], str(campos_para_pedir(estado, "cpf")))
+    txt = anotar_e_pedir_proximo(campos_anotados=["nome"], campos_corrigidos=[], pendente="cpf", estado=estado)
+    _assert("CPF" in txt and "e-mail" not in txt.casefold(), txt)
+    # Par ainda vazio continua sendo pedido junto
+    _assert(campos_para_pedir({"nome": "A B", "cpf": "1"}, "email") == ["email", "telefone"], "par e-mail/telefone")
+    _assert(campos_para_pedir({}, "nome") == ["nome", "cpf"], "par nome/cpf")
+    _assert(campos_para_pedir({"email": "a@b.com"}, "telefone") == ["telefone"], "só telefone")
+
+
 def test_plano_ecoado_em_duvida_continua_descartado() -> None:
     estado = {"fase": "vendas", "aguardando": "confirmacao_plano", "tem_cobertura": True}
     for msg in ("qual a taxa de instalação?", "e se eu cancelar antes?"):
@@ -460,6 +501,8 @@ def main() -> None:
         test_objecao_nao_e_confirmacao,
         test_nao_entendi_nao_e_recusa,
         test_conversa_nao_vira_nome_nem_rua,
+        test_celular_nao_vira_cpf,
+        test_texto_pede_o_campo_que_o_estado_aguarda,
         test_plano_ecoado_em_duvida_continua_descartado,
         test_conferir_do_avaliador,
         test_casos_de_avaliacao_batem_com_o_parser,

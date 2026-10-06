@@ -198,7 +198,10 @@ def _valor_parece_resposta_campo(
 
     if campo == "telefone":
         if aguardando == "cpf":
-            return False
+            # Só aceita se for claramente celular (11 dígitos que não fecham como CPF)
+            from app.utils.cpf import celular_e_nao_cpf
+
+            return celular_e_nao_cpf(v)
         if aguardando != "telefone" and _mensagem_e_apenas_cpf(bruto):
             return False
         return bool(_extrair_telefone_em_segmentos(bruto))

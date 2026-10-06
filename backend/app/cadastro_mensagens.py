@@ -50,9 +50,22 @@ def par_de(campo: str | None) -> tuple[str, ...]:
     return (campo,)
 
 
-def campos_para_pedir(estado: dict[str, Any] | None) -> list[str]:
-    """Campos ainda vazios do próximo par (1 ou 2)."""
+def campos_para_pedir(
+    estado: dict[str, Any] | None, pendente: str | None = None
+) -> list[str]:
+    """Campos do próximo par a pedir (1 ou 2).
+
+    Com `pendente` (o campo que a máquina de estados aguarda), o pedido sempre
+    começa por ele — mesmo que já exista um valor salvo, como um CPF ainda não
+    validado. Sem isso o texto pede um campo e o estado espera outro.
+    """
     estado = estado or {}
+    par_pendente = next((p for p in PARES_CADASTRO if pendente in p), None)
+    if par_pendente:
+        pos = par_pendente.index(pendente)
+        return [pendente] + [
+            c for c in par_pendente[pos + 1 :] if not str(estado.get(c) or "").strip()
+        ]
     for par in PARES_CADASTRO:
         faltam = [c for c in par if not str(estado.get(c) or "").strip()]
         if faltam:
@@ -151,7 +164,7 @@ def anotar_e_pedir_proximo(
     elif anotados_ok:
         corpo = _frase_anotacao(anotados_ok, corrigiu=False)
     else:
-        faltam = campos_para_pedir(estado) or ([pendente] if pendente else [])
+        faltam = campos_para_pedir(estado, pendente) or ([pendente] if pendente else [])
         return pedir_campos(faltam)
 
     prefixo_retomada = ""
@@ -162,7 +175,7 @@ def anotar_e_pedir_proximo(
         if corpo:
             return f"{corpo} {prefixo_retomada}"
     if pendente and pendente != "confirmacao_dados":
-        faltam = campos_para_pedir(estado) or [pendente]
+        faltam = campos_para_pedir(estado, pendente) or [pendente]
         prox = pedir_campos(faltam)
         if prefixo_retomada and not corpo:
             return f"{prefixo_retomada} {prox}".strip()

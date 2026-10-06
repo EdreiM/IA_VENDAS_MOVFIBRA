@@ -19,5 +19,23 @@ def formatar_cpf_cnpj(valor: str) -> str:
     return ""
 
 
+def cpf_digitos_conferem(valor: str) -> bool:
+    """Dígitos verificadores de um CPF (11 dígitos). Não consulta nenhum sistema."""
+    n = somente_numeros(valor)
+    if len(n) != 11 or n == n[0] * 11:
+        return False
+    for tamanho in (9, 10):
+        soma = sum(int(n[i]) * (tamanho + 1 - i) for i in range(tamanho))
+        if (soma * 10) % 11 % 10 != int(n[tamanho]):
+            return False
+    return True
+
+
+def celular_e_nao_cpf(valor: str) -> bool:
+    """11 dígitos com cara de celular (DDD + 9...) que não fecham como CPF."""
+    n = somente_numeros(valor)
+    return len(n) == 11 and n[0] != "0" and n[1] != "0" and n[2] == "9" and not cpf_digitos_conferem(n)
+
+
 def cpf_valido_formato(valor: str) -> bool:
     return len(somente_numeros(valor)) in {11, 14}

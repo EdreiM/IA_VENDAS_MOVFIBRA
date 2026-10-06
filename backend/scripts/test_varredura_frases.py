@@ -156,14 +156,80 @@ def varrer() -> tuple[int, list[str]]:
     return turnos, violacoes
 
 
+ROTULO_NO_TEXTO = {
+    "nome": "nome",
+    "cpf": "cpf",
+    "email": "e-mail",
+    "telefone": "telefone",
+    "data_nascimento": "data de nascimento",
+    "cep": "cep",
+    "rua": "rua",
+    "numero": "número",
+}
+
+
+def _texto_da_eva(dec, estado: dict, msg: str) -> str:
+    from app import response
+
+    response.chat = lambda *a, **k: ""  # respostas de cadastro são por template
+    return response.gerar_resposta(dec, estado, historico=[], mensagem_cliente=msg)
+
+
+def conversa_cadastro(cpf_inicial: dict) -> list[str]:
+    """Nome → e-mail → celular. A Eva deve pedir o campo que o estado aguarda e
+    nunca gravar o celular (11 dígitos) por cima do CPF."""
+    violacoes: list[str] = []
+    estado = dict(BASE, **CONFIRMADO, fase="cadastro", aguardando="nome", **cpf_inicial)
+    cpf_antes = estado.get("cpf")
+    passos = [
+        ("Edrei Tester", {"nome": "Edrei Tester"}),
+        ("edreitester@gmail.com", {"email": "edreitester@gmail.com"}),
+        ("93992219098", {"telefone": "93992219098"}),
+    ]
+    for msg, dados in passos:
+        llm = {"eventos": ["DADO_INFORMADO"], "dados": dados, "confianca": 0.95}
+        estado, dec = regressao._turno(estado, msg, llm)
+        texto = _texto_da_eva(dec, estado, msg).casefold()
+        rotulo = ROTULO_NO_TEXTO.get(str(dec.aguardando))
+        if rotulo and rotulo not in texto:
+            violacoes.append(
+                f"[{cpf_inicial or 'sem cpf'}] {msg!r}: estado aguarda {dec.aguardando}, "
+                f"mas a Eva disse {texto[:90]!r}"
+            )
+    if estado.get("cpf") != cpf_antes:
+        violacoes.append(f"[{cpf_inicial or 'sem cpf'}] CPF virou {estado.get('cpf')!r} (era {cpf_antes!r})")
+    if estado.get("telefone") != "93992219098":
+        violacoes.append(f"[{cpf_inicial or 'sem cpf'}] telefone não foi gravado: {estado.get('telefone')!r}")
+    return violacoes
+
+
 def main() -> None:
+    falhas = 0
+
     turnos, violacoes = varrer()
     for v in violacoes:
         print(f"  FALHOU {v}")
-    if violacoes:
-        print(f"\n❌ {len(violacoes)} violação(ões) em {turnos} turnos")
+    falhas += len(violacoes)
+    if not violacoes:
+        print(f"  OK {turnos} turnos sem dado inventado nem avanço indevido")
+
+    # Conversa real em que o celular foi gravado como CPF e a Eva pediu o telefone de novo
+    violacoes = []
+    for cpf_inicial in (
+        {"cpf": "60421079096"},  # CPF salvo mas ainda não validado
+        {"cpf": "60421079096", "documento_cpf_validado": True},
+        {},
+    ):
+        violacoes += conversa_cadastro(cpf_inicial)
+    for v in violacoes:
+        print(f"  FALHOU {v}")
+    falhas += len(violacoes)
+    if not violacoes:
+        print("  OK nome → e-mail → celular: texto pede o campo aguardado e o celular não vira CPF")
+
+    if falhas:
+        print(f"\n❌ {falhas} violação(ões)")
         sys.exit(1)
-    print(f"  OK {turnos} turnos sem dado inventado nem avanço indevido")
     print("\n✅ Varredura de frases OK")
 
 

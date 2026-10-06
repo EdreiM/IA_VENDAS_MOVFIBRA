@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from app.models import CAMPOS_DADOS, Evento, Interpretacao, DadosExtraidos
+from app.utils.cpf import celular_e_nao_cpf
 
 EVENTOS_VALIDOS = {e.value for e in Evento}
 
@@ -326,12 +327,13 @@ def _somente_digitos(msg: str) -> str:
 
 def _parece_cpf_cnpj(msg: str, bruto: str = "") -> bool:
     n = _somente_digitos(bruto or msg)
-    return len(n) in {11, 14}
+    # Celular com DDD também tem 11 dígitos — não é CPF se os dígitos não fecham
+    return len(n) in {11, 14} and not celular_e_nao_cpf(n)
 
 
 def _extrair_cpf(msg: str, bruto: str = "") -> str:
     n = _somente_digitos(bruto or msg)
-    if len(n) in {11, 14}:
+    if len(n) in {11, 14} and not celular_e_nao_cpf(n):
         return n
     return ""
 
@@ -1026,7 +1028,8 @@ def _extrair_cpf_embutido(bruto: str) -> str:
     m = re.search(r"(?<!\d)(\d{3})\.?(\d{3})\.?(\d{3})-?(\d{2})(?!\d)", bruto or "")
     if not m:
         return ""
-    return "".join(m.groups())
+    cpf = "".join(m.groups())
+    return "" if celular_e_nao_cpf(cpf) else cpf
 
 
 # Palavras de quem está confirmando o plano, não dizendo o próprio nome
@@ -1543,7 +1546,9 @@ def _aplicar_extracao_campo_pendente(
             dados.cpf = cpf
     if "telefone" in campos_alvo and not dados.telefone:
         if aguardando == "cpf":
-            pass
+            # Pediu CPF e veio um celular: guarda como telefone e segue pedindo o CPF
+            if celular_e_nao_cpf(bruto):
+                dados.telefone = _somente_digitos(bruto)
         elif aguardando == "telefone":
             tel = _extrair_telefone_em_segmentos(bruto)
             if tel:
@@ -1973,6 +1978,13 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     if not isinstance(campos, list):
         campos = []
     campos_corrigidos = [texto(c).lower() for c in campos if texto(c)]
+
+    # LLM pôs um celular no campo CPF (os dois têm 11 dígitos) — vai para telefone
+    if dados.cpf and celular_e_nao_cpf(dados.cpf):
+        if not dados.telefone:
+            dados.telefone = _somente_digitos(dados.cpf)
+        dados.cpf = ""
+        campos_corrigidos = [c for c in campos_corrigidos if c != "cpf"]
 
     pergunta = texto(data.get("pergunta"))
     try:
