@@ -19,6 +19,7 @@ from app import interpreter
 from app.localizacao_heuristica import extrair_par_cidade_bairro
 from app.models import CAMPOS_DADOS
 from app.parser import eh_so_saudacao, parse_interpretacao, tem_duvida_informativa
+from app.pos_venda_mensagens import eh_pedido_encerrar, mensagem_sem_duvidas
 
 JSON_OK = json.dumps(
     {
@@ -208,6 +209,107 @@ def test_saudacao_com_interrogacao_nao_e_duvida() -> None:
     _assert(tem_duvida_informativa("bom dia, quanto custa?", "bom dia, quanto custa?"), "dúvida real")
 
 
+def test_plano_resolvido_pelo_historico_nao_e_descartado() -> None:
+    """Achado na avaliação com LLM real: 'vou querer o segundo' perdia o plano no parser."""
+    estado = {"fase": "vendas", "aguardando": "escolha_plano", "tem_cobertura": True}
+    for msg, plano in (
+        ("vou querer o segundo", "Opção 2 — MOV SUPER+"),
+        ("vou querer o segundo", "MOV SUPER+ — R$ 139/mês"),
+        ("o último", "MOV COMBO TOTAL 12GB"),
+        ("o primeiro", "MOV FLEX"),
+    ):
+        i = parse_interpretacao(
+            json.dumps({"eventos": ["PLANO_INFORMADO"], "dados": {"plano": plano}, "confianca": 0.9}),
+            msg,
+            dict(estado),
+        )
+        _assert("PLANO_INFORMADO" in i.eventos and i.dados.plano, f"{msg!r}/{plano!r} → {i.eventos} {i.dados.plano!r}")
+
+
+def test_pode_ser_o_segundo_escolhe_nao_confirma() -> None:
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "tem_cobertura": True,
+        "plano_em_negociacao": "MOV ESSENCIAL",
+        "plano_em_negociacao_id": 7,
+    }
+    # LLM resolveu o plano pelo histórico (com ou sem CONFIRMACAO junto)
+    for eventos in (["PLANO_INFORMADO"], ["CONFIRMACAO"], ["CONFIRMACAO", "PLANO_INFORMADO"]):
+        i = parse_interpretacao(
+            json.dumps({"eventos": eventos, "dados": {"plano": "MOV SUPER+"}, "confianca": 0.9}),
+            "pode ser o segundo",
+            dict(estado),
+        )
+        _assert("PLANO_INFORMADO" in i.eventos, f"{eventos} → {i.eventos}")
+        _assert("CONFIRMACAO" not in i.eventos, f"confirmaria o plano errado: {i.eventos}")
+        _assert("SUPER" in i.dados.plano.upper(), i.dados.plano)
+    # Sem plano resolvido, "pode ser" continua sendo confirmação
+    i = parse_interpretacao(
+        json.dumps({"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.9}),
+        "pode ser esse mesmo",
+        dict(estado),
+    )
+    _assert(i.eventos == ["CONFIRMACAO"] and not i.dados.plano, f"{i.eventos} {i.dados.plano!r}")
+
+
+def test_confirmacao_do_plano_nao_vira_nome() -> None:
+    estado = {
+        "fase": "vendas",
+        "aguardando": "confirmacao_plano",
+        "tem_cobertura": True,
+        "plano_em_negociacao": "MOV ESSENCIAL",
+        "plano_em_negociacao_id": 7,
+    }
+    raw = json.dumps({"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.95})
+    for msg in (
+        "pode ser esse mesmo",
+        "pode ser esse",
+        "quero esse mesmo",
+        "isso mesmo",
+        "ok vamos nessa",
+        "beleza fechou",
+        "fechado esse aí",
+    ):
+        i = parse_interpretacao(raw, msg, dict(estado))
+        _assert(not i.dados.nome, f"{msg!r} gravou nome {i.dados.nome!r}")
+        _assert(i.eventos == ["CONFIRMACAO"], f"{msg!r} → {i.eventos}")
+    for msg, nome in (
+        ("sim, João Carlos da Silva", "João Carlos da Silva"),
+        ("pode ser, Edrei Moura", "Edrei Moura"),
+        ("pode ser Edrei Moura", "Edrei Moura"),
+        ("sim meu nome é Maria Souza", "Maria Souza"),
+    ):
+        i = parse_interpretacao(raw, msg, dict(estado))
+        _assert(i.dados.nome == nome, f"{msg!r} → nome {i.dados.nome!r}")
+
+
+def test_pode_fechar_no_meio_da_venda_nao_encerra() -> None:
+    for msg in ("pode fechar", "sim pode fechar", "tudo certo, pode finalizar"):
+        _assert(not eh_pedido_encerrar(msg), f"{msg!r} não é pedido de encerramento")
+    for msg in ("pode encerrar", "quero encerrar", "pode fechar o atendimento", "encerrar", "tchau"):
+        _assert(eh_pedido_encerrar(msg), f"{msg!r} é pedido de encerramento")
+    # No pós-venda, "pode fechar" continua valendo como "sem mais dúvidas"
+    _assert(mensagem_sem_duvidas("pode fechar") and mensagem_sem_duvidas("pode finalizar"), "pós-venda")
+    i = parse_interpretacao(
+        json.dumps({"eventos": ["CONFIRMACAO"], "dados": {}, "confianca": 0.95}),
+        "sim pode fechar",
+        {"fase": "vendas", "aguardando": "confirmacao_plano", "plano_em_negociacao_id": 7},
+    )
+    _assert(i.eventos == ["CONFIRMACAO"], f"{i.eventos}")
+
+
+def test_plano_ecoado_em_duvida_continua_descartado() -> None:
+    estado = {"fase": "vendas", "aguardando": "confirmacao_plano", "tem_cobertura": True}
+    for msg in ("qual a taxa de instalação?", "e se eu cancelar antes?"):
+        i = parse_interpretacao(
+            json.dumps({"eventos": ["PLANO_INFORMADO"], "dados": {"plano": "MOV COMBO TOTAL 12GB"}, "confianca": 0.9}),
+            msg,
+            dict(estado),
+        )
+        _assert("PLANO_INFORMADO" not in i.eventos and not i.dados.plano, f"{msg!r} → {i.eventos} {i.dados.plano!r}")
+
+
 def test_conferir_do_avaliador() -> None:
     esperado = {
         "eventos": ["DADO_INFORMADO"],
@@ -280,6 +382,11 @@ def main() -> None:
         test_virgula_de_conversa_nao_e_cidade_bairro,
         test_par_cidade_bairro_real_continua_valendo,
         test_saudacao_com_interrogacao_nao_e_duvida,
+        test_plano_resolvido_pelo_historico_nao_e_descartado,
+        test_pode_ser_o_segundo_escolhe_nao_confirma,
+        test_confirmacao_do_plano_nao_vira_nome,
+        test_pode_fechar_no_meio_da_venda_nao_encerra,
+        test_plano_ecoado_em_duvida_continua_descartado,
         test_conferir_do_avaliador,
         test_casos_de_avaliacao_batem_com_o_parser,
         test_avaliador_roda_ponta_a_ponta_com_llm_falso,

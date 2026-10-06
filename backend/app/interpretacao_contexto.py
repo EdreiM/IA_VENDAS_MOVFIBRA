@@ -58,6 +58,8 @@ def referencia_parece_pergunta_nao_plano(referencia: str, msg_bruto: str = "") -
         eh_mensagem_sobre_planos(t, check)
         or any(k in t for k in INTENCAO_PLANO_KEYWORDS)
         or extrair_referencia_plano_na_mensagem(t, check)
+        # Plano que o LLM resolveu pelo histórico ("o segundo" → "Opção 2 — MOV SUPER+")
+        or extrair_referencia_plano_na_mensagem(ref)
         or ref_intencao
         or eh_pedido_lista_completa_planos(check)
         or eh_pedido_plano_promocional(check)
