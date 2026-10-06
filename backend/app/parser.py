@@ -1532,8 +1532,14 @@ def _aplicar_extracao_campo_pendente(
         segmentos = _segmentos_mensagem(bruto)
 
     par = set(par_de(aguardando))
-    duvida = tem_duvida_informativa(msg, msg_bruto, aguardando=aguardando)
-    bruto = msg_bruto
+    # Dado na frente + dúvida depois ("Edrei Maciel, 604...\nMas tem multa?"):
+    # extrai do trecho do dado; a dúvida é tratada à parte
+    if tem_dado_na_frente and parte_dado != msg_bruto.strip():
+        bruto = parte_dado
+        duvida = False
+    else:
+        bruto = msg_bruto
+        duvida = tem_duvida_informativa(msg, msg_bruto, aguardando=aguardando)
     segmentos = _segmentos_mensagem(bruto)
 
     if "nome" in campos_alvo and not dados.nome and not duvida and not _mensagem_e_apenas_cpf(bruto):

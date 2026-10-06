@@ -226,6 +226,27 @@ def gerar_resposta(
     historico: list[dict[str, str]] | None = None,
     mensagem_cliente: str = "",
 ) -> str:
+    texto = _gerar_resposta(
+        decisao, estado, origem=origem, historico=historico, mensagem_cliente=mensagem_cliente
+    )
+    # Último dado do cadastro veio junto com uma dúvida: responde e já mostra o resumo
+    if (decisao.contexto_resposta or {}).get("anexar_resumo"):
+        from app.vendas_mensagens import rotulo_pendente_cadastro
+
+        base = (texto or "").replace(rotulo_pendente_cadastro("confirmacao_dados"), "").rstrip()
+        resumo = montar_resumo_cadastro({**estado, **(decisao.atualizar_dados or {})})
+        texto = f"{base}\n\n{resumo}" if base else resumo
+    return texto
+
+
+def _gerar_resposta(
+    decisao: Decisao,
+    estado: dict[str, Any],
+    *,
+    origem: str = "cliente",
+    historico: list[dict[str, str]] | None = None,
+    mensagem_cliente: str = "",
+) -> str:
     _ = origem
 
     # Última fala do cliente (para espelhar bom dia / oi)

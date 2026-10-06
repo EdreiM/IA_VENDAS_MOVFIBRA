@@ -38,6 +38,16 @@ import logging
 logging.disable(logging.CRITICAL)
 
 import test_regressao_contexto as regressao
+from app import pipeline
+
+# A consulta de CPF no IXC é rede (bloqueada acima): simula "CPF novo, pode cadastrar"
+pipeline.validar_cpf = lambda **k: {
+    "ja_cadastrado": False,
+    "erro": False,
+    "motivo": "CPF novo",
+    "cpf_formatado": k.get("cpf_cnpj"),
+    "cpf_numeros": "".join(ch for ch in str(k.get("cpf_cnpj") or "") if ch.isdigit()),
+}
 
 ORDEM = ["nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero"]
 CAD = {
@@ -203,8 +213,74 @@ def conversa_cadastro(cpf_inicial: dict) -> list[str]:
     return violacoes
 
 
+VALORES = {
+    "nome": ("Edrei Tester Maciel", "Edrei Tester Maciel"),
+    "cpf": ("604.210.790-96", "60421079096"),
+    "email": ("edreitester@gmail.com", "edreitester@gmail.com"),
+    "telefone": ("93 99221-9098", "93992219098"),
+    "data_nascimento": ("15/03/1990", "15/03/1990"),
+    "cep": ("68020-000", "68020000"),
+    "rua": ("Rua das Flores", "Rua das Flores"),
+    "numero": ("123", "123"),
+}
+DUVIDAS = [
+    "Mas tem multa de cancelamento?",
+    "Mas quanto tempo demora a instalação?",
+    "E se eu mudar de endereço depois?",
+    "Vocês atendem aos sábados?",
+]
+
+
+def dado_com_duvida() -> tuple[int, list[str]]:
+    """O cliente manda o dado pedido e, na mesma mensagem, uma dúvida.
+
+    O dado tem que ser gravado e a Eva não pode pedir o mesmo campo de novo.
+    """
+    violacoes: list[str] = []
+    turnos = 0
+    for i, campo in enumerate(ORDEM):
+        texto_valor, salvo_esperado = VALORES[campo]
+        for duvida in DUVIDAS:
+            for separador in ("\n", ", "):
+                estado0 = dict(
+                    BASE,
+                    **CONFIRMADO,
+                    fase="cadastro",
+                    aguardando=campo,
+                    documento_cpf_validado=(i > 1),
+                    **{c: CAD[c] for c in ORDEM[:i]},
+                )
+                msg = f"{texto_valor}{separador}{duvida}"
+                llm = {
+                    "eventos": ["DADO_INFORMADO", "PERGUNTA"],
+                    "dados": {campo: texto_valor},
+                    "pergunta": duvida,
+                    "confianca": 0.93,
+                }
+                estado, dec = regressao._turno(dict(estado0), msg, llm)
+                turnos += 1
+                onde = f"[cadastro/{campo}] {msg!r} → {dec.objetivo_resposta}"
+                obtido = str(estado.get(campo) or "")
+                if campo in {"cpf", "telefone", "cep"}:
+                    obtido = "".join(ch for ch in obtido if ch.isdigit())
+                if salvo_esperado.casefold() not in obtido.casefold():
+                    violacoes.append(f"{onde}: não gravou {campo} (ficou {estado.get(campo)!r})")
+                elif dec.aguardando == campo:
+                    violacoes.append(f"{onde}: gravou {campo} mas pediu {campo} de novo")
+                if dec.fase != "cadastro":
+                    violacoes.append(f"{onde}: saiu do cadastro para {dec.fase}")
+    return turnos, violacoes
+
+
 def main() -> None:
     falhas = 0
+
+    turnos, violacoes = dado_com_duvida()
+    for v in violacoes:
+        print(f"  FALHOU {v}")
+    falhas += len(violacoes)
+    if not violacoes:
+        print(f"  OK {turnos} mensagens de dado + dúvida: dado gravado e não pedido de novo")
 
     turnos, violacoes = varrer()
     for v in violacoes:

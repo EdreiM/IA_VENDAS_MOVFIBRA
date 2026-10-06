@@ -358,7 +358,10 @@ def test_cadastro_cpf_mais_pergunta() -> None:
     )
     _assert(dec.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR", dec.objetivo_resposta)
     _assert(dec.acao == "RESPONDER", f"acao={dec.acao}")
-    _assert(dec.aguardando == "cpf", f"aguardando={dec.aguardando}")
+    # O CPF veio na mensagem: valida, responde a dúvida e segue para o próximo campo.
+    # (Antes ficava aguardando=cpf e a Eva pedia de novo o CPF recém-informado.)
+    _assert(dec.aguardando == "email", f"aguardando={dec.aguardando}")
+    _assert(estado.get("cpf") == "60421079096", f"cpf={estado.get('cpf')}")
 
 
 def test_mudanca_endereco_agendamento() -> None:

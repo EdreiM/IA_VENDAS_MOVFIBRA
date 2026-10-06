@@ -80,7 +80,8 @@ def informar_cancelamento_e_retomar(
     from app.vendas_mensagens import rotulo_pendente_cadastro
 
     partes: list[str] = []
-    anotados = [c for c in (campos_anotados or []) if c and c != "cpf"]
+    # CPF só chega aqui depois de validado (ver retomar_duvida_apos_cpf)
+    anotados = [c for c in (campos_anotados or []) if c]
     if anotados:
         rotulos = {k: v.split("(")[0].strip() for k, v in ROTULO_CAMPO.items()}
         itens = [rotulos.get(c, c) for c in anotados]

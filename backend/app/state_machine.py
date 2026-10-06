@@ -1318,6 +1318,105 @@ def _decidir_agendamento(
 
 
 def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
+    decisao = _decidir(estado, resolucao)
+    decisao = _resumo_quando_cadastro_completou(decisao, estado)
+    return _validar_cpf_antes_de_responder_duvida(decisao, estado, resolucao)
+
+
+def _resumo_quando_cadastro_completou(decisao: Decisao, estado: dict[str, Any]) -> Decisao:
+    """Último campo do cadastro + dúvida na mesma mensagem.
+
+    Os ramos de dúvida retomam com `_proximo_cadastro(...) or aguardando`; com o
+    cadastro completo isso voltava ao campo que acabou de ser informado.
+    """
+    aguardava = _texto(estado.get("aguardando"))
+    dados = decisao.atualizar_dados or {}
+    if not (
+        decisao.acao == "RESPONDER"
+        and decisao.fase == "cadastro"
+        and aguardava in ORDEM_CADASTRO
+        and decisao.aguardando == aguardava
+        and estado.get("plano_confirmado")
+        and _texto(dados.get(aguardava))
+        and _proximo_cadastro(estado, dados) is None
+    ):
+        return decisao
+    decisao.aguardando = "confirmacao_dados"
+    ctx = dict(decisao.contexto_resposta or {})
+    ctx["pendente"] = "confirmacao_dados"
+    ctx["anexar_resumo"] = True
+    decisao.contexto_resposta = ctx
+    return decisao
+
+
+def _validar_cpf_antes_de_responder_duvida(
+    decisao: Decisao, estado: dict[str, Any], resolucao: dict[str, Any]
+) -> Decisao:
+    """Mensagem com CPF + dúvida ("604.210.790-96, mas tem multa?").
+
+    As dúvidas são respondidas antes do bloco de CPF, que por isso nunca rodava:
+    o CPF ficava salvo sem validar e a Eva pedia de novo. Aqui o CPF é validado
+    primeiro e a resposta da dúvida segue junto (ver `retomar_duvida_apos_cpf`).
+    """
+    cpf = resolucao.get("cpf") or {}
+    valor = re.sub(r"\D", "", _texto(cpf.get("valor")))
+    objetivo = _texto(decisao.objetivo_resposta)
+    if not (
+        decisao.acao == "RESPONDER"
+        and decisao.fase == "cadastro"
+        and _texto(estado.get("fase")) == "cadastro"
+        and estado.get("plano_confirmado")
+        and not _cadastro_travado(estado)
+        and cpf.get("informado")
+        and valor
+        and (resolucao.get("flags") or {}).get("tem_pergunta")
+        and (objetivo.endswith("_E_RETOMAR") or objetivo == "RESPONDER_SEM_BASE_RAG")
+        and validar_campo("cpf", valor) is None
+    ):
+        return decisao
+    ja_validado = (
+        re.sub(r"\D", "", _texto(estado.get("cpf"))) == valor
+        and bool(estado.get("documento_cpf_validado"))
+    )
+    if ja_validado:
+        return decisao
+
+    d = dict(decisao.atualizar_dados or {})
+    d["cpf"] = valor
+    if cpf.get("alterado"):
+        d["invalidar_validacao_cpf"] = True
+        d["documento_cpf_validado"] = False
+    junto = [c for c in ("nome", "email", "telefone") if _texto(d.get(c))]
+    return Decisao(
+        acao="VALIDAR_CPF",
+        objetivo_resposta=None,
+        fase="cadastro",
+        aguardando="resultado_cpf",
+        atualizar_dados=d,
+        pergunta=decisao.pergunta,
+        motivo="CPF + dúvida — validar o CPF antes de responder",
+        prioridade="GLOBAL_DADOS",
+        contexto_resposta={
+            "cpf": valor,
+            "campos_junto": junto,
+            "responder_depois": decisao.model_dump(),
+        },
+    )
+
+
+def retomar_duvida_apos_cpf(responder_depois: dict[str, Any], dec_cpf: Decisao) -> Decisao:
+    """CPF validado: responde a dúvida que veio junto e pede o próximo campo de verdade."""
+    dec = Decisao(**responder_depois)
+    dec.aguardando = dec_cpf.aguardando
+    dec.atualizar_dados = {**(dec.atualizar_dados or {}), **(dec_cpf.atualizar_dados or {})}
+    ctx = dict(dec.contexto_resposta or {})
+    ctx["pendente"] = dec_cpf.aguardando
+    ctx["campos_anotados"] = list((dec_cpf.contexto_resposta or {}).get("campos_anotados") or [])
+    dec.contexto_resposta = ctx
+    return dec
+
+
+def _decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     fase = _texto(estado.get("fase")) or "inicio"
     aguardando = estado.get("aguardando")
     flags = resolucao.get("flags") or {}

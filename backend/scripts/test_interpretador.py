@@ -410,6 +410,27 @@ def test_texto_pede_o_campo_que_o_estado_aguarda() -> None:
     _assert(campos_para_pedir({"email": "a@b.com"}, "telefone") == ["telefone"], "só telefone")
 
 
+def test_dado_com_duvida_na_mesma_mensagem_guarda_o_dado() -> None:
+    """Conversa real: nome + CPF + 'tem multa?' — o nome era descartado por causa da dúvida."""
+    estado = {"fase": "cadastro", "aguardando": "nome", "plano_confirmado": "MOV SUPER+", "tem_cobertura": True}
+    msg = "Edrei tester maciel, 604.210.790-96\nMas tem multa de cancelamento?"
+    for llm in (
+        {"eventos": ["DADO_INFORMADO", "PERGUNTA"], "dados": {"nome": "Edrei tester maciel", "cpf": "604.210.790-96"}, "pergunta": "Tem multa de cancelamento?"},
+        {"eventos": ["PERGUNTA"], "dados": {}, "pergunta": "tem multa de cancelamento?"},
+    ):
+        i = parse_interpretacao(json.dumps({**llm, "confianca": 0.9}), msg, dict(estado))
+        _assert(i.dados.nome.casefold() == "edrei tester maciel", f"nome={i.dados.nome!r} (llm={llm['eventos']})")
+        _assert("".join(ch for ch in i.dados.cpf if ch.isdigit()) == "60421079096", f"cpf={i.dados.cpf!r}")
+        _assert("PERGUNTA" in i.eventos and "DADO_INFORMADO" in i.eventos, f"{i.eventos}")
+    # A dúvida sozinha continua sem virar nome
+    i = parse_interpretacao(
+        json.dumps({"eventos": ["PERGUNTA"], "dados": {}, "pergunta": "tem multa?", "confianca": 0.9}),
+        "Mas tem multa de cancelamento?",
+        dict(estado),
+    )
+    _assert(not i.dados.nome, f"dúvida virou nome: {i.dados.nome!r}")
+
+
 def test_plano_ecoado_em_duvida_continua_descartado() -> None:
     estado = {"fase": "vendas", "aguardando": "confirmacao_plano", "tem_cobertura": True}
     for msg in ("qual a taxa de instalação?", "e se eu cancelar antes?"):
@@ -503,6 +524,7 @@ def main() -> None:
         test_conversa_nao_vira_nome_nem_rua,
         test_celular_nao_vira_cpf,
         test_texto_pede_o_campo_que_o_estado_aguarda,
+        test_dado_com_duvida_na_mesma_mensagem_guarda_o_dado,
         test_plano_ecoado_em_duvida_continua_descartado,
         test_conferir_do_avaliador,
         test_casos_de_avaliacao_batem_com_o_parser,
