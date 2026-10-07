@@ -41,9 +41,19 @@ python scripts/test_imports_internos.py
 
 A fonte das respostas é a **RAG** (webhook cadastrado em Config IA): cancelamento, multa, instalação e as informações da empresa ficam lá, não no código. Toda dúvida consulta a RAG, inclusive as de cancelamento e instalação.
 
-A resposta é escrita pelo LLM a cada pergunta (`response._resposta_inteligente`): ele recebe a pergunta, a conversa e o que a RAG devolveu, responde só o que foi perguntado e não repete o que já explicou. A continuação do atendimento (pedir o próximo dado, o aceite) é acrescentada pelo código, sempre igual.
+A mensagem é escrita pelo LLM a cada pergunta (`response._responder_duvida`): ele recebe a pergunta, a conversa, o que a RAG devolveu e o próximo passo do atendimento. Responde só o que foi perguntado, não repete o que já explicou e termina retomando o atendimento com as próprias palavras. O código só confere se a mensagem retomou o atendimento e acrescenta o próximo passo se o LLM esqueceu.
 
-Para mudar o que a Eva afirma sobre um assunto, altere o conteúdo da RAG. Os textos fixos antigos só entram como reserva: quando o LLM falha, ou quando a RAG não devolve nada sobre cancelamento/instalação.
+Não existe texto pronto de regra comercial no código. Para mudar o que a Eva afirma sobre um assunto, altere o conteúdo da RAG. Se a RAG não trouxer a resposta, a Eva diz que prefere confirmar com a equipe. Com o LLM fora do ar, sai uma frase neutra seguida do próximo passo.
+
+## Localização: bairro ou cidade
+
+A lista de cidades atendidas fica em `app/localizacao_heuristica.py` (`CIDADES_ATENDIDAS_CANONICAS`). Quando o cliente manda um nome de lugar sozinho:
+
+- cidade da lista → é a cidade; a Eva pede o bairro;
+- bairro conhecido, ou o cliente escreveu "bairro" → é o bairro; a Eva pede a cidade;
+- qualquer outro nome → a Eva pergunta "*X* é o seu bairro?" (`aguardando=confirmar_local`). Se for, guarda como bairro e pede a cidade; se o cliente disser que é a cidade, ela está fora da área e a Eva informa as cidades atendidas.
+
+Assim um nome solto nunca é gravado como cidade só porque o modelo chutou.
 
 ## Avaliação do interpretador (LLM real)
 

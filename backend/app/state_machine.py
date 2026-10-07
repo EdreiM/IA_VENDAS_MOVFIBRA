@@ -1329,6 +1329,45 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     return _validar_cpf_antes_de_responder_duvida(decisao, estado, resolucao)
 
 
+def _precisa_confirmar_local(
+    estado: dict[str, Any], resolucao: dict[str, Any], dados: dict[str, Any], fase: str
+) -> tuple[str, str]:
+    """Cliente mandou UM nome de lugar: é bairro ou cidade?
+
+    Devolve (nome_a_confirmar, cidade_fora_da_area); os dois vazios quando não há dúvida:
+    - é uma cidade atendida → é cidade;
+    - é um bairro conhecido, ou o cliente escreveu "bairro" → é bairro;
+    - já existe a outra metade da localização.
+    Nome solto fora da lista de cidades atendidas → a Eva pergunta se é o bairro
+    ("Maracanã é o seu bairro?"). Se o próprio cliente disse que é a cidade, ela já
+    está fora da área. Assim um bairro nunca é gravado como cidade.
+    """
+    from app.localizacao_heuristica import bairro_conhecido, cidade_atendida
+
+    if fase not in {"inicio", "viabilidade", "sem_cobertura"}:
+        return "", ""
+    informados = set((resolucao.get("dados") or {}).get("campos_informados") or []) & {"cidade", "bairro"}
+    if len(informados) != 1:
+        return "", ""
+    campo = next(iter(informados))
+    valor = _texto(dados.get(campo))
+    if not valor:
+        return "", ""
+    msg = re.sub(r"[^\w\s]", " ", _texto(resolucao.get("mensagem")).casefold())
+    if campo == "cidade":
+        if cidade_atendida(valor):
+            return "", ""
+        if re.search(r"\bcidade\b", msg):
+            return "", valor
+        return valor, ""
+    # campo == "bairro": já tem cidade, é bairro conhecido ou o cliente disse "bairro"
+    if _texto(dados.get("cidade")) and not dados.get("limpar_cidade"):
+        return "", ""
+    if bairro_conhecido(valor) or re.search(r"\bbairro\b", msg) or cidade_atendida(valor):
+        return "", ""
+    return valor, ""
+
+
 def _resumo_quando_cadastro_completou(decisao: Decisao, estado: dict[str, Any]) -> Decisao:
     """Último campo do cadastro + dúvida na mesma mensagem.
 
@@ -1775,6 +1814,39 @@ def _decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             "GLOBAL_HUMANO",
         )
 
+    # Resposta à pergunta "X é o seu bairro?" (ver _precisa_confirmar_local).
+    # Se o cliente já mandou a cidade junto, os ramos de localização abaixo resolvem.
+    if aguardando == "confirmar_local" and not loc.get("informada"):
+        candidato = _texto(estado.get("bairro"))
+        t_local = re.sub(r"[^\w\s]", " ", _texto(resolucao.get("mensagem")).casefold())
+        diz_bairro = bool(re.search(r"\bbairro\b", t_local))
+        diz_cidade = bool(re.search(r"\bcidade\b", t_local)) and not diz_bairro
+        if candidato and (diz_cidade or (flags.get("negacao") and not diz_bairro)):
+            # Não é bairro: é uma cidade — e não está entre as que atendemos
+            d = dict(dados_base)
+            d.update(cidade=candidato, limpar_bairro=True, tem_cobertura=False, tentativas_sem_cobertura=0)
+            d.pop("bairro", None)
+            return dec(
+                "RESPONDER",
+                "INFORMAR_CIDADE_NAO_ATENDIDA",
+                "sem_cobertura",
+                None,
+                d,
+                "Localidade confirmada como cidade fora da área de atendimento",
+                "GLOBAL_LOCALIZACAO",
+                contexto={"cidade": candidato},
+            )
+        if candidato and (diz_bairro or flags.get("confirmacao")):
+            return dec(
+                "RESPONDER",
+                "COMPLETAR_LOCALIZACAO",
+                "viabilidade",
+                "localizacao",
+                dict(dados_base),
+                "Bairro confirmado — falta a cidade",
+                "GLOBAL_LOCALIZACAO",
+            )
+
     # ── Plano bloqueado após cadastro fechado ──
     quer_mudar_plano = plano.get("pediu_troca_declarada") or (
         plano.get("informado") and not plano.get("repetido")
@@ -1893,6 +1965,37 @@ def _decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             d["resetar_cobertura"] = True
             if fase not in {"cadastro", "sem_cobertura"} and not estado.get("plano_confirmado"):
                 d["invalidar_plano"] = True
+        local_a_confirmar, cidade_fora = _precisa_confirmar_local(estado, resolucao, d, fase)
+        if cidade_fora:
+            # O cliente disse que é a cidade, e ela não está entre as que atendemos
+            d.update(cidade=cidade_fora, tem_cobertura=False, tentativas_sem_cobertura=0)
+            return dec(
+                "RESPONDER",
+                "INFORMAR_CIDADE_NAO_ATENDIDA",
+                "sem_cobertura",
+                None,
+                d,
+                "Cidade informada fora da área de atendimento",
+                "GLOBAL_LOCALIZACAO",
+                contexto={"cidade": cidade_fora},
+            )
+        if local_a_confirmar:
+            # Nunca gravar como cidade o que não é cidade atendida: fica como bairro
+            # provisório até o cliente confirmar.
+            d.pop("cidade", None)
+            d["limpar_cidade"] = True
+            d["bairro"] = local_a_confirmar
+            d.pop("limpar_bairro", None)
+            return dec(
+                "RESPONDER",
+                "CONFIRMAR_BAIRRO_OU_CIDADE",
+                "viabilidade",
+                "confirmar_local",
+                d,
+                "Localidade única fora da lista de cidades atendidas — confirmar se é bairro",
+                "GLOBAL_LOCALIZACAO",
+                contexto={"local": local_a_confirmar},
+            )
         return dec(
             "RESPONDER",
             "COMPLETAR_LOCALIZACAO",

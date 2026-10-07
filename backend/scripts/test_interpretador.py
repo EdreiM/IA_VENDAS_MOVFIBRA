@@ -469,23 +469,31 @@ def test_duvida_e_respondida_pelo_llm_com_a_rag_e_o_historico() -> None:
     prompt = chamadas[0]
     _assert("TRECHO-DA-RAG" in prompt, "o conteúdo da RAG não foi para o prompt")
     _assert("Cancelando antes dos 12 meses pode haver multa proporcional." in prompt, "histórico fora do prompt")
-    _assert("não repita o que a Eva já explicou" in prompt, "instrução de não repetir")
+    _assert("não repita o que você já explicou" in prompt, "instrução de não repetir")
+    _assert("PRÓXIMO PASSO DO ATENDIMENTO: Me informa seu *CPF*" in prompt, "próximo passo fora do prompt")
     _assert("mas quanto é essa multa?" in prompt, "pergunta do cliente fora do prompt")
 
-    # RAG sem nada sobre cancelamento: o LLM não responde regra comercial de cabeça
+    # O LLM já retomou o atendimento com as palavras dele: o código não repete a retomada
+    with patch.object(response, "chat", lambda *a, **k: "Fica no contrato, tá? Agora me passa seu CPF pra gente seguir."):
+        txt = response.gerar_resposta(dec, estado, historico=hist, mensagem_cliente="mas quanto é essa multa?")
+    _assert(txt == "Fica no contrato, tá? Agora me passa seu CPF pra gente seguir.", txt)
+
+    # RAG sem nada sobre o assunto: o LLM ainda escreve (diz que confirma com a equipe);
+    # o prompt avisa que não há trecho e o código não tem regra comercial de reserva
     chamadas.clear()
     with patch.object(response, "chat", chat_falso):
-        reserva = response.gerar_resposta(dec_sem_rag, estado, historico=hist, mensagem_cliente="mas quanto é essa multa?")
-    _assert(not chamadas, "sem RAG, cancelamento não deve ser respondido pelo LLM")
-    _assert("multa" in reserva.casefold() and "CPF" in reserva, reserva)
+        response.gerar_resposta(dec_sem_rag, estado, historico=hist, mensagem_cliente="mas quanto é essa multa?")
+    _assert(len(chamadas) == 1 and "nenhum trecho encontrado" in chamadas[0], "sem RAG o prompt deve avisar")
 
-    # LLM fora do ar: cai no texto de reserva, sem quebrar a resposta
+    # LLM fora do ar: frase neutra + próximo passo, sem regra comercial nem frase de robô
     def chat_quebrado(*a, **k):
         raise RuntimeError("sem LLM")
 
     with patch.object(response, "chat", chat_quebrado):
         reserva = response.gerar_resposta(dec, estado, historico=hist, mensagem_cliente="mas quanto é essa multa?")
-    _assert("multa" in reserva.casefold() and "CPF" in reserva, reserva)
+    _assert("CPF" in reserva, reserva)
+    for proibido in ("proporcional", "12 meses", "não calcula", "boa pergunta"):
+        _assert(proibido not in reserva.casefold(), f"{proibido!r} em texto fixo: {reserva}")
 
     # Dúvida na etapa dos termos: responde e retoma o aceite em uma linha
     dec_termos = Decisao(

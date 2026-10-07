@@ -354,6 +354,21 @@ _CONTEXTO_PLANO_RE = re.compile(
 )
 
 
+_PALAVRAS_GENERICAS_PLANO = frozenset({
+    "mov", "plano", "planos", "o", "a", "os", "as", "um", "esse", "essa", "este", "esta",
+    "mesmo", "combo", "total", "de", "do", "da", "quero", "mais", "com",
+})
+
+
+def _palavra_do_plano_na_mensagem(ref_llm: str, msg: str) -> str:
+    """Palavra que identifica o plano lido pelo LLM e que o cliente escreveu ("esse up" → "up")."""
+    palavras_msg = set(re.sub(r"[^\w\s]", " ", msg).split())
+    for p in re.sub(r"[^\w\s]", " ", normalizar_texto(ref_llm)).split():
+        if p not in _PALAVRAS_GENERICAS_PLANO and len(p) >= 2 and not p.isdigit() and p in palavras_msg:
+            return p
+    return ""
+
+
 _RE_POSICAO_LISTA = re.compile(
     r"\b(?:primeir[oa]|segund[oa]|terceir[oa]|quart[oa]|quint[oa]|sext[oa]|"
     r"penultim[oa]|ultim[oa]|opcao\s+\d|numero\s+\d)\b"
@@ -2201,6 +2216,14 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             escolha_por_posicao = True
             if not extrair_referencia_plano_na_mensagem(dados.plano):
                 dados.plano = plano_citado
+    # "quero esse up" — a regra acima não reconhece "up" sozinho, mas o LLM leu o plano
+    # e a palavra está na mensagem: é escolha do UP+, não um "sim" para o plano da mesa.
+    if aguardando_plano and not escolha_por_posicao and Evento.PLANO_INFORMADO.value in eventos_llm:
+        palavra = _palavra_do_plano_na_mensagem(texto(dados_dict.get("plano")), msg)
+        rotulo = _detectar_plano_na_mensagem(f"mov {palavra}") if palavra else ""
+        if rotulo and not eh_pergunta_informativa_sobre_plano(msg, msg_bruto):
+            escolha_por_posicao = True
+            dados.plano = rotulo
     if escolha_por_posicao:
         eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
         if Evento.PLANO_INFORMADO.value not in eventos:

@@ -164,6 +164,8 @@ Regras rápidas:
 - Número com 11 dígitos: é telefone se a Eva pediu telefone; é CPF se a Eva pediu CPF
 - Cidade/bairro junto com um pedido ("quero internet em Santarém no Diamantino") → PEDIDO_CONTRATACAO + LOCALIZACAO_INFORMADA, preenchendo cidade e bairro
 - "bairro Aparecida, Santarém" → respeite o rótulo: bairro=Aparecida, cidade=Santarém
+- Um nome de lugar sozinho ("no Diamantino", "Maracanã"): preencha o campo que o cliente indicou; na dúvida, bairro — nunca chute cidade
+- aguardando=confirmar_local (a Eva perguntou se um lugar é o bairro): "sim" / "é o bairro" → CONFIRMACAO; "não" / "é a cidade" → NEGACAO; se o cliente disser a cidade ("sim, Santarém") → LOCALIZACAO_INFORMADA + dados.cidade
 - Conversa sem dado quando a Eva pediu um dado ("pera aí", "já mando", "tá bom", "não tenho agora") → CONVERSA_SOCIAL ou OUTRO, dados vazios
 - Correção ("errei", "na verdade", "o certo é", "o nome é X" quando já havia nome) → CORRECAO_DADO + campos_corrigidos
 - Durante cadastro, "quero o Infinity" ainda é PLANO_INFORMADO (troca de plano)

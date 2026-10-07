@@ -504,6 +504,10 @@ ESCOLHAS_PLANO = [
     ("quero o de 149", "o de 149", "MOV UP+"),
     ("pode ser o de 189", "o de 189", "MOV INFINITY"),
     ("quero o mais barato", "mais barato", "MOV FLEX"),
+    ("Quero esse up", "up", "MOV UP+"),
+    ("quero o up", "UP+", "MOV UP+"),
+    ("pode ser o one", "one", "MOV ONE+"),
+    ("fico com o flex", "MOV FLEX", "MOV FLEX"),
     ("o mais em conta", "mais em conta", "MOV FLEX"),
 ]
 
@@ -899,6 +903,43 @@ CONVERSAS: dict[str, dict[str, Any]] = {
                   "email": "joao.alves@gmail.com", "telefone": "93991112222", "data_nascimento": "01/03/1985",
                   "cep": "68005120", "rua": "Mendonça Furtado", "numero": "2040", "horario_escolhido": "9h às 10h",
                   "fase": "finalizado"},
+    },
+    # Nome de lugar solto: nunca vira cidade se não for cidade atendida — a Eva pergunta
+    "bairro desconhecido, confirmado em duas mensagens": {
+        "passos": [
+            ("Maracanã", L(["LOCALIZACAO_INFORMADA"], {"cidade": "Maracanã"}), {"fase": "viabilidade", "aguardando": "confirmar_local"}),
+            ("sim", L(["CONFIRMACAO"]), {"fase": "viabilidade", "aguardando": "localizacao"}),
+            ("Santarém", L(["LOCALIZACAO_INFORMADA"], {"cidade": "Santarém"}), {"fase": "vendas", "aguardando": "confirmacao_plano"}),
+        ],
+        "final": {"cidade": "Santarém", "bairro": "Maracanã"},
+    },
+    "bairro desconhecido, confirmado já com a cidade": {
+        "passos": [
+            ("moro no maracanã", L(["LOCALIZACAO_INFORMADA"], {"bairro": "Maracanã"}), {"fase": "viabilidade", "aguardando": "confirmar_local"}),
+            ("sim, santarém", L(["CONFIRMACAO", "LOCALIZACAO_INFORMADA"], {"cidade": "Santarém"}), {"fase": "vendas", "aguardando": "confirmacao_plano"}),
+        ],
+        "final": {"cidade": "Santarém", "bairro": "Maracanã"},
+    },
+    "lugar solto era uma cidade fora da área": {
+        "passos": [
+            ("Óbidos", L(["LOCALIZACAO_INFORMADA"], {"cidade": "Óbidos"}), {"fase": "viabilidade", "aguardando": "confirmar_local"}),
+            ("não, é a cidade", L(["NEGACAO"]), {"fase": "sem_cobertura"}),
+        ],
+        "final": {"cidade": "Óbidos", "fase": "sem_cobertura"},
+    },
+    "bairro conhecido não precisa de confirmação": {
+        "passos": [
+            ("Aqui no diamantino", L(["LOCALIZACAO_INFORMADA"], {"bairro": "Diamantino"}), {"fase": "viabilidade", "aguardando": "localizacao"}),
+            ("Santarém", L(["LOCALIZACAO_INFORMADA"], {"cidade": "Santarém"}), {"fase": "vendas", "aguardando": "confirmacao_plano"}),
+        ],
+        "final": {"cidade": "Santarém", "bairro": "Diamantino"},
+    },
+    "cidade atendida e depois o bairro, mesmo desconhecido": {
+        "passos": [
+            ("Santarém", L(["LOCALIZACAO_INFORMADA"], {"cidade": "Santarém"}), {"fase": "viabilidade", "aguardando": "localizacao"}),
+            ("Maracanã", L(["LOCALIZACAO_INFORMADA"], {"bairro": "Maracanã"}), {"fase": "vendas", "aguardando": "confirmacao_plano"}),
+        ],
+        "final": {"cidade": "Santarém", "bairro": "Maracanã"},
     },
     "tudo numa mensagem só": {
         "passos": [

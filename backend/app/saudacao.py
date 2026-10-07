@@ -117,6 +117,7 @@ def mensagem_cumprimento_retomar(mensagem_cliente: str, pendente: str = "") -> s
     else:
         retomadas = {
             "localizacao": texto_pedir_localizacao_instalacao(compacto=True),
+            "confirmar_local": "O lugar que você me passou é o seu bairro? Se for, me conta também qual é a cidade.",
             "confirmacao_plano": "Quer confirmar o plano que te indiquei?",
             "escolha_plano": "Qual plano você prefere?",
             "lista_planos": "Qual plano você prefere?",

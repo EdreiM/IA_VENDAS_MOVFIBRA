@@ -12,6 +12,10 @@ def _texto(valor: Any) -> str:
     return "" if valor is None else str(valor).strip()
 
 
+# Estados em que a Eva espera cidade/bairro (pedido inicial ou confirmação de um nome solto)
+_AGUARDANDO_LOCAL = frozenset({"localizacao", "confirmar_local"})
+
+
 def _norm(valor: str) -> str:
     t = _texto(valor).casefold()
     for a, b in [
@@ -102,7 +106,7 @@ def mensagem_tem_intencao_nao_dado(
             if not _texto_parece_apenas_dado_cadastro(bruto, aguardando):
                 return True
 
-    if aguardando == "localizacao" and fase in {"inicio", "viabilidade", "vendas"}:
+    if aguardando in _AGUARDANDO_LOCAL and fase in {"inicio", "viabilidade", "vendas"}:
         if not _mensagem_tem_sinal_localizacao(bruto):
             if any(
                 k in tn
@@ -381,7 +385,15 @@ def aplicar_guards_interpretacao(
                 rejeitar = True
 
         if not rejeitar and campo in {"cidade", "bairro"}:
-            if aguardando == "localizacao" and not _mensagem_tem_sinal_localizacao(bruto):
+            from app.localizacao_heuristica import _parece_conversa
+
+            # O cliente respondeu só com o nome do lugar ("Maracanã"): o valor está
+            # escrito na mensagem e não é frase de conversa — é a resposta, mesmo que
+            # o bairro não esteja na lista de conhecidos.
+            escrito_na_mensagem = _norm(valor) in _norm(bruto) and not _parece_conversa(valor)
+            if escrito_na_mensagem and aguardando in _AGUARDANDO_LOCAL and not intencao_nao_dado:
+                pass
+            elif aguardando in _AGUARDANDO_LOCAL and not _mensagem_tem_sinal_localizacao(bruto):
                 rejeitar = True
             elif intencao_nao_dado and not _mensagem_tem_sinal_localizacao(bruto):
                 rejeitar = True
@@ -402,7 +414,7 @@ def aplicar_guards_interpretacao(
             if not pergunta:
                 pergunta = extrair_parte_pergunta(bruto, msg) or bruto
 
-    if aguardando == "localizacao" and intencao_nao_dado:
+    if aguardando in _AGUARDANDO_LOCAL and intencao_nao_dado:
         # "Quero ver os planos, aqui em Santarém" traz a cidade junto com o pedido:
         # fica o que está escrito na mensagem e não é frase de conversa.
         from app.localizacao_heuristica import _parece_conversa
