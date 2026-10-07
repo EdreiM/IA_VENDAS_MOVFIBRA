@@ -100,6 +100,17 @@ class ResultadoMatch:
     turno: str = ""
 
 
+_ORDINAIS = {"primeir": 0, "segund": 1, "terceir": 2, "quart": 3, "quint": 4}
+
+
+def _horas_citadas(msg: str) -> list[int]:
+    """Horas na mensagem: '9h', 'às 9', '14:00', '9 horas' ou só '9'."""
+    com_marca = [int(h) for h in re.findall(r"\b(\d{1,2})\s*(?:h\b|hs\b|hrs?\b|horas?\b|:\d{2})", msg)]
+    if com_marca:
+        return com_marca
+    return [int(h) for h in re.findall(r"\b(\d{1,2})\b", msg)]
+
+
 def match_horario(mensagem: str, estado: dict[str, Any]) -> ResultadoMatch:
     msg = _norm(mensagem)
     manha, tarde = horarios_disponiveis(estado)
@@ -108,48 +119,43 @@ def match_horario(mensagem: str, estado: dict[str, Any]) -> ResultadoMatch:
     if not msg or not todos:
         return ResultadoMatch(invalido=True)
 
-    # Match exato ou substring
+    # O horário escrito por inteiro ("14h às 15h")
     for slot in todos:
-        if _norm(slot) == msg or _norm(slot) in msg or msg in _norm(slot):
+        if _norm(slot) == msg or _norm(slot) in msg:
             return ResultadoMatch(slot=slot)
 
-    # Hora explícita: "9h", "14h", "às 9"
-    horas = [int(h) for h in re.findall(r"\b(\d{1,2})\s*h", msg)]
-    if horas:
-        matches = [s for s in todos if any(_slot_contem_hora(s, h) for h in horas)]
-        if len(matches) == 1:
-            return ResultadoMatch(slot=matches[0])
-        if len(matches) > 1:
-            return ResultadoMatch(ambiguo=True, turno="")
-        return ResultadoMatch(invalido=True)
-
-    # Turno genérico
-    quer_manha = any(w in msg for w in ("manha", "manhã", "cedo"))
+    quer_manha = any(w in msg for w in ("manha", "cedo"))
     quer_tarde = "tarde" in msg
-    if quer_manha and not quer_tarde:
-        if len(manha) == 1:
-            return ResultadoMatch(slot=manha[0])
-        if len(manha) > 1:
-            if "primeir" in msg or "1 " in msg:
-                return ResultadoMatch(slot=manha[0])
-            return ResultadoMatch(ambiguo=True, turno="manha")
-        return ResultadoMatch(invalido=True)
-    if quer_tarde and not quer_manha:
-        if len(tarde) == 1:
-            return ResultadoMatch(slot=tarde[0])
-        if len(tarde) > 1:
-            if "primeir" in msg or "1 " in msg:
-                return ResultadoMatch(slot=tarde[0])
-            return ResultadoMatch(ambiguo=True, turno="tarde")
+    lista = manha if (quer_manha and not quer_tarde) else tarde if (quer_tarde and not quer_manha) else todos
+
+    # "o primeiro", "o último (da tarde)"
+    if "ultim" in msg and lista:
+        return ResultadoMatch(slot=lista[-1])
+    for raiz, idx in _ORDINAIS.items():
+        if raiz in msg:
+            return ResultadoMatch(slot=lista[idx]) if idx < len(lista) else ResultadoMatch(invalido=True)
+
+    horas = _horas_citadas(msg)
+    if horas:
+        # A hora dita é a de INÍCIO: "às 9" é 9h–10h, não 8h–9h
+        for h in horas:
+            inicio = [s for s in todos if _hora_inicio(s) == h]
+            if len(inicio) == 1:
+                return ResultadoMatch(slot=inicio[0])
+            if len(inicio) > 1:
+                return ResultadoMatch(ambiguo=True, turno="")
+        # "opção 2" / "o 2" — posição na lista, quando o número não é uma hora de início
+        if len(horas) == 1 and 1 <= horas[0] <= len(todos) and not re.search(r"\d\s*(?:h\b|:)", msg):
+            return ResultadoMatch(slot=todos[horas[0] - 1])
         return ResultadoMatch(invalido=True)
 
-    # Numeração: "o 1", "opcao 2"
-    m = re.search(r"\b(?:opcao|opção|numero|nº|#)?\s*(\d+)\b", msg)
-    if m:
-        idx = int(m.group(1)) - 1
-        lista = manha + tarde
-        if 0 <= idx < len(lista):
-            return ResultadoMatch(slot=lista[idx])
+    # Só o turno
+    if quer_manha != quer_tarde:
+        if len(lista) == 1:
+            return ResultadoMatch(slot=lista[0])
+        if len(lista) > 1:
+            return ResultadoMatch(ambiguo=True, turno="manha" if quer_manha else "tarde")
+        return ResultadoMatch(invalido=True)
 
     return ResultadoMatch(invalido=True)
 

@@ -699,13 +699,17 @@ def historico_recente(id_cliente: str, limite: int = 6) -> list[dict[str, str]]:
     return itens
 
 
-def salvar_transicao(
-    id_cliente: str,
+def aplicar_transicao(
+    estado: dict[str, Any],
     fase: str,
     aguardando: str | None,
     atualizar: dict[str, Any],
 ) -> dict[str, Any]:
-    estado = carregar_ou_criar_estado(id_cliente)
+    """Regras de atualização do estado, sem tocar no banco.
+
+    Separada de `salvar_transicao` para que os testes de funil apliquem exatamente
+    as mesmas regras em memória.
+    """
     novo = dict(estado)
     novo["fase"] = fase
     novo["aguardando"] = aguardando
@@ -808,6 +812,16 @@ def salvar_transicao(
         novo["contexto_plano"] = (
             str(val_ctx).strip() if val_ctx is not None else None
         ) or None
+    return novo
+
+
+def salvar_transicao(
+    id_cliente: str,
+    fase: str,
+    aguardando: str | None,
+    atualizar: dict[str, Any],
+) -> dict[str, Any]:
+    novo = aplicar_transicao(carregar_ou_criar_estado(id_cliente), fase, aguardando, atualizar)
 
     with get_connection() as conn:
         with conn.cursor() as cur:

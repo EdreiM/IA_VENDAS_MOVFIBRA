@@ -290,7 +290,8 @@ EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 def _extrair_email(bruto: str) -> str:
     s = (bruto or "").strip()
     # Remove prefixos comuns em mensagens partidas ("é erei teste @gmail.com")
-    s = re.sub(r"^(?:meu\s+)?(?:e-?mail|email)\s*(?:é|e|eh|:|-)?\s*", "", s, flags=re.I)
+    # O "é/e" opcional precisa terminar a palavra, senão come a 1ª letra ("email edrei@...")
+    s = re.sub(r"^(?:meu\s+)?(?:e-?mail|email)\s*(?:(?:é|eh|e)(?=\s)|:|-)?\s*", "", s, flags=re.I)
     s = re.sub(r"^(?:é|e|eh)\s+", "", s, flags=re.I)
     m = EMAIL_RE.search(s)
     if m:
@@ -884,6 +885,10 @@ _MARCAS_NAO_CONFIRMA = frozenset({
 })
 
 
+# Depois do "mas", "depois" costuma estar numa dúvida ("posso remarcar depois?")
+_MARCAS_OBJECAO_APOS_MAS = (_MARCAS_NAO_CONFIRMA - {"depois"}) | {"vejo", "caros"}
+
+
 def _confirmacao_por_prefixo(bruto: str, t: str) -> bool:
     """'tá bom' / 'ok pode ser' confirmam; 'tá caro' / 'ok mas...' / 'tá errado o CPF' não."""
     # "pode instalar amanhã?" / "isso inclui wifi?" — pergunta, não confirmação
@@ -894,13 +899,26 @@ def _confirmacao_por_prefixo(bruto: str, t: str) -> bool:
         "sim", "si", "s", "ta", "confirmo", "ok", "blz", "beleza", "fechado", "fechou"
     }:
         return False
-    # "sim, mas posso remarcar depois?" continua confirmando: o que vem após o "mas" é dúvida
-    resto: list[str] = []
+    # "sim, mas posso remarcar depois?" continua confirmando (o que vem após o "mas" é
+    # dúvida); "sim mas tá caro" não — a ressalva é uma objeção.
+    antes: list[str] = []
+    depois: list[str] = []
+    alvo = antes
     for p in palavras[1:]:
-        if p in {"mas", "porem"}:
-            break
-        resto.append(p)
-    return not any(p in _MARCAS_NAO_CONFIRMA for p in resto)
+        if p in {"mas", "porem"} and alvo is antes:
+            alvo = depois
+            continue
+        alvo.append(p)
+    if any(p in _MARCAS_NAO_CONFIRMA for p in antes):
+        return False
+    return not any(p in _MARCAS_OBJECAO_APOS_MAS for p in depois)
+
+
+def _confirmacao_exata(t: str) -> bool:
+    """Confirmação que não depende de interpretação: a frase inteira é o 'sim'."""
+    return t in CONFIRMACOES_GENERICAS or t in {
+        "si", "s", "ss", "yes", "sim sim", "uhum", "aham", "isso", "certo", "claro", "positivo",
+    }
 
 
 def eh_aceite_termos_explicito(msg: str) -> bool:
@@ -1000,6 +1018,10 @@ def _extrair_cep(bruto: str) -> str:
     m = re.search(r"\b(\d{5})[\s-]?(\d{3})\b", principal)
     if m:
         return f"{m.group(1)}{m.group(2)}"
+    # "68.020-000"
+    m = re.search(r"\b(\d{2})\.(\d{3})[\s-]?(\d{3})\b", principal)
+    if m:
+        return "".join(m.groups())
     digitos = re.sub(r"\D", "", principal)
     return digitos if len(digitos) == 8 else ""
 
@@ -1081,15 +1103,23 @@ def _texto_livre_parece_dado(msg_bruto: str, aguardando: str, eventos_llm: set[s
     # CPF, telefone, CEP ou e-mail na mesma mensagem ("Edrei Silva 604.210.790-96")
     if "@" in msg_bruto or len(re.sub(r"\D", "", msg_bruto)) >= 8:
         return True
+    pergunta = "?" in msg_bruto
     if aguardando == "rua":
-        # "rua das flores" começa pelo logradouro; "não sei o nome da rua" não
-        return bool(re.search(r"\d", t) or _RE_LOGRADOURO.match(t.strip()))
+        # "rua das flores" começa pelo logradouro; "não sei o nome da rua" não.
+        # Número só conta fora de pergunta ("tem suporte 24h?" não é endereço).
+        return bool(_RE_LOGRADOURO.match(t.strip()) or (re.search(r"\d", t) and not pergunta))
+    if aguardando == "numero":
+        # "891" / "casa 12" / "nº 45" — resposta curta com número, sem ser pergunta
+        return bool(re.search(r"\d", t)) and len(t.split()) <= 3 and not pergunta
     if aguardando == "nome":
-        # Falha conhecida do LLM: "Maria Souza?" classificado como PERGUNTA
+        # Falha conhecida do LLM: "Maria Souza?" classificado como PERGUNTA. Só vale com
+        # cara de nome próprio (iniciais maiúsculas) — "aceita pix?" não é nome.
+        palavras = re.sub(r"[^\w\s]", " ", texto(msg_bruto)).split()
         return (
             Evento.PERGUNTA.value in eventos_llm
             and texto(msg_bruto).rstrip().endswith("?")
-            and len(t.split()) <= 5
+            and 2 <= len(palavras) <= 5
+            and all(p[:1].isupper() or p.casefold() in {"de", "da", "do", "dos", "das", "e"} for p in palavras)
             and _parece_nome_de_pessoa(t)
         )
     return False
@@ -1956,6 +1986,108 @@ def _strip_markdown(raw: str) -> str:
     return s.strip()
 
 
+_CAMPOS_RECONCILIAVEIS = ("nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero")
+
+
+def _canonico(campo: str, valor: str) -> str:
+    v = texto(valor)
+    if campo in {"cpf", "telefone", "cep"}:
+        return _somente_digitos(v)
+    if campo == "data_nascimento":
+        return _extrair_data_nascimento(v) or v
+    if campo == "email":
+        return v.lower().replace(" ", "")
+    return v
+
+
+def _evidenciado(campo: str, valor: str, msg_bruto: str) -> bool:
+    """O valor que o LLM extraiu está de fato escrito na mensagem do cliente."""
+    if not valor:
+        return False
+    if campo in {"cpf", "telefone", "cep"}:
+        return valor in _somente_digitos(msg_bruto)
+    if campo == "data_nascimento":
+        return _extrair_data_nascimento(msg_bruto) == valor or valor in msg_bruto
+    if campo == "email":
+        return valor in msg_bruto.lower().replace(" ", "")
+    if campo == "numero":
+        # Solto na mensagem — não um pedaço de data, CEP, CPF ou telefone
+        return bool(
+            re.search(rf"(?<![\w/.\-]){re.escape(valor)}(?![\w/.\-])", msg_bruto, flags=re.I)
+        )
+    return normalizar_texto(valor) in normalizar_texto(msg_bruto)
+
+
+def _reconciliar_com_llm(
+    *,
+    dados: DadosExtraidos,
+    dados_llm: dict[str, str],
+    eventos: list[str],
+    campos_corrigidos: list[str],
+    corrigidos_llm: set[str],
+    estado: dict[str, Any],
+    aguardando: str,
+    msg_bruto: str,
+) -> None:
+    """Última etapa do parser no cadastro: o que o LLM leu na mensagem prevalece.
+
+    As regras acima reextraem e filtram os campos por palavra-chave e às vezes apagam
+    ou trocam um valor que o LLM leu certo ("email edrei@..." virava "drei@...";
+    "o nome está errado, é João Carlos" perdia o nome). Um valor do LLM volta quando:
+    está escrito na mensagem, é válido para o campo, não foi movido para outro campo
+    e o campo é o esperado agora (pendente, par dele ou correção declarada).
+    """
+    from app.cadastro_mensagens import par_de
+    from app.validation import (
+        nome_parece_frase_invalida,
+        rua_parece_eco_nome,
+        rua_parece_frase_invalida,
+        validar_campo,
+    )
+
+    par = set(par_de(aguardando))
+    for campo in _CAMPOS_RECONCILIAVEIS:
+        v_llm = _canonico(campo, dados_llm.get(campo, ""))
+        if not v_llm:
+            continue
+        atual = _canonico(campo, getattr(dados, campo, ""))
+        if atual == v_llm:
+            continue
+        if not _evidenciado(campo, v_llm, msg_bruto) or validar_campo(campo, v_llm) is not None:
+            continue
+        # O parser moveu o mesmo valor para outro campo (rua lida como nome, celular como CPF)
+        if any(
+            _canonico(outro, getattr(dados, outro, "")) == v_llm
+            or normalizar_texto(texto(getattr(dados, outro, ""))) == normalizar_texto(v_llm)
+            for outro in _CAMPOS_RECONCILIAVEIS
+            if outro != campo
+        ):
+            continue
+        # Só o campo pedido agora, o par dele ou uma correção declarada — um valor
+        # "solto" para outro campo continua passando pelos filtros normais.
+        if not (campo == aguardando or campo in par or campo in corrigidos_llm):
+            continue
+        if campo == "nome" and (
+            nome_parece_frase_invalida(v_llm) or not _parece_nome_de_pessoa(v_llm)
+        ):
+            continue
+        if campo == "rua" and (
+            rua_parece_frase_invalida(v_llm) or rua_parece_eco_nome(v_llm, texto(estado.get("nome")))
+        ):
+            continue
+        if campo in {"cpf", "telefone"} and celular_e_nao_cpf(v_llm) != (campo == "telefone") and len(v_llm) == 11:
+            continue
+
+        setattr(dados, campo, v_llm)
+        if campo in corrigidos_llm:
+            if campo not in campos_corrigidos:
+                campos_corrigidos.append(campo)
+            if Evento.CORRECAO_DADO.value not in eventos:
+                eventos.append(Evento.CORRECAO_DADO.value)
+        if Evento.DADO_INFORMADO.value not in eventos:
+            eventos.append(Evento.DADO_INFORMADO.value)
+
+
 def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any]) -> Interpretacao:
     try:
         data = json.loads(_strip_markdown(raw))
@@ -1998,6 +2130,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     if not isinstance(campos, list):
         campos = []
     campos_corrigidos = [texto(c).lower() for c in campos if texto(c)]
+    corrigidos_llm = set(campos_corrigidos)
 
     # Data que o LLM devolveu por extenso ("16 de agosto de 2000") → dd/mm/aaaa
     if dados.data_nascimento:
@@ -2033,6 +2166,26 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         "cep", "rua", "numero", "confirmacao_dados",
     }
     aguardando_agenda = aguardando in {"escolha_horario", "confirmacao_horario"}
+
+    # Confirmação só pelo começo da frase ("tá ...", "ok ...", "sim, mas ...") é fraca:
+    # se o LLM classificou a mensagem e não viu confirmação, as regras não forçam.
+    msg_confirma = eh_confirmacao(msg)
+    if (
+        msg_confirma
+        and eventos_llm
+        and Evento.CONFIRMACAO.value not in eventos_llm
+        and not _confirmacao_exata(msg)
+    ):
+        msg_confirma = False
+
+    # No cadastro, dúvida que o LLM leu como pergunta ("o roteador é de vocês?") não é
+    # pedido de troca de plano, mesmo citando roteador/mesh/etc.
+    duvida_no_cadastro = (
+        fase == "cadastro"
+        and "?" in msg_bruto
+        and Evento.PERGUNTA.value in eventos_llm
+        and not (eventos_llm & {Evento.PLANO_INFORMADO.value, Evento.PEDIU_TROCAR_PLANO.value})
+    )
     # "pode ser o segundo" — escolha de um plano da lista (o LLM resolve o nome pelo
     # histórico), não confirmação do plano que estava em negociação
     escolha_por_posicao = (
@@ -2081,8 +2234,16 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         if Evento.PEDIDO_CONTRATACAO.value not in eventos:
             eventos.append(Evento.PEDIDO_CONTRATACAO.value)
         dados.plano = ""
-        dados.cidade = ""
-        dados.bairro = ""
+        # "quero internet, moro em Santarém no Diamantino" — a localização veio junto:
+        # fica o que está escrito na mensagem e não é frase de conversa.
+        from app.localizacao_heuristica import _parece_conversa
+
+        for campo_loc in ("cidade", "bairro"):
+            v_loc = texto(getattr(dados, campo_loc))
+            if v_loc and (normalizar_texto(v_loc) not in msg or _parece_conversa(v_loc)):
+                setattr(dados, campo_loc, "")
+        if (dados.cidade or dados.bairro) and Evento.LOCALIZACAO_INFORMADA.value not in eventos:
+            eventos.append(Evento.LOCALIZACAO_INFORMADA.value)
         pergunta = ""
 
     # "oi, tudo bem?" — o "?" é do cumprimento, não uma dúvida para a base de conhecimento
@@ -2212,7 +2373,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
 
     if (
         aguardando_plano
-        and (eh_confirmacao(msg) or msg == "quero")
+        and (msg_confirma or msg == "quero")
         and not eh_pedido_contratacao(msg, msg_bruto)
         and not escolha_por_posicao
     ):
@@ -2268,8 +2429,9 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             or (fase == "cadastro" and estado.get("tem_cobertura") is True)
         )
         and any(k in msg for k in INTENCAO_PLANO_KEYWORDS)
+        and not duvida_no_cadastro
         and msg not in CONFIRMACOES_GENERICAS
-        and not eh_confirmacao(msg)
+        and not msg_confirma
         and not any(p in msg for p in PERGUNTAS_PRECO)
         and not eh_pergunta_detalhe_plano(msg, msg_bruto)
         and not eh_pergunta_plano_por_preco(msg, msg_bruto)
@@ -2295,7 +2457,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         pergunta = ""
 
     # Correções rotuladas no resumo cadastral
-    if fase == "cadastro" and aguardando == "confirmacao_dados" and not eh_confirmacao(msg):
+    if fase == "cadastro" and aguardando == "confirmacao_dados" and not msg_confirma:
         correcoes_msg = _extrair_correcoes_rotuladas(msg_bruto)
         if correcoes_msg:
             eventos = [
@@ -2342,7 +2504,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
                 pergunta = ""
 
     # Confirmação do resumo cadastral (+ dúvida opcional na mesma mensagem)
-    if fase == "cadastro" and aguardando == "confirmacao_dados" and eh_confirmacao(msg):
+    if fase == "cadastro" and aguardando == "confirmacao_dados" and msg_confirma:
         eventos = [e for e in eventos if e not in {Evento.NEGACAO.value, Evento.PEDIU_TROCAR_PLANO.value}]
         if Evento.CONFIRMACAO.value not in eventos:
             eventos.append(Evento.CONFIRMACAO.value)
@@ -2379,8 +2541,9 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     # Proteção: citação explícita de plano (não CPF, não campos cadastrais pendentes)
     skip_plano = _parece_cpf_cnpj(msg, msg_bruto) or aguardando in {"cpf", "email", "telefone"}
     plano_detectado = _detectar_plano_na_mensagem(msg) if (pode_trocar_plano and not skip_plano) else ""
-    pergunta_sobre_plano = (
-        bool(plano_detectado) and eh_pergunta_informativa_sobre_plano(msg, msg_bruto)
+    # "qual a diferença pro infinity?" no cadastro é dúvida sobre o plano, não troca
+    pergunta_sobre_plano = bool(plano_detectado) and (
+        eh_pergunta_informativa_sobre_plano(msg, msg_bruto) or duvida_no_cadastro
     )
     if plano_detectado and not pergunta_sobre_plano:
         eventos = [
@@ -2519,7 +2682,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
 
     # Termos — aceite do contrato (sim/ok/aceito ≠ pergunta sobre planos)
     if fase == "termos" and aguardando == "aceite_termos":
-        if eh_aceite_termos_explicito(msg) or eh_confirmacao(msg):
+        if eh_aceite_termos_explicito(msg) or msg_confirma:
             eventos = [
                 e
                 for e in eventos
@@ -2556,7 +2719,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         from app.agenda_slots import match_horario, pediu_outro_horario
 
         if aguardando == "confirmacao_horario":
-            if eh_confirmacao(msg):
+            if msg_confirma:
                 eventos = [e for e in eventos if e not in {Evento.NEGACAO.value, Evento.OUTRO.value}]
                 if Evento.CONFIRMACAO.value not in eventos:
                     eventos.append(Evento.CONFIRMACAO.value)
@@ -2577,6 +2740,14 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
 
         elif aguardando == "escolha_horario":
             resultado = match_horario(msg_bruto, estado)
+            # O texto não bateu com nenhum horário, mas o LLM apontou um da lista
+            # ("o do meio da manhã", "aquele depois do almoço") — vale o do LLM.
+            if not resultado.slot:
+                from app.agenda_slots import ResultadoMatch, slot_valido
+
+                slot_llm = texto(dados_dict.get("turno_escolhido"))
+                if slot_llm and slot_valido(slot_llm, estado) and not pediu_outro_horario(msg):
+                    resultado = ResultadoMatch(slot=slot_llm)
             if resultado.slot:
                 eventos = [e for e in eventos if e != Evento.OUTRO.value]
                 if Evento.DADO_INFORMADO.value not in eventos:
@@ -2601,7 +2772,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
                     eventos.append(Evento.DADO_INFORMADO.value)
                 dados.turno_escolhido = "__INVALIDO__"
                 pergunta = ""
-            elif eh_confirmacao(msg):
+            elif msg_confirma:
                 eventos = [
                     e for e in eventos if e != Evento.CONFIRMACAO.value
                 ]
@@ -2654,6 +2825,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
                 )
                 or any(k in msg for k in INTENCAO_PLANO_KEYWORDS)
             )
+            and not duvida_no_cadastro
             and not eh_mensagem_correcao_cadastro(msg, msg_bruto)
         ):
             from app.plans import normalizar_referencia_plano
@@ -2701,7 +2873,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     # Nome e rua são texto livre: se o LLM leu a mensagem como conversa ("tá bom",
     # "pera aí", "não entendi") e não extraiu nada, não gravar a frase como dado.
     llm_leu_como_conversa = (
-        aguardando in {"nome", "rua"}
+        aguardando in {"nome", "rua", "numero"}
         and bool(eventos_llm)
         and not llm_extraiu_dado
         and not (
@@ -2738,7 +2910,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
 
     # Confirmação + dúvida na mesma mensagem — planos
     if aguardando_plano and tem_duvida_informativa(msg, msg_bruto):
-        if eh_confirmacao(msg) or msg == "quero":
+        if msg_confirma or msg == "quero":
             pergunta_parte = extrair_parte_pergunta(msg_bruto, msg) or msg_bruto.strip()
             pergunta_n = normalizar_texto(pergunta_parte)
             impede_confirmacao = (
@@ -2776,7 +2948,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
 
     # Confirmação + dúvida — agendamento
     if fase == "agendamento" and aguardando_agenda and tem_duvida_informativa(msg, msg_bruto):
-        if eh_confirmacao(msg):
+        if msg_confirma:
             if Evento.CONFIRMACAO.value not in eventos:
                 eventos.append(Evento.CONFIRMACAO.value)
             if Evento.PERGUNTA.value not in eventos:
@@ -2790,6 +2962,16 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         msg_bruto,
         aguardando=aguardando if fase == "cadastro" else None,
     )
+    # "quero o primeiro horário" escolhe um horário — sem "?", não é dúvida
+    if (
+        fase == "agendamento"
+        and texto(dados.turno_escolhido)
+        and not dados.turno_escolhido.startswith("__")
+        and "?" not in msg_bruto
+    ):
+        tem_duvida = False
+        eventos = [e for e in eventos if e != Evento.PERGUNTA.value]
+        pergunta = ""
     if tem_duvida and (
         (fase == "cadastro" and aguardando_cadastro)
         or (fase == "agendamento" and aguardando_agenda)
@@ -2863,7 +3045,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     # Pergunta com "?" — LLM não deve marcar CONFIRMACAO ("pode instalar amanhã?")
     if (
         Evento.CONFIRMACAO.value in eventos
-        and not eh_confirmacao(msg)
+        and not msg_confirma
         and (tem_duvida or "?" in msg_bruto)
     ):
         eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
@@ -2884,7 +3066,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     # Confirmação pura do plano — não deixar PLANO_INFORMADO/PERGUNTA fantasma do LLM
     if (
         aguardando_plano
-        and eh_confirmacao(msg)
+        and msg_confirma
         and not eh_pedido_contratacao(msg, msg_bruto)
         and not tem_duvida_informativa(msg, msg_bruto)
         and not escolha_por_posicao
@@ -2922,7 +3104,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
 
     if (
         aguardando_plano
-        and eh_confirmacao(msg)
+        and msg_confirma
         and not eh_pedido_contratacao(msg, msg_bruto)
         and not tem_duvida_informativa(msg, msg_bruto)
         and not escolha_por_posicao
@@ -2945,7 +3127,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
 
     if (
         aguardando == "confirmacao_plano"
-        and eh_confirmacao(msg)
+        and msg_confirma
         and not dados.nome
     ):
         nome_conf = _extrair_nome_apos_confirmacao(msg_bruto)
@@ -2953,6 +3135,18 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             dados.nome = nome_conf
             if Evento.DADO_INFORMADO.value not in eventos:
                 eventos.append(Evento.DADO_INFORMADO.value)
+
+    if fase == "cadastro" and not pedido_encerrar and not pausa_cadastro_plano:
+        _reconciliar_com_llm(
+            dados=dados,
+            dados_llm=dados_dict,
+            eventos=eventos,
+            campos_corrigidos=campos_corrigidos,
+            corrigidos_llm=corrigidos_llm,
+            estado=estado,
+            aguardando=aguardando,
+            msg_bruto=msg_bruto,
+        )
 
     return Interpretacao(
         eventos=eventos,

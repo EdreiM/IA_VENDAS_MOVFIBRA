@@ -199,6 +199,14 @@ def extrair_par_cidade_bairro(mensagem: str) -> dict[str, str] | None:
             "papel": "par",
         }
 
+    # "bairro X, Y" — a palavra "bairro" diz qual dos dois é o bairro
+    m = re.search(r"^(?:n?o\s+)?bairro\s+([^,/]+?)\s*[,/]\s*(?:(?:na\s+)?cidade\s+(?:de\s+)?)?(.+)$", msg)
+    if m:
+        bairro = _limpar_nome_local(m.group(1), preferir="bairro")
+        cidade = _limpar_nome_local(m.group(2), preferir="cidade")
+        if cidade and bairro and _norm(cidade) != _norm(bairro) and not _parece_conversa(m.group(2)):
+            return {"cidade": cidade, "bairro": bairro, "papel": "par"}
+
     # bairro X, na cidade de Y
     m = re.search(
         r"^(.+?)\s*,\s*(?:na\s+)?cidade\s+(?:de\s+)?(.+)$",
@@ -362,6 +370,17 @@ def aplicar_heuristica_localizacao(
         return flags
 
     cidade_est = _texto(estado.get("cidade"))
+
+    # O LLM já separou cidade e bairro e os dois estão escritos na mensagem
+    # ("bairro aparecida, santarém"): não reinterpretar pela posição da vírgula.
+    c_llm, b_llm = _texto(dados.cidade), _texto(dados.bairro)
+    msg_norm = _norm(mensagem)
+    if c_llm and b_llm and _norm(c_llm) != _norm(b_llm) and _norm(c_llm) in msg_norm and _norm(b_llm) in msg_norm:
+        if classificar_token_unico(c_llm) == "bairro" and classificar_token_unico(b_llm) == "cidade":
+            dados.cidade, dados.bairro = b_llm, c_llm
+            flags["ajustou"] = True
+        return flags
+
     clar = extrair_clarificacao_localizacao(mensagem)
 
     if clar and clar.get("papel") == "par":

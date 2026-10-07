@@ -711,7 +711,6 @@ def _gerar_resposta(
             eh_pergunta_cancelamento,
             eh_pergunta_instalacao,
             eh_pergunta_preco_plano_nomeado,
-            normalizar_texto,
         )
         from app.state_machine import _detectar_beneficio_pergunta
 
@@ -773,8 +772,6 @@ def _gerar_resposta(
         return prefixo + detalhe + f"\n\n{retomada}"
 
     if decisao.objetivo_resposta == "CONFIRMAR_HORARIO_E_RESPONDER_PERGUNTA":
-        from app.parser import normalizar_texto
-
         ctx = decisao.contexto_resposta or {}
         horario = str(
             ctx.get("horario")
@@ -916,8 +913,6 @@ def _gerar_resposta(
         "CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA",
         "CONFIRMAR_HORARIO_E_RESPONDER_PERGUNTA",
     }:
-        from app.parser import normalizar_texto
-
         pergunta_valor = any(
             x in normalizar_texto(str(ctx.get("pergunta_original") or decisao.pergunta or ""))
             for x in ("quanto", "valor", "ficaria", "fica", "custa", "taxa", "multa")

@@ -41,6 +41,11 @@ from app.state_machine import (
 )
 
 
+def tem_pergunta(interpretacao: Any) -> bool:
+    """A mensagem traz uma pergunta (texto extraído ou evento PERGUNTA)."""
+    return bool((interpretacao.pergunta or "").strip()) or "PERGUNTA" in (interpretacao.eventos or [])
+
+
 def _imagens_plano_do_contexto(ctx: dict[str, Any]) -> list[dict[str, Any]]:
     """Extrai imagens de plano enviadas no turno (painel + Chatwoot)."""
     img_url = str(ctx.get("imagem_url") or "").strip()
@@ -349,7 +354,9 @@ def process_message(
         plano_nome=plano_nome,
         ultimo_topico=str(estado.get("ultimo_topico") or "") or None,
     )
-    if ctx_perg.get("pergunta"):
+    # Só há pergunta quando o interpretador viu uma. Antes, o texto de TODA mensagem
+    # entrava aqui ("não", "claro", um CEP) e a máquina de estados tratava como dúvida.
+    if tem_pergunta(interpretacao) and ctx_perg.get("pergunta"):
         interpretacao.pergunta = str(ctx_perg["pergunta"])
 
     from app.parser import eh_apenas_dado_cadastro, eh_mensagem_correcao_cadastro

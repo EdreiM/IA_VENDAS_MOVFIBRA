@@ -1080,8 +1080,12 @@ def _decidir_termos(
             )
             from app.parser import eh_confirmacao
 
+            from app.parser import eh_recusa
+
             aceite_claro = eh_aceite_termos_explicito(msg)
-            sim_aceite = eh_confirmacao(msg) and not em_duvida_cancelamento
+            # A confirmação já veio interpretada ("claro", "com certeza", "uhum" também
+            # são sim). Só não vale como aceite logo após uma dúvida de cancelamento.
+            sim_aceite = not em_duvida_cancelamento and not eh_recusa(msg)
             if not aceite_claro and not sim_aceite:
                 ctx = {
                     "pendente": "aceite_termos",
@@ -1162,7 +1166,9 @@ def _decidir_agendamento(
     campos_info = list(cadastro.get("campos_informados") or [])
     turno = _texto(dados_base.get("turno_escolhido") or estado.get("horario_escolhido"))
     data = _texto(estado.get("data_agendamento") or dados_base.get("data_agendamento"))
-    preferencia = _texto(dados_base.get("complemento") or estado.get("preferencia_horario"))
+    preferencia = _texto(
+        dados_base.get("preferencia_horario") or estado.get("preferencia_horario")
+    )
 
     # Confirmação do horário escolhido
     if aguardando == "confirmacao_horario":
@@ -1429,6 +1435,12 @@ def _decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     campos_alterados = list(resolucao.get("campos_alterados") or [])
     dados_base = dict((resolucao.get("dados") or {}).get("para_salvar") or {})
     dados_base.pop("plano", None)
+    # Na agenda o parser carrega o pedido de outro horário em "complemento": aqui vira
+    # preferência de horário — nunca é gravado como complemento do endereço.
+    if fase == "agendamento" and "complemento" in dados_base:
+        preferencia_agenda = _texto(dados_base.pop("complemento"))
+        if preferencia_agenda:
+            dados_base["preferencia_horario"] = preferencia_agenda
 
     # Correção implícita só em campos aceitáveis (pendente, seguintes ou vazios).
     # Não transformar a rua ("sergio henn") em troca de nome já preenchido.
@@ -1710,8 +1722,10 @@ def _decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
             )
         return _decidir_pos_venda(estado, resolucao, dados_base, flags, dec)
 
-    # Cliente quer contratar / instalar — reabrir funil sem transferir
-    if flags.get("pedido_contratacao"):
+    # Cliente quer contratar / instalar — reabrir funil sem transferir.
+    # Se a localização veio na mesma mensagem ("quero internet, moro em Santarém no
+    # Diamantino"), segue para a checagem de cobertura em vez de pedir de novo.
+    if flags.get("pedido_contratacao") and not loc.get("informada"):
         tem_plano_ctx = (
             estado.get("plano_em_negociacao_id") is not None
             or estado.get("plano_apresentado_id") is not None
@@ -3097,6 +3111,20 @@ def _decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
 
         permitir = set(par_de(str(aguardando or "")))
         permitir.add("cpf")
+        # "Maria Souza, cpf ..., maria@gmail.com, 9399..." — o cliente adiantou outros dados:
+        # ficam os que estão escritos na mensagem e são válidos, para não pedir de novo.
+        from app.parser import _canonico, _evidenciado
+
+        msg_cpf = str(resolucao.get("mensagem") or "")
+        for campo_extra in ("email", "telefone", "data_nascimento", "cep"):
+            valor_extra = _canonico(campo_extra, _texto(d.get(campo_extra)))
+            if (
+                valor_extra
+                and validar_campo(campo_extra, valor_extra) is None
+                and _evidenciado(campo_extra, valor_extra, msg_cpf)
+                and valor_extra != re.sub(r"\D", "", _texto(cpf.get("valor")))
+            ):
+                permitir.add(campo_extra)
         d = {
             k: v
             for k, v in d.items()
@@ -3571,9 +3599,12 @@ def decidir_resultado_cobertura(resultado: dict[str, Any], estado: dict[str, Any
                 or _proximo_cadastro(estado, base_dados)
                 or "nome"
             )
+            # Campo vazio no retorno da cobertura (ex.: rua) não apaga o que já está salvo —
+            # senão a Eva pedia a rua de novo depois de uma troca de bairro.
+            preenchidos = {k: v for k, v in base_dados.items() if v not in ("", None)}
             return _decisao_retomar_cadastro(
-                {**estado, **base_dados},
-                base_dados,
+                {**estado, **preenchidos},
+                preenchidos,
                 motivo="Cobertura reconfirmada — retomar cadastro",
             )
         return Decisao(

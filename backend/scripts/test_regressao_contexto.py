@@ -36,7 +36,7 @@ from app.plans import resolver_plano
 from app.response import gerar_resposta
 from app.resolver import resolver
 from app.state_machine import decidir
-from app.pipeline import _executar_acao
+from app.pipeline import _executar_acao, tem_pergunta
 
 
 def _raw(payload: dict) -> str:
@@ -57,7 +57,7 @@ def _turno(estado: dict, msg: str, llm: dict) -> tuple[dict, object]:
         plano_nome="MOV ONE+",
         ultimo_topico=str(estado.get("ultimo_topico") or "") or None,
     )
-    if ctx.get("pergunta"):
+    if tem_pergunta(interp) and ctx.get("pergunta"):
         interp.pergunta = str(ctx["pergunta"])
     res = resolver(estado, interp)
     res["mensagem"] = msg
@@ -682,7 +682,7 @@ def _decidir_sem_executar(estado: dict, msg: str, llm: dict):
         plano_nome="MOV SUPER+",
         ultimo_topico=str(estado.get("ultimo_topico") or "") or None,
     )
-    if ctx.get("pergunta"):
+    if tem_pergunta(interp) and ctx.get("pergunta"):
         interp.pergunta = str(ctx["pergunta"])
     res = resolver(estado, interp)
     res["mensagem"] = msg
