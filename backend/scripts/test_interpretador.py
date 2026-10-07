@@ -431,6 +431,127 @@ def test_dado_com_duvida_na_mesma_mensagem_guarda_o_dado() -> None:
     _assert(not i.dados.nome, f"dúvida virou nome: {i.dados.nome!r}")
 
 
+def test_duvida_e_respondida_pelo_llm_com_a_rag_e_o_historico() -> None:
+    """A resposta a uma dúvida é escrita na hora (RAG + conversa), não um bloco fixo."""
+    from app import response
+    from app.models import Decisao
+
+    estado = {"fase": "cadastro", "aguardando": "cpf", "plano_confirmado": "MOV SUPER+", "nome": "Edrei Maciel"}
+    hist = [
+        {"remetente": "cliente", "mensagem": "e se eu cancelar?"},
+        {"remetente": "eva", "mensagem": "Cancelando antes dos 12 meses pode haver multa proporcional."},
+        {"remetente": "cliente", "mensagem": "mas quanto é essa multa?"},
+    ]
+    rag = {
+        "encontrado": True,
+        "chunks": [{"titulo": "Cancelamento", "conteudo": "TRECHO-DA-RAG: a multa é proporcional aos meses que faltam."}],
+    }
+    dec = Decisao(
+        acao="RESPONDER", objetivo_resposta="INFORMAR_CANCELAMENTO_E_RETOMAR", fase="cadastro",
+        aguardando="cpf", pergunta="mas quanto é essa multa?",
+        contexto_resposta={"pendente": "cpf", "topico_contexto": "cancelamento", "rag": rag},
+    )
+    dec_sem_rag = Decisao(
+        acao="RESPONDER", objetivo_resposta="INFORMAR_CANCELAMENTO_E_RETOMAR", fase="cadastro",
+        aguardando="cpf", pergunta="mas quanto é essa multa?",
+        contexto_resposta={"pendente": "cpf", "topico_contexto": "cancelamento"},
+    )
+    chamadas: list[str] = []
+
+    def chat_falso(system, user, **k):
+        chamadas.append(user)
+        return "O valor exato está no contrato; aqui no chat eu não consigo calcular."
+
+    with patch.object(response, "chat", chat_falso):
+        txt = response.gerar_resposta(dec, estado, historico=hist, mensagem_cliente="mas quanto é essa multa?")
+    _assert(txt.startswith("O valor exato está no contrato"), txt)
+    _assert(txt.rstrip().endswith("Me informa seu *CPF*, por favor."), f"a retomada é fixa e vem depois: {txt!r}")
+    prompt = chamadas[0]
+    _assert("TRECHO-DA-RAG" in prompt, "o conteúdo da RAG não foi para o prompt")
+    _assert("Cancelando antes dos 12 meses pode haver multa proporcional." in prompt, "histórico fora do prompt")
+    _assert("não repita o que a Eva já explicou" in prompt, "instrução de não repetir")
+    _assert("mas quanto é essa multa?" in prompt, "pergunta do cliente fora do prompt")
+
+    # RAG sem nada sobre cancelamento: o LLM não responde regra comercial de cabeça
+    chamadas.clear()
+    with patch.object(response, "chat", chat_falso):
+        reserva = response.gerar_resposta(dec_sem_rag, estado, historico=hist, mensagem_cliente="mas quanto é essa multa?")
+    _assert(not chamadas, "sem RAG, cancelamento não deve ser respondido pelo LLM")
+    _assert("multa" in reserva.casefold() and "CPF" in reserva, reserva)
+
+    # LLM fora do ar: cai no texto de reserva, sem quebrar a resposta
+    def chat_quebrado(*a, **k):
+        raise RuntimeError("sem LLM")
+
+    with patch.object(response, "chat", chat_quebrado):
+        reserva = response.gerar_resposta(dec, estado, historico=hist, mensagem_cliente="mas quanto é essa multa?")
+    _assert("multa" in reserva.casefold() and "CPF" in reserva, reserva)
+
+    # Dúvida na etapa dos termos: responde e retoma o aceite em uma linha
+    dec_termos = Decisao(
+        acao="RESPONDER", objetivo_resposta="RESPONDER_DUVIDA_E_RETOMAR_TERMOS", fase="termos",
+        aguardando="aceite_termos", pergunta="aceita pix?", contexto_resposta={"pendente": "aceite_termos"},
+    )
+    with patch.object(response, "chat", lambda *a, **k: "Não tenho essa informação confirmada; a equipe pode detalhar."):
+        txt = response.gerar_resposta(dec_termos, dict(estado, fase="termos", termos_enviados=True), historico=[], mensagem_cliente="aceita pix?")
+    _assert(txt.startswith("Não tenho essa informação confirmada"), txt)
+    _assert("me responda *aceito*" in txt and "Acabei de enviar" not in txt, f"retomada curta: {txt!r}")
+
+    # "sim" solto depois da dúvida de cancelamento: pede o aceite, não repete a explicação
+    dec_sim = Decisao(
+        acao="RESPONDER", objetivo_resposta="RESPONDER_DUVIDA_E_RETOMAR_TERMOS", fase="termos",
+        aguardando="aceite_termos", pergunta="Como funciona a multa se eu cancelar antes dos 12 meses?",
+        contexto_resposta={"pendente": "aceite_termos", "topico_contexto": "cancelamento", "esclarecer_aceite": True},
+    )
+    with patch.object(response, "chat", chat_falso):
+        txt = response.gerar_resposta(dec_sim, dict(estado, fase="termos"), historico=hist, mensagem_cliente="sim")
+    _assert("aceite explícito" in txt and "proporcional" not in txt, txt)
+
+
+def test_rag_e_consultada_para_cancelamento_e_instalacao() -> None:
+    """Cancelamento e instalação ficam na RAG — antes a consulta era pulada nesses assuntos."""
+    from app import pipeline
+    from app.models import Decisao
+
+    consultas: list[str] = []
+
+    def rag_falsa(**k):
+        consultas.append(k.get("pergunta"))
+        return {"encontrado": True, "chunks": [{"titulo": "FAQ", "conteudo": "conteúdo da base"}]}
+
+    casos = (
+        ("INFORMAR_CANCELAMENTO_E_RETOMAR", "cancelamento", "tem multa de cancelamento?"),
+        ("INFORMAR_INSTALACAO_E_RETOMAR", "instalacao", "quanto tempo demora a instalação?"),
+        ("RESPONDER_DUVIDA_E_RETOMAR_TERMOS", "cancelamento", "e se eu cancelar antes?"),
+        ("RESPONDER_PERGUNTA_E_RETOMAR", "", "vocês são de onde?"),
+    )
+    with patch.object(pipeline, "consultar_rag", rag_falsa):
+        for objetivo, topico, pergunta in casos:
+            dec = Decisao(
+                acao="RESPONDER", objetivo_resposta=objetivo, fase="cadastro", aguardando="cpf",
+                pergunta=pergunta, contexto_resposta={"pendente": "cpf", "topico_contexto": topico},
+            )
+            dec = pipeline._enriquecer_com_rag(dec, {"fase": "cadastro"}, pergunta)
+            _assert((dec.contexto_resposta or {}).get("rag"), f"{objetivo}: a RAG não foi consultada")
+            _assert(dec.objetivo_resposta == objetivo, f"{objetivo} virou {dec.objetivo_resposta}")
+    _assert(len(consultas) == len(casos), f"consultas: {consultas}")
+
+    # RAG vazia: cancelamento mantém o objetivo (texto de reserva); dúvida geral vira "sem base"
+    with patch.object(pipeline, "consultar_rag", lambda **k: {"encontrado": False}):
+        dec = Decisao(
+            acao="RESPONDER", objetivo_resposta="INFORMAR_CANCELAMENTO_E_RETOMAR", fase="cadastro",
+            aguardando="cpf", pergunta="tem multa?", contexto_resposta={"topico_contexto": "cancelamento"},
+        )
+        dec = pipeline._enriquecer_com_rag(dec, {"fase": "cadastro"}, "tem multa?")
+        _assert(dec.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR", dec.objetivo_resposta)
+        dec = Decisao(
+            acao="RESPONDER", objetivo_resposta="RESPONDER_PERGUNTA_E_RETOMAR", fase="cadastro",
+            aguardando="cpf", pergunta="vocês são de onde?", contexto_resposta={},
+        )
+        dec = pipeline._enriquecer_com_rag(dec, {"fase": "cadastro"}, "vocês são de onde?")
+        _assert(dec.objetivo_resposta == "RESPONDER_SEM_BASE_RAG", dec.objetivo_resposta)
+
+
 def test_plano_ecoado_em_duvida_continua_descartado() -> None:
     estado = {"fase": "vendas", "aguardando": "confirmacao_plano", "tem_cobertura": True}
     for msg in ("qual a taxa de instalação?", "e se eu cancelar antes?"):
@@ -525,6 +646,8 @@ def main() -> None:
         test_celular_nao_vira_cpf,
         test_texto_pede_o_campo_que_o_estado_aguarda,
         test_dado_com_duvida_na_mesma_mensagem_guarda_o_dado,
+        test_duvida_e_respondida_pelo_llm_com_a_rag_e_o_historico,
+        test_rag_e_consultada_para_cancelamento_e_instalacao,
         test_plano_ecoado_em_duvida_continua_descartado,
         test_conferir_do_avaliador,
         test_casos_de_avaliacao_batem_com_o_parser,

@@ -36,7 +36,7 @@ from app.plans import resolver_plano
 from app.response import gerar_resposta
 from app.resolver import resolver
 from app.state_machine import decidir
-from app.pipeline import _executar_acao
+from app.pipeline import _executar_acao, tem_pergunta
 
 
 def _raw(payload: dict) -> str:
@@ -57,7 +57,7 @@ def _turno(estado: dict, msg: str, llm: dict) -> tuple[dict, object]:
         plano_nome="MOV ONE+",
         ultimo_topico=str(estado.get("ultimo_topico") or "") or None,
     )
-    if ctx.get("pergunta"):
+    if tem_pergunta(interp) and ctx.get("pergunta"):
         interp.pergunta = str(ctx["pergunta"])
     res = resolver(estado, interp)
     res["mensagem"] = msg
@@ -682,7 +682,7 @@ def _decidir_sem_executar(estado: dict, msg: str, llm: dict):
         plano_nome="MOV SUPER+",
         ultimo_topico=str(estado.get("ultimo_topico") or "") or None,
     )
-    if ctx.get("pergunta"):
+    if tem_pergunta(interp) and ctx.get("pergunta"):
         interp.pergunta = str(ctx["pergunta"])
     res = resolver(estado, interp)
     res["mensagem"] = msg
@@ -1467,8 +1467,10 @@ def test_termos_sim_apos_cancelamento_nao_ativa() -> None:
         dec.objetivo_resposta,
     )
     txt = gerar_resposta(dec, base)
-    _assert("multa" in txt.casefold(), txt)
+    # A multa já foi explicada no turno anterior: aqui só se pede o aceite, sem repetir
+    # a explicação inteira (antes o teste exigia o texto da multa de novo).
     _assert("aceito" in txt.casefold(), txt)
+    _assert("proporcional" not in txt.casefold(), f"repetiu a explicação da multa: {txt}")
 
 
 def test_termos_instalar_hoje_nao_lista_planos() -> None:

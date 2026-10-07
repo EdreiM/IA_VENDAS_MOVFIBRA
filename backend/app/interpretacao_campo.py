@@ -192,6 +192,15 @@ def _valor_parece_resposta_campo(
     if not v:
         return False
 
+    # CEP, e-mail e data: se o valor está escrito na mensagem e é válido, é a resposta —
+    # em qualquer formato ("68.020-000", "16 de agosto de 2000").
+    if campo in {"cep", "email", "data_nascimento"}:
+        from app.parser import _canonico, _evidenciado
+
+        canonico = _canonico(campo, v)
+        if _evidenciado(campo, canonico, bruto) and validar_campo(campo, canonico) is None:
+            return True
+
     if campo == "nome":
         if nome_parece_frase_invalida(v, bruto):
             return False

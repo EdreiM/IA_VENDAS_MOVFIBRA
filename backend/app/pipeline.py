@@ -41,6 +41,11 @@ from app.state_machine import (
 )
 
 
+def tem_pergunta(interpretacao: Any) -> bool:
+    """A mensagem traz uma pergunta (texto extraído ou evento PERGUNTA)."""
+    return bool((interpretacao.pergunta or "").strip()) or "PERGUNTA" in (interpretacao.eventos or [])
+
+
 def _imagens_plano_do_contexto(ctx: dict[str, Any]) -> list[dict[str, Any]]:
     """Extrai imagens de plano enviadas no turno (painel + Chatwoot)."""
     img_url = str(ctx.get("imagem_url") or "").strip()
@@ -247,7 +252,7 @@ def _enriquecer_com_rag(
     estado: dict[str, Any],
     mensagem: str,
 ) -> Decisao:
-    """Consulta RAG externa quando o cliente faz pergunta (fidelidade, mesh, etc.)."""
+    """Consulta a RAG quando o cliente faz pergunta — é a fonte das respostas a dúvidas."""
     pergunta = (decisao.pergunta or "").strip()
     objetivos_com_rag = {
         "RESPONDER_PERGUNTA_E_RETOMAR",
@@ -262,17 +267,19 @@ def _enriquecer_com_rag(
         "RETOMAR_ESCOLHA_HORARIO",
         "CONTINUAR_CONVERSA",
     }
-    if not pergunta and decisao.objetivo_resposta not in objetivos_com_rag:
+    # Cancelamento e instalação também saem da RAG (é lá que fica a informação da empresa).
+    # Sem conteúdo na RAG, estes dois mantêm o objetivo e caem no texto de reserva.
+    objetivos_com_texto_reserva = {
+        "INFORMAR_CANCELAMENTO_E_RETOMAR",
+        "INFORMAR_INSTALACAO_E_RETOMAR",
+    }
+    if not pergunta and decisao.objetivo_resposta not in (
+        objetivos_com_rag | objetivos_com_texto_reserva
+    ):
         return decisao
 
     ctx_dec = decisao.contexto_resposta or {}
-    topico_rag = str(ctx_dec.get("topico_contexto") or "")
-    if topico_rag in {"cancelamento", "instalacao"}:
-        return decisao
-    if decisao.objetivo_resposta in {
-        "INFORMAR_CANCELAMENTO_E_RETOMAR",
-        "PEDIR_ACEITE_TERMOS",
-    }:
+    if decisao.objetivo_resposta == "PEDIR_ACEITE_TERMOS":
         return decisao
     plano = ctx_dec.get("plano") or {}
     rag = consultar_rag(
@@ -349,7 +356,9 @@ def process_message(
         plano_nome=plano_nome,
         ultimo_topico=str(estado.get("ultimo_topico") or "") or None,
     )
-    if ctx_perg.get("pergunta"):
+    # Só há pergunta quando o interpretador viu uma. Antes, o texto de TODA mensagem
+    # entrava aqui ("não", "claro", um CEP) e a máquina de estados tratava como dúvida.
+    if tem_pergunta(interpretacao) and ctx_perg.get("pergunta"):
         interpretacao.pergunta = str(ctx_perg["pergunta"])
 
     from app.parser import eh_apenas_dado_cadastro, eh_mensagem_correcao_cadastro

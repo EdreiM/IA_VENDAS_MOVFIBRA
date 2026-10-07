@@ -141,6 +141,9 @@ Regras rápidas:
 - "quero o Essencial" / "quero o de 189" → PLANO_INFORMADO + dados.plano
 - "pode ser esse" / "sim" / "quero esse" (sem nome de plano) → CONFIRMACAO, dados.plano=""
 - Depois de uma lista de planos da Eva: "o segundo" / "pode ser o último" → PLANO_INFORMADO + dados.plano só com o nome do plano nessa posição da lista (ex.: "MOV SUPER+")
+- "pode ser o infinity" / "sim, o one+" / "vou de flex" (nomeia um plano) → PLANO_INFORMADO + dados.plano, NÃO CONFIRMACAO
+- Objeção ou adiamento ("tá caro", "vou pensar", "deixa eu ver", "depois eu vejo", "sim mas tá caro") → OUTRO; nunca CONFIRMACAO
+- "não entendi" / "como assim?" / "não sei" → OUTRO ou PERGUNTA; nunca NEGACAO
 - "tem outro?" / "quero outro plano" / "muda o plano" → PEDIU_TROCAR_PLANO
 - "esse não" → NEGACAO
 - cidade/bairro → LOCALIZACAO_INFORMADA
@@ -156,6 +159,12 @@ Regras rápidas:
 - Durante cadastro, agendamento e pós-venda: rua/CEP/número/data_nascimento → DADO_INFORMADO, nunca LOCALIZACAO
 - "sim]" / "sim!" / "confirmo." → CONFIRMACAO (ignore pontuação extra)
 - Mensagem com dado + pergunta (ex.: telefone + "quanto tempo demora instalação?") → DADO_INFORMADO + PERGUNTA
+- Vários dados na mesma mensagem ("Maria Souza, cpf ..., maria@gmail.com, 9399...") → preencha TODOS os campos citados
+- Data de nascimento em qualquer formato ("16 de agosto de 2000", "16-08-2000") → dados.data_nascimento em dd/mm/aaaa
+- Número com 11 dígitos: é telefone se a Eva pediu telefone; é CPF se a Eva pediu CPF
+- Cidade/bairro junto com um pedido ("quero internet em Santarém no Diamantino") → PEDIDO_CONTRATACAO + LOCALIZACAO_INFORMADA, preenchendo cidade e bairro
+- "bairro Aparecida, Santarém" → respeite o rótulo: bairro=Aparecida, cidade=Santarém
+- Conversa sem dado quando a Eva pediu um dado ("pera aí", "já mando", "tá bom", "não tenho agora") → CONVERSA_SOCIAL ou OUTRO, dados vazios
 - Correção ("errei", "na verdade", "o certo é", "o nome é X" quando já havia nome) → CORRECAO_DADO + campos_corrigidos
 - Durante cadastro, "quero o Infinity" ainda é PLANO_INFORMADO (troca de plano)
 - NUNCA preencha dados.nome quando aguardando for rua/numero/cep, salvo correção explícita ("o nome é...")

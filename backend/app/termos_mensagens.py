@@ -74,8 +74,13 @@ def informar_cancelamento_e_retomar(
     campos_anotados: list[str] | None = None,
     pergunta_valor: bool = False,
     ja_esclarecido: bool = False,
+    resposta: str = "",
 ) -> str:
-    """Resposta fixa sobre cancelamento/multa — sem pedir dados irrelevantes para 'calcular'."""
+    """Dúvida de cancelamento/multa + retomada do cadastro.
+
+    `resposta` é o texto escrito pelo LLM para a pergunta do cliente; sem ele
+    (LLM indisponível) entra o texto fixo.
+    """
     from app.cadastro_mensagens import pedir_campos, ROTULO_CAMPO
     from app.vendas_mensagens import rotulo_pendente_cadastro
 
@@ -92,7 +97,9 @@ def informar_cancelamento_e_retomar(
         else:
             partes.append(f"Anotei {', '.join(itens[:-1])} e {itens[-1]}.")
 
-    if ja_esclarecido:
+    if resposta.strip():
+        partes.append(resposta.strip())
+    elif ja_esclarecido:
         partes.append(
             "Sobre o cancelamento, já te expliquei — se quiser detalhar o valor exato, "
             "nossa equipe confirma no contrato."
@@ -109,6 +116,15 @@ def informar_cancelamento_e_retomar(
         partes.append("Se quiser, seguimos no passo em que paramos.")
 
     return "\n\n".join(partes)
+
+
+def responder_duvida_e_pedir_aceite(resposta: str) -> str:
+    """Dúvida respondida na etapa dos termos: retoma o aceite sem repetir o aviso inteiro."""
+    return (
+        f"{resposta.strip()}\n\n"
+        "Quando estiver de acordo com o termo, me responda *aceito* que seguimos para o "
+        "*agendamento da instalação*."
+    )
 
 
 def recusou_termos() -> str:
