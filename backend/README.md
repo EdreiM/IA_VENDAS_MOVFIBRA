@@ -26,7 +26,10 @@ Precisam do PostgreSQL acessível. Rodam sem LLM (a interpretação é simulada)
 # da pasta backend
 python scripts/test_regressao_contexto.py
 python scripts/test_interpretador.py
+python scripts/test_varredura_frases.py
 ```
+
+`test_varredura_frases.py` passa frases comuns ("tá bom", "pera aí", "não entendi", "tá caro") por todos os estados do funil e falha se alguma for gravada como dado do cliente ou fizer o funil avançar. Ele bloqueia toda chamada HTTP: o `.env` local pode apontar para o n8n real, então qualquer simulação de fluxo fora das suítes deve fazer o mesmo.
 
 ## Avaliação do interpretador (LLM real)
 

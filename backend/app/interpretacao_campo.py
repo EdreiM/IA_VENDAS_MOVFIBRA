@@ -121,6 +121,25 @@ def mensagem_tem_intencao_nao_dado(
     return False
 
 
+def _trecho_do_valor(valor: str, msg_bruto: str) -> str:
+    """Parte da mensagem (linha/frase) em que o valor extraído está escrito.
+
+    Vazio quando o valor não aparece literalmente — aí vale a mensagem inteira.
+    """
+    alvo = _norm(valor)
+    if not alvo:
+        return ""
+    trechos = [
+        t.strip()
+        for t in re.split(r"(?i)[\n\r]+|(?<=[.!?;])\s+|\s+(?:mas|porem|porém|so que|só que)\s+", msg_bruto or "")
+        if t and t.strip()
+    ]
+    if len(trechos) < 2:
+        return ""
+    com_valor = [t for t in trechos if alvo in _norm(t)]
+    return " ".join(com_valor)
+
+
 def _mensagem_tem_sinal_localizacao(msg_bruto: str) -> bool:
     from app.localizacao_heuristica import (
         CIDADES_CONHECIDAS,
@@ -198,7 +217,10 @@ def _valor_parece_resposta_campo(
 
     if campo == "telefone":
         if aguardando == "cpf":
-            return False
+            # Só aceita se for claramente celular (11 dígitos que não fecham como CPF)
+            from app.utils.cpf import celular_e_nao_cpf
+
+            return celular_e_nao_cpf(v)
         if aguardando != "telefone" and _mensagem_e_apenas_cpf(bruto):
             return False
         return bool(_extrair_telefone_em_segmentos(bruto))
@@ -319,15 +341,25 @@ def aplicar_guards_interpretacao(
 
         rejeitar = False
 
+        # Nome e rua são julgados pelo trecho onde aparecem, não pela mensagem inteira:
+        # "Edrei Maciel, 604.210.790-96\nMas tem multa?" traz o nome E uma dúvida.
+        bruto_campo, msg_campo = bruto, msg
+        if campo in {"nome", "rua"}:
+            trecho = _trecho_do_valor(valor, bruto)
+            if trecho:
+                from app.parser import normalizar_texto
+
+                bruto_campo, msg_campo = trecho, normalizar_texto(trecho)
+
         if campo == "nome":
             from app.validation import nome_parece_frase_invalida
 
-            if nome_parece_frase_invalida(valor, bruto):
+            if nome_parece_frase_invalida(valor, bruto_campo):
                 rejeitar = True
 
         if not rejeitar and aguardando and campo == aguardando:
             if not _valor_parece_resposta_campo(
-                campo, valor, msg=msg, msg_bruto=bruto, aguardando=aguardando
+                campo, valor, msg=msg_campo, msg_bruto=bruto_campo, aguardando=aguardando
             ):
                 rejeitar = True
 
@@ -362,17 +394,24 @@ def aplicar_guards_interpretacao(
                 pergunta = extrair_parte_pergunta(bruto, msg) or bruto
 
     if aguardando == "localizacao" and intencao_nao_dado:
-        eventos[:] = [
-            e
-            for e in eventos
-            if e
-            not in {
-                Evento.LOCALIZACAO_INFORMADA.value,
-                Evento.DADO_INFORMADO.value,
-            }
-        ]
-        dados.cidade = ""
-        dados.bairro = ""
+        # "Quero ver os planos, aqui em Santarém" traz a cidade junto com o pedido:
+        # fica o que está escrito na mensagem e não é frase de conversa.
+        from app.localizacao_heuristica import _parece_conversa
+
+        for campo_loc in ("cidade", "bairro"):
+            v = _texto(getattr(dados, campo_loc, ""))
+            if v and (_norm(v) not in _norm(bruto) or _parece_conversa(v)):
+                setattr(dados, campo_loc, "")
+        if not (dados.cidade or dados.bairro):
+            eventos[:] = [
+                e
+                for e in eventos
+                if e
+                not in {
+                    Evento.LOCALIZACAO_INFORMADA.value,
+                    Evento.DADO_INFORMADO.value,
+                }
+            ]
 
     from app.interpretacao_confianca import CONFIANCA_MINIMA_CADASTRO
     from app.state_machine import ORDEM_CADASTRO

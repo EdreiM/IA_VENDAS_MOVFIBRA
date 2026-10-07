@@ -37,6 +37,7 @@ from app.state_machine import (
     decidir_resultado_termos,
     decidir_resultado_ativacao,
     decidir_resultado_imagem_plano,
+    retomar_duvida_apos_cpf,
 )
 
 
@@ -114,7 +115,17 @@ def _executar_acao(estado: dict[str, Any], decisao: Decisao) -> Decisao:
         if isinstance(resultado, dict):
             resultado = dict(resultado)
             resultado["campos_junto"] = list((decisao.contexto_resposta or {}).get("campos_junto") or [])
-        return decidir_resultado_cpf(resultado, estado)
+        dec_cpf = decidir_resultado_cpf(resultado, estado)
+        # CPF veio junto com uma dúvida: validado, responde a dúvida e pede o próximo campo
+        depois = ctx.get("responder_depois")
+        if (
+            isinstance(depois, dict)
+            and dec_cpf.acao == "RESPONDER"
+            and dec_cpf.fase == "cadastro"
+            and (dec_cpf.atualizar_dados or {}).get("documento_cpf_validado")
+        ):
+            return retomar_duvida_apos_cpf(depois, dec_cpf)
+        return dec_cpf
 
     if acao == "CADASTRAR_IXC":
         estado_efetivo = {**estado, **(decisao.atualizar_dados or {})}

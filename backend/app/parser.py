@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from app.models import CAMPOS_DADOS, Evento, Interpretacao, DadosExtraidos
+from app.utils.cpf import celular_e_nao_cpf
 
 EVENTOS_VALIDOS = {e.value for e in Evento}
 
@@ -326,12 +327,13 @@ def _somente_digitos(msg: str) -> str:
 
 def _parece_cpf_cnpj(msg: str, bruto: str = "") -> bool:
     n = _somente_digitos(bruto or msg)
-    return len(n) in {11, 14}
+    # Celular com DDD também tem 11 dígitos — não é CPF se os dígitos não fecham
+    return len(n) in {11, 14} and not celular_e_nao_cpf(n)
 
 
 def _extrair_cpf(msg: str, bruto: str = "") -> str:
     n = _somente_digitos(bruto or msg)
-    if len(n) in {11, 14}:
+    if len(n) in {11, 14} and not celular_e_nao_cpf(n):
         return n
     return ""
 
@@ -869,11 +871,36 @@ def eh_confirmacao(msg: str) -> bool:
         )
     ):
         return True
+    return _confirmacao_por_prefixo(bruto, t)
+
+
+# Depois de "tá" / "ok" / "sim": palavras que mostram objeção, erro ou adiamento
+_MARCAS_NAO_CONFIRMA = frozenset({
+    "caro", "cara", "carinho", "salgado", "errado", "errada", "erro", "incorreto", "incorreta",
+    "demora", "demorando", "demorado", "dificil", "complicado", "ruim",
+    "pensar", "pensando", "depois", "espera", "esperar", "calma", "pera", "duvida", "duvidas",
+    "nem", "nunca", "outro", "outra", "trocar", "troca", "mudar", "muda", "corrigir", "corrige",
+    "falta", "faltou", "faltando", "vendo", "ver", "olhando", "analisando",
+})
+
+
+def _confirmacao_por_prefixo(bruto: str, t: str) -> bool:
+    """'tá bom' / 'ok pode ser' confirmam; 'tá caro' / 'ok mas...' / 'tá errado o CPF' não."""
     # "pode instalar amanhã?" / "isso inclui wifi?" — pergunta, não confirmação
     if "?" in bruto:
         return False
-    primeira = t.split()[0] if t.split() else ""
-    return primeira in {"sim", "si", "s", "ta", "confirmo", "ok", "blz", "beleza", "fechado", "fechou"}
+    palavras = t.split()
+    if not palavras or palavras[0] not in {
+        "sim", "si", "s", "ta", "confirmo", "ok", "blz", "beleza", "fechado", "fechou"
+    }:
+        return False
+    # "sim, mas posso remarcar depois?" continua confirmando: o que vem após o "mas" é dúvida
+    resto: list[str] = []
+    for p in palavras[1:]:
+        if p in {"mas", "porem"}:
+            break
+        resto.append(p)
+    return not any(p in _MARCAS_NAO_CONFIRMA for p in resto)
 
 
 def eh_aceite_termos_explicito(msg: str) -> bool:
@@ -916,8 +943,17 @@ def eh_recusa(msg: str) -> bool:
         return False
     if t in RECUSAS_GENERICAS:
         return True
-    primeira = t.split()[0] if t.split() else ""
-    return primeira in {"nao", "não", "negativo"}
+    palavras = t.split()
+    if not palavras or palavras[0] not in {"nao", "não", "negativo"}:
+        return False
+    # "não entendi" / "não sei" / "não recebi" — pedido de ajuda, não recusa
+    return not any(p in _MARCAS_NAO_E_RECUSA for p in palavras[1:3])
+
+
+_MARCAS_NAO_E_RECUSA = frozenset({
+    "entendi", "entendo", "compreendi", "sei", "lembro", "consegui", "consigo",
+    "recebi", "chegou", "achei", "encontrei", "vi", "ouvi", "abriu", "carregou",
+})
 
 
 def eh_pergunta_cobertura_informativa(msg: str) -> bool:
@@ -968,15 +1004,29 @@ def _extrair_cep(bruto: str) -> str:
     return digitos if len(digitos) == 8 else ""
 
 
+_MESES = {
+    "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+    "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12,
+}
+_RE_DATA_POR_EXTENSO = re.compile(
+    r"\b(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*\.?"
+    r"\s*(?:de\s+)?(\d{4})\b"
+)
+
+
 def _extrair_data_nascimento(bruto: str) -> str:
     principal = _parte_principal_dado(bruto)
     m = re.search(r"\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})\b", principal)
-    if not m:
-        return ""
-    d, mes, ano = m.group(1), m.group(2), m.group(3)
-    if len(ano) == 2:
-        ano = f"19{ano}" if int(ano) > 30 else f"20{ano}"
-    return f"{int(d):02d}/{int(mes):02d}/{ano}"
+    if m:
+        d, mes, ano = m.group(1), m.group(2), m.group(3)
+        if len(ano) == 2:
+            ano = f"19{ano}" if int(ano) > 30 else f"20{ano}"
+        return f"{int(d):02d}/{int(mes):02d}/{ano}"
+    # "16 de agosto de 2000" / "16 ago 2000"
+    m = _RE_DATA_POR_EXTENSO.search(normalizar_texto(principal))
+    if m and 1 <= int(m.group(1)) <= 31:
+        return f"{int(m.group(1)):02d}/{_MESES[m.group(2)]:02d}/{m.group(3)}"
+    return ""
 
 
 def _extrair_numero_endereco(bruto: str) -> str:
@@ -992,7 +1042,8 @@ def _extrair_cpf_embutido(bruto: str) -> str:
     m = re.search(r"(?<!\d)(\d{3})\.?(\d{3})\.?(\d{3})-?(\d{2})(?!\d)", bruto or "")
     if not m:
         return ""
-    return "".join(m.groups())
+    cpf = "".join(m.groups())
+    return "" if celular_e_nao_cpf(cpf) else cpf
 
 
 # Palavras de quem está confirmando o plano, não dizendo o próprio nome
@@ -1006,6 +1057,8 @@ _PALAVRAS_CONFIRMACAO_NAO_NOME = frozenset({
     "bom", "boa", "otimo", "otima", "perfeito", "show", "top", "legal",
     "obrigado", "obrigada", "valeu", "por", "favor", "pra", "para", "mim", "me",
     "primeiro", "segundo", "terceiro", "ultimo", "dia", "tarde", "noite",
+    "como", "assim", "que", "qual", "quais", "quanto", "quanta", "quando", "onde", "porque",
+    "voce", "voces", "vc", "vcs", "sao", "tem", "repetir", "explicar", "entendi",
 })
 
 
@@ -1014,6 +1067,32 @@ def _parece_nome_de_pessoa(candidato: str) -> bool:
     if len(partes) < 2:
         return False
     return not any(p in _PALAVRAS_CONFIRMACAO_NAO_NOME for p in partes)
+
+
+_RE_LOGRADOURO = re.compile(
+    r"\b(?:rua|r|av|avenida|travessa|tv|trav|alameda|estrada|rodovia|rod|br|pa|"
+    r"passagem|psg|vila|beco|ramal|quadra|qd|lote|conjunto|residencial)\b"
+)
+
+
+def _texto_livre_parece_dado(msg_bruto: str, aguardando: str, eventos_llm: set[str]) -> bool:
+    """Mesmo com o LLM lendo como conversa, o texto tem cara do dado pedido."""
+    t = re.sub(r"[^\w\s]", " ", normalizar_texto(msg_bruto))
+    # CPF, telefone, CEP ou e-mail na mesma mensagem ("Edrei Silva 604.210.790-96")
+    if "@" in msg_bruto or len(re.sub(r"\D", "", msg_bruto)) >= 8:
+        return True
+    if aguardando == "rua":
+        # "rua das flores" começa pelo logradouro; "não sei o nome da rua" não
+        return bool(re.search(r"\d", t) or _RE_LOGRADOURO.match(t.strip()))
+    if aguardando == "nome":
+        # Falha conhecida do LLM: "Maria Souza?" classificado como PERGUNTA
+        return (
+            Evento.PERGUNTA.value in eventos_llm
+            and texto(msg_bruto).rstrip().endswith("?")
+            and len(t.split()) <= 5
+            and _parece_nome_de_pessoa(t)
+        )
+    return False
 
 
 def _extrair_nome_apos_confirmacao(bruto: str) -> str:
@@ -1467,8 +1546,14 @@ def _aplicar_extracao_campo_pendente(
         segmentos = _segmentos_mensagem(bruto)
 
     par = set(par_de(aguardando))
-    duvida = tem_duvida_informativa(msg, msg_bruto, aguardando=aguardando)
-    bruto = msg_bruto
+    # Dado na frente + dúvida depois ("Edrei Maciel, 604...\nMas tem multa?"):
+    # extrai do trecho do dado; a dúvida é tratada à parte
+    if tem_dado_na_frente and parte_dado != msg_bruto.strip():
+        bruto = parte_dado
+        duvida = False
+    else:
+        bruto = msg_bruto
+        duvida = tem_duvida_informativa(msg, msg_bruto, aguardando=aguardando)
     segmentos = _segmentos_mensagem(bruto)
 
     if "nome" in campos_alvo and not dados.nome and not duvida and not _mensagem_e_apenas_cpf(bruto):
@@ -1481,7 +1566,9 @@ def _aplicar_extracao_campo_pendente(
             dados.cpf = cpf
     if "telefone" in campos_alvo and not dados.telefone:
         if aguardando == "cpf":
-            pass
+            # Pediu CPF e veio um celular: guarda como telefone e segue pedindo o CPF
+            if celular_e_nao_cpf(bruto):
+                dados.telefone = _somente_digitos(bruto)
         elif aguardando == "telefone":
             tel = _extrair_telefone_em_segmentos(bruto)
             if tel:
@@ -1892,6 +1979,9 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     dados_in = data.get("dados") if isinstance(data.get("dados"), dict) else {}
     dados_dict = {campo: texto(dados_in.get(campo)) for campo in CAMPOS_DADOS}
     dados = DadosExtraidos(**dados_dict)
+    # Classificação original do LLM, antes das correções abaixo
+    eventos_llm = set(eventos)
+    llm_extraiu_dado = any(dados_dict.values())
 
     from app.geo_coords import extrair_gps_mensagem, parece_coordenada
 
@@ -1908,6 +1998,19 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     if not isinstance(campos, list):
         campos = []
     campos_corrigidos = [texto(c).lower() for c in campos if texto(c)]
+
+    # Data que o LLM devolveu por extenso ("16 de agosto de 2000") → dd/mm/aaaa
+    if dados.data_nascimento:
+        dados.data_nascimento = (
+            _extrair_data_nascimento(dados.data_nascimento) or dados.data_nascimento
+        )
+
+    # LLM pôs um celular no campo CPF (os dois têm 11 dígitos) — vai para telefone
+    if dados.cpf and celular_e_nao_cpf(dados.cpf):
+        if not dados.telefone:
+            dados.telefone = _somente_digitos(dados.cpf)
+        dados.cpf = ""
+        campos_corrigidos = [c for c in campos_corrigidos if c != "cpf"]
 
     pergunta = texto(data.get("pergunta"))
     try:
@@ -1937,6 +2040,14 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         and bool(_RE_POSICAO_LISTA.search(msg))
         and bool(extrair_referencia_plano_na_mensagem(dados.plano))
     )
+    # "pode ser o infinity" / "sim, o one+" — a mensagem nomeia um plano: é escolha desse
+    # plano. Se for o mesmo que está em negociação, a máquina de estados confirma.
+    if aguardando_plano and not escolha_por_posicao:
+        plano_citado = _detectar_plano_na_mensagem(msg)
+        if plano_citado and not eh_pergunta_informativa_sobre_plano(msg, msg_bruto):
+            escolha_por_posicao = True
+            if not extrair_referencia_plano_na_mensagem(dados.plano):
+                dados.plano = plano_citado
     if escolha_por_posicao:
         eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
         if Evento.PLANO_INFORMADO.value not in eventos:
@@ -2587,12 +2698,31 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             if campo != aguardando:
                 setattr(dados, campo, "")
 
+    # Nome e rua são texto livre: se o LLM leu a mensagem como conversa ("tá bom",
+    # "pera aí", "não entendi") e não extraiu nada, não gravar a frase como dado.
+    llm_leu_como_conversa = (
+        aguardando in {"nome", "rua"}
+        and bool(eventos_llm)
+        and not llm_extraiu_dado
+        and not (
+            eventos_llm
+            & {
+                Evento.DADO_INFORMADO.value,
+                Evento.CORRECAO_DADO.value,
+                Evento.LOCALIZACAO_INFORMADA.value,
+                Evento.PLANO_INFORMADO.value,
+            }
+        )
+        and not _texto_livre_parece_dado(msg_bruto, aguardando, eventos_llm)
+    )
+
     # Extração determinística do campo pendente (LLM falhou ou veio dado+pergunta)
     if (
         not pedido_encerrar
         and fase == "cadastro"
         and aguardando_cadastro
         and not pausa_cadastro_plano
+        and not llm_leu_como_conversa
         and not eh_pergunta_informativa_sobre_plano(msg, msg_bruto)
     ):
         _aplicar_extracao_campo_pendente(

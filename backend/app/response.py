@@ -226,6 +226,27 @@ def gerar_resposta(
     historico: list[dict[str, str]] | None = None,
     mensagem_cliente: str = "",
 ) -> str:
+    texto = _gerar_resposta(
+        decisao, estado, origem=origem, historico=historico, mensagem_cliente=mensagem_cliente
+    )
+    # Último dado do cadastro veio junto com uma dúvida: responde e já mostra o resumo
+    if (decisao.contexto_resposta or {}).get("anexar_resumo"):
+        from app.vendas_mensagens import rotulo_pendente_cadastro
+
+        base = (texto or "").replace(rotulo_pendente_cadastro("confirmacao_dados"), "").rstrip()
+        resumo = montar_resumo_cadastro({**estado, **(decisao.atualizar_dados or {})})
+        texto = f"{base}\n\n{resumo}" if base else resumo
+    return texto
+
+
+def _gerar_resposta(
+    decisao: Decisao,
+    estado: dict[str, Any],
+    *,
+    origem: str = "cliente",
+    historico: list[dict[str, str]] | None = None,
+    mensagem_cliente: str = "",
+) -> str:
     _ = origem
 
     # Última fala do cliente (para espelhar bom dia / oi)
@@ -465,6 +486,11 @@ def gerar_resposta(
     if decisao.objetivo_resposta == "PEDIR_FALAR_DUVIDA":
         return pedir_falar_duvida()
 
+    if decisao.objetivo_resposta == "CORTESIA_POS_ENCERRAMENTO":
+        from app.pos_venda_mensagens import cortesia_pos_encerramento
+
+        return cortesia_pos_encerramento(str(estado.get("nome") or ""))
+
     if decisao.objetivo_resposta == "DESPEDIDA_ENCERRAMENTO":
         ctx = decisao.contexto_resposta or {}
         return despedida_encerramento(str(ctx.get("nome") or estado.get("nome") or ""))
@@ -700,7 +726,7 @@ def gerar_resposta(
         beneficio = _detectar_beneficio_pergunta(pergunta_txt)
         from app.cadastro_mensagens import campos_para_pedir, pedir_campos
 
-        prox_cad = campos_para_pedir(estado) or ["nome", "cpf"]
+        prox_cad = campos_para_pedir(estado, str(decisao.aguardando or "")) or ["nome", "cpf"]
         retomada = pedir_campos(prox_cad)
         prefixo = f"Perfeito! Vamos seguir com o *{nome}*{preco}.\n\n"
 
@@ -802,7 +828,9 @@ def gerar_resposta(
             from app.cadastro_mensagens import campos_para_pedir, pedir_campos
 
             if not decisao.objetivo_resposta.startswith("PEDIR_CORRECAO_"):
-                faltam = campos_para_pedir({**estado, **(decisao.atualizar_dados or {})})
+                faltam = campos_para_pedir(
+                    {**estado, **(decisao.atualizar_dados or {})}, campo
+                )
                 if campo in faltam and len(faltam) > 1:
                     return pedir_campos(faltam)
             base = pedir_campo(campo)
@@ -848,7 +876,7 @@ def gerar_resposta(
         ctx_cad = decisao.contexto_resposta or {}
         merged = {**estado, **(decisao.atualizar_dados or {})}
         pend = str(ctx_cad.get("pendente") or decisao.aguardando or "")
-        faltam = campos_para_pedir(merged) or ([pend] if pend else [])
+        faltam = campos_para_pedir(merged, pend) or ([pend] if pend else [])
         cadastro_ok = {
             "nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero",
         }

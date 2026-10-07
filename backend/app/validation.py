@@ -156,6 +156,11 @@ def validar_campo(campo: str, valor: str, *, nome_cliente: str = "") -> str | No
         digitos = re.sub(r"\D", "", v)
         if len(digitos) not in {11, 14}:
             return "CPF precisa ter 11 dígitos (ou CNPJ com 14)"
+        if len(digitos) == 11:
+            from app.utils.cpf import cpf_digitos_conferem
+
+            if not cpf_digitos_conferem(digitos):
+                return "esse CPF não confere — pode conferir os números e mandar de novo?"
         return None
 
     if campo == "data_nascimento":
