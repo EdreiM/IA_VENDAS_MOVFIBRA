@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 from app.agenda_mensagens import (
@@ -17,8 +19,6 @@ from app.agenda_resumo import montar_mensagem_horarios
 from app.cadastro_resumo import montar_resumo_cadastro
 from app.cadastro_mensagens import anotar_e_pedir_proximo, confirmar_plano_e_avancar, pedir_campo
 from app.termos_mensagens import (
-    explicar_cancelamento_termos,
-    informar_cancelamento_e_retomar,
     pedir_aceite_termos,
     recusou_termos,
 )
@@ -46,7 +46,6 @@ from app.vendas_mensagens import (
     confirmar_troca_plano_e_retomar_cadastro,
     informar_alteracao_bloqueada_pos_cadastro,
     informar_plano_bloqueado_pos_cadastro,
-    informar_instalacao_e_retomar,
     informar_plano_nao_encontrado,
     informar_planos_por_beneficio,
     informar_preco_plano,
@@ -55,7 +54,6 @@ from app.vendas_mensagens import (
     informar_sem_cobertura,
     insistencia_sem_cobertura,
     planos_citados_no_texto,
-    responder_sem_base_rag,
     transferir_apos_insistencia,
 )
 from app.llm import chat
@@ -99,35 +97,114 @@ def _system_prompt() -> str:
     return SYSTEM.format(nome_ia=nome, tom_voz=tom or "profissional e acolhedora", emoji_rule=emoji_rule)
 
 
-def _resposta_inteligente(
+_CAMPOS_CADASTRO_RETOMADA = (
+    "nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero",
+)
+
+# O que precisa aparecer no fim da mensagem para a retomada contar como feita
+_SINAIS_DE_RETOMADA: dict[str, tuple[str, ...]] = {
+    "nome": ("nome",),
+    "cpf": ("cpf",),
+    "email": ("e-mail", "email"),
+    "telefone": ("telefone", "número", "numero", "whats"),
+    "data_nascimento": ("nascimento",),
+    "cep": ("cep",),
+    "rua": ("rua", "endereço", "endereco"),
+    "numero": ("número", "numero"),
+    "confirmacao_dados": ("dados", "corret", "confirm"),
+    "confirmacao_plano": ("confirm", "fechar", "seguir", "fecho"),
+    "escolha_plano": ("plano", "prefere"),
+    "lista_planos": ("plano", "prefere"),
+    "aceite_termos": ("aceit",),
+    "escolha_horario": ("horário", "horario"),
+    "confirmacao_horario": ("confirm", "agendamento"),
+    "duvidas": ("dúvida", "duvida"),
+    "localizacao": ("cidade", "bairro"),
+    "confirmar_local": ("cidade", "bairro"),
+}
+
+# Só aparece se o LLM estiver fora do ar — sem regra comercial nenhuma
+_SEM_LLM = "Sobre isso eu prefiro confirmar com a equipe antes de te responder, pra não te passar nada errado."
+
+
+def _retomada_apos_duvida(pendente: str, estado: dict[str, Any], *, plano_nome: str = "") -> str:
+    """O próximo passo do atendimento, dito de forma direta (o LLM reescreve com as palavras dele)."""
+    from app.cadastro_mensagens import pedir_campos
+
+    if pendente in _CAMPOS_CADASTRO_RETOMADA:
+        return pedir_campos([pendente])
+    if pendente == "confirmacao_dados":
+        return "Os dados estão corretos? Me confirma com *sim* para seguir."
+    if pendente == "confirmacao_plano":
+        nome = plano_nome or str(estado.get("plano_em_negociacao") or "")
+        ref = f"o *{nome}*" if nome else "esse plano"
+        return f"Quer confirmar {ref} pra gente seguir com o cadastro?"
+    if pendente in {"escolha_plano", "lista_planos"}:
+        return "Qual plano você prefere?"
+    if pendente == "aceite_termos":
+        return (
+            "Quando estiver de acordo com o termo, me responda *aceito* que seguimos para o "
+            "*agendamento da instalação*."
+        )
+    if pendente == "escolha_horario":
+        return "Qual horário da lista fica melhor pra você?"
+    if pendente == "confirmacao_horario":
+        return "Posso confirmar esse agendamento?"
+    if pendente == "duvidas":
+        return "Mais alguma dúvida antes de encerrar?"
+    if pendente in {"localizacao", "confirmar_local"}:
+        return "Me passa sua *cidade* e *bairro* pra eu verificar a cobertura?"
+    return ""
+
+
+_RE_CONFIRMAR_COM_EQUIPE = re.compile(
+    r"confirm\w*(\s+\w+){0,3}\s+com\s+(a\s+|o\s+|nossa\s+|nosso\s+|minha\s+|meu\s+)?"
+    r"(equipe|time|pessoal|setor|supervis\w+|atendente)"
+)
+
+
+def _garantir_retomada(texto: str, pendente: str, retomada: str) -> str:
+    """Se o LLM esqueceu de retomar o atendimento, acrescenta o próximo passo."""
+    if not retomada:
+        return texto
+    # "prefiro confirmar com a equipe" não é pedir a confirmação do cliente
+    fim = _RE_CONFIRMAR_COM_EQUIPE.sub(" ", texto[-200:].casefold())
+    sinais = _SINAIS_DE_RETOMADA.get(pendente) or ()
+    if sinais and any(s in fim for s in sinais):
+        return texto
+    return f"{texto.rstrip()}\n\n{retomada}"
+
+
+def _responder_duvida(
     decisao: Decisao,
     estado: dict[str, Any],
     *,
     historico: list[dict[str, str]] | None,
     mensagem_cliente: str,
-    topico: str = "",
+    pendente: str,
+    plano_nome: str = "",
+    anotados: list[str] | None = None,
+    retomada: str | None = None,
 ) -> str:
-    """Resposta à dúvida do cliente, escrita na hora a partir da base de conhecimento.
+    """Resposta a uma dúvida do cliente + retomada do atendimento, numa mensagem só.
 
-    A fonte é a RAG (onde ficam cancelamento, instalação e as informações da empresa),
-    mais os dados do plano. Responde o que foi perguntado e, com o histórico, não
-    repete o que já foi explicado. Devolve "" se o LLM falhar, ou se a RAG não trouxe
-    nada sobre cancelamento/instalação — aí quem chama usa o texto de reserva.
-    A continuação do atendimento (pedir o próximo dado, o aceite etc.) NÃO é escrita
-    aqui: o código acrescenta depois, de forma fixa.
+    Escrita pelo LLM a cada pergunta, tendo como fonte a RAG (onde ficam cancelamento,
+    instalação e as informações da empresa) e os dados do plano. Com o histórico, não
+    repete o que já foi explicado. Não há texto pronto de regra comercial: se a base
+    não trouxer a resposta, a Eva diz isso com naturalidade.
+
+    O código só confere se a mensagem terminou retomando o atendimento (pedir o
+    próximo dado, o aceite etc.) e acrescenta esse passo se o LLM esqueceu.
     """
     ctx = decisao.contexto_resposta or {}
     original = str(ctx.get("pergunta_original") or mensagem_cliente or "").strip()
     pergunta = str(decisao.pergunta or original).strip()
-    if not pergunta:
-        return ""
+    if retomada is None:
+        retomada = _retomada_apos_duvida(pendente, estado, plano_nome=plano_nome)
 
     rag_txt = formatar_contexto_rag(ctx.get("rag") or {})
     if rag_txt and _rag_parece_catalogo_planos(rag_txt):
         rag_txt = ""
-    # Regra comercial (multa, fidelidade, instalação) só com a base em mãos
-    if not rag_txt and topico in {"cancelamento", "instalacao"}:
-        return ""
     plano = _plano_do_estado(estado, ctx)
     plano_txt = ""
     if plano.get("nome"):
@@ -141,7 +218,11 @@ def _resposta_inteligente(
         quem = "Cliente" if h.get("remetente") == "cliente" else "Eva"
         hist_txt += f"{quem}: {h.get('mensagem')}\n"
 
-    user = f"""Responda UMA dúvida do cliente, no meio do atendimento.
+    rotulos = {"nome": "nome", "cpf": "CPF", "email": "e-mail", "telefone": "telefone",
+               "data_nascimento": "data de nascimento", "cep": "CEP", "rua": "rua", "numero": "número"}
+    anotou = ", ".join(rotulos.get(c, c) for c in (anotados or []) if c)
+
+    user = f"""O cliente fez uma dúvida no meio do atendimento. Responda e retome o atendimento, numa mensagem só.
 
 DÚVIDA: {pergunta}
 MENSAGEM COMO O CLIENTE ESCREVEU: {original or pergunta}
@@ -151,24 +232,278 @@ BASE DE CONHECIMENTO DA EMPRESA (sua fonte):
 
 PLANO DO CLIENTE: {plano_txt or '(ainda não escolhido)'}
 
+O QUE VOCÊ JÁ SABE DESTE CLIENTE:
+{_notas_txt(estado) or '(nada anotado)'}
+
 CONVERSA ATÉ AQUI:
 {hist_txt or '(sem histórico)'}
 
-Como responder:
-- Responda exatamente o que foi perguntado, em 1 a 3 frases. Se for pergunta de sim ou não, comece pelo "sim" ou "não".
-- Use somente a base de conhecimento e os dados do plano acima. Se a resposta não estiver ali, diga com naturalidade que não tem essa informação confirmada e que a equipe pode detalhar. Não invente e não comece com "boa pergunta".
-- Nunca informe valor de multa, taxa, prazo ou data que não esteja escrito acima.
-- A base pode trazer mais do que foi perguntado: use só o trecho que responde a esta dúvida.
-- Olhe a conversa: não repita o que a Eva já explicou. Se o cliente voltou ao mesmo assunto, responda só o ponto que ele perguntou agora, com outras palavras, ou resuma em uma frase. Se ele pareceu não entender, explique de um jeito mais simples.
-- Não peça dados, não fale do próximo passo e não se despeça: o sistema acrescenta a continuação do atendimento logo depois da sua resposta.
+DADOS QUE O CLIENTE INFORMOU NESTA MENSAGEM: {anotou or '(nenhum)'}
+PRÓXIMO PASSO DO ATENDIMENTO: {retomada or '(nenhum)'}
 
-Escreva somente a resposta.
+Como escrever:
+- Fale como uma atendente de verdade no WhatsApp: natural, direta, em primeira pessoa. Nada de frase de sistema ("a Eva não calcula", "não tenho essa informação na base").
+- Responda exatamente o que foi perguntado, em 1 a 3 frases. Se for pergunta de sim ou não, comece pelo "sim" ou "não".
+- Use somente a base de conhecimento e os dados do plano acima. A base pode trazer mais do que foi perguntado: use só o trecho que responde a esta dúvida.
+- Se a resposta não estiver ali, comece a mensagem com a marca [SEM_BASE] (ela é apagada antes do envio e avisa a equipe) e diga com naturalidade que esse detalhe você prefere confirmar com a equipe, sem inventar. Nunca informe valor de multa, taxa, prazo ou data que não esteja escrito acima.
+- Olhe a conversa: não repita o que você já explicou. Se o cliente voltou ao mesmo assunto, responda só o ponto que ele perguntou agora, com outras palavras; se ele pareceu não entender, explique de um jeito mais simples.
+- Se o cliente informou dados nesta mensagem, diga em poucas palavras que anotou.
+- Termine retomando o atendimento com as suas palavras: peça o que está em PRÓXIMO PASSO, e só isso — não peça nenhum outro dado.
+
+Escreva somente a mensagem.
 """
     try:
-        texto = chat(_system_prompt(), user, temperature=0.4)
-    except Exception:  # noqa: BLE001 — sem LLM, quem chama usa o texto fixo
+        texto = (chat(_system_prompt(), user, temperature=0.4) or "").strip() if pergunta else ""
+    except Exception:  # noqa: BLE001 — LLM fora do ar
+        texto = ""
+    if not texto:
+        return f"{_SEM_LLM}\n\n{retomada}".strip() if pergunta else retomada
+    if _RE_SEM_BASE.search(texto):
+        # A base não respondeu: a pergunta fica registrada para a equipe completar a RAG
+        texto = _RE_SEM_BASE.sub("", texto).strip()
+        decisao.contexto_resposta = {**(decisao.contexto_resposta or {}), "sem_base": True}
+    return _garantir_retomada(texto, pendente, retomada)
+
+
+_RE_SEM_BASE = re.compile(r"\[\s*SEM[_ ]BASE\s*\]", re.I)
+
+# Como reagir a cada situação (orientação de conversa — os fatos vêm do catálogo e da RAG)
+_GUIA_SITUACAO: dict[str, str] = {
+    "ESPERA": (
+        "O cliente pediu um tempo para pegar ou procurar o que você pediu. Diga que tudo bem e que "
+        "você fica aguardando. Em poucas palavras, lembre o que fica faltando. Não repita o pedido "
+        "inteiro nem faça outra pergunta."
+    ),
+    "ADIAMENTO": (
+        "O cliente quer pensar ou deixar para depois. Acolha sem pressionar. Pergunte se ficou "
+        "alguma dúvida que você possa esclarecer agora e diga que é só chamar quando quiser "
+        "continuar. Não repita o pedido."
+    ),
+    "IMPEDIMENTO": (
+        "O cliente disse que não tem, não sabe ou não conseguiu o que você pediu. Reconheça isso e "
+        "ajude com um caminho prático (onde essa informação costuma estar, tentar de outro jeito). "
+        "Se a base de conhecimento trouxer uma alternativa, use. Não diga que dá para seguir sem "
+        "isso se não estiver escrito nos fatos. Termine perguntando se assim ele consegue."
+    ),
+    "OBJECAO_PRECO": (
+        "O cliente achou caro ou comparou com outra empresa. Reconheça a preocupação, sem discutir "
+        "e sem falar mal de concorrente. Use só os fatos abaixo (valor com pontualidade, "
+        "benefícios, base de conhecimento). Se houver plano mais em conta na lista, ofereça pelo "
+        "nome e preço. Não invente desconto nem condição. Termine perguntando como ele prefere seguir."
+    ),
+    "NAO_ENTENDEU": (
+        "O cliente não entendeu o que você pediu. Explique de um jeito mais simples o que você "
+        "precisa e para quê, com um exemplo do formato se ajudar."
+    ),
+    "MIDIA": (
+        "O cliente mandou {midia} e você não conseguiu {acao_midia}. Diga isso com "
+        "naturalidade, sem pedir desculpas longas, e peça para ele escrever."
+    ),
+    "REPETICAO": (
+        "O cliente respondeu outra coisa no lugar do que você pediu. Responda em uma frase ao que "
+        "ele disse (comentário, brincadeira, desabafo, um 'ok' solto) e retome o pedido com outras "
+        "palavras."
+    ),
+    "TRANSFERENCIA_SUPORTE": (
+        "A pessoa já é cliente e precisa de suporte ou do financeiro, que não é com você. Diga em "
+        "1 ou 2 frases que entendeu e que já está encaminhando para a equipe que resolve isso, que "
+        "continua o atendimento por aqui mesmo. Não peça nenhum dado e não tente resolver."
+    ),
+    "TRANSFERENCIA_ALTERACAO": (
+        "O cadastro do cliente já foi registrado no sistema e você não consegue alterar por aqui. "
+        "Diga isso em 1 ou 2 frases e que já está chamando uma pessoa da equipe para ajustar com "
+        "ele por aqui mesmo. Não pergunte se pode encaminhar: já está encaminhando."
+    ),
+    "TRANSFERENCIA_TRAVADO": (
+        "Vocês não conseguiram avançar neste passo. Diga em 1 ou 2 frases, sem culpar o cliente, "
+        "que para facilitar você vai chamar uma pessoa da equipe para ajudar com isso e que ela "
+        "continua por aqui mesmo. Não peça mais nada."
+    ),
+}
+
+# Dicas práticas de onde achar o dado (não são regra da empresa)
+_DICA_CAMPO: dict[str, str] = {
+    "cep": "O CEP costuma estar em conta de luz, de água ou em correspondências; também aparece pesquisando o nome da rua na internet.",
+    "cpf": "O CPF aparece no RG novo, na CNH e no aplicativo gov.br.",
+    "email": "Serve qualquer e-mail que o cliente consiga acessar.",
+    "telefone": "Serve o número do próprio WhatsApp, com DDD.",
+    "numero": "Se a casa não tiver número, o cliente pode dizer que é sem número.",
+}
+
+_SEM_LLM_CONVERSA: dict[str, str] = {
+    "TRANSFERENCIA_SUPORTE": (
+        "Entendi! Isso é com a nossa equipe de atendimento. Já estou te encaminhando para um "
+        "atendente continuar com você por aqui."
+    ),
+    "TRANSFERENCIA_ALTERACAO": (
+        "Seus dados já foram registrados no sistema e por aqui eu não consigo alterar. Já estou "
+        "chamando um atendente da equipe para ajustar isso com você."
+    ),
+    "TRANSFERENCIA_TRAVADO": (
+        "Para facilitar, vou chamar um atendente da nossa equipe para te ajudar com isso. "
+        "Em instantes alguém continua com você por aqui."
+    ),
+}
+
+
+def _notas_txt(estado: dict[str, Any]) -> str:
+    notas = [ln.strip() for ln in str(estado.get("notas_conversa") or "").split("\n") if ln.strip()]
+    return "\n".join(f"- {n}" for n in notas)
+
+
+def _fatos_da_etapa(decisao: Decisao, estado: dict[str, Any], conversa: dict[str, Any]) -> str:
+    """O que a Eva pode afirmar neste turno: plano, planos mais em conta, horários, RAG."""
+    ctx = decisao.contexto_resposta or {}
+    dados = {**estado, **(decisao.atualizar_dados or {})}
+    partes: list[str] = []
+
+    fala_de_plano = conversa.get("situacao") in {"OBJECAO_PRECO", "ADIAMENTO"} or str(
+        conversa.get("pendente") or ""
+    ) in {"confirmacao_plano", "escolha_plano", "lista_planos"}
+    plano = _plano_do_estado(estado, ctx) if fala_de_plano else {}
+    if plano.get("nome"):
+        linha = f"Plano em conversa: {plano.get('nome')} — {_fmt_money(plano.get('valor'))}/mês"
+        if plano.get("valor_pontualidade"):
+            linha += f" (pagando até o vencimento: {_fmt_money(plano.get('valor_pontualidade'))})"
+        beneficios = str(plano.get("beneficios") or plano.get("descricao") or "").strip()
+        partes.append(f"{linha}. {beneficios}".strip())
+
+    for p in conversa.get("planos_mais_em_conta") or []:
+        linha = f"Plano mais em conta: {p.get('nome')} — {_fmt_money(p.get('valor'))}/mês"
+        if p.get("valor_pontualidade"):
+            linha += f" (pagando até o vencimento: {_fmt_money(p.get('valor_pontualidade'))})"
+        partes.append(f"{linha}. {str(p.get('beneficios') or '').strip()}".strip())
+    if conversa.get("situacao") == "OBJECAO_PRECO" and not conversa.get("planos_mais_em_conta"):
+        partes.append("Não há plano mais barato que este no catálogo.")
+
+    if str(dados.get("fase") or "") == "agendamento" or str(conversa.get("pendente") or "") in {
+        "escolha_horario", "confirmacao_horario",
+    }:
+        def _lista(v: Any) -> str:
+            if isinstance(v, str):
+                try:
+                    v = json.loads(v)
+                except json.JSONDecodeError:
+                    v = [v]
+            return ", ".join(str(x) for x in (v or []))
+
+        manha, tarde = _lista(dados.get("horarios_manha")), _lista(dados.get("horarios_tarde"))
+        if manha or tarde:
+            partes.append(
+                f"Horários com técnico disponível em {dados.get('data_agendamento') or 'data a confirmar'}: "
+                f"manhã: {manha or 'nenhum'}; tarde: {tarde or 'nenhum'}. São os únicos dessa data."
+            )
+        if dados.get("horario_escolhido"):
+            partes.append(f"Horário que o cliente escolheu: {dados.get('horario_escolhido')}.")
+        if dados.get("preferencia_horario"):
+            partes.append(
+                f"Preferência que o cliente disse e você anotou: {dados.get('preferencia_horario')}. "
+                "Se nenhum horário da lista servir, você pode chamar a equipe para combinar outro dia."
+            )
+
+    if conversa.get("motivo_validacao"):
+        partes.append(f"O dado que o cliente mandou veio com problema: {conversa['motivo_validacao']}.")
+    dica = _DICA_CAMPO.get(str(conversa.get("pendente") or ""))
+    if dica and conversa.get("situacao") in {"IMPEDIMENTO", "NAO_ENTENDEU"}:
+        partes.append(dica)
+
+    rag_txt = formatar_contexto_rag(ctx.get("rag") or {})
+    if rag_txt and not _rag_parece_catalogo_planos(rag_txt):
+        partes.append(f"Base de conhecimento da empresa:\n{rag_txt}")
+    return "\n".join(f"- {p}" for p in partes)
+
+
+def _conversar(
+    decisao: Decisao,
+    estado: dict[str, Any],
+    *,
+    historico: list[dict[str, str]] | None,
+    mensagem_cliente: str,
+) -> str:
+    """Resposta escrita pelo LLM quando o cliente não respondeu ao passo pedido.
+
+    Em vez de repetir a mesma frase ("Qual o CEP?"), a Eva responde ao que o cliente
+    disse — pediu um tempo, não tem o dado, achou caro, mandou áudio — e conduz de volta.
+    Devolve "" quando o LLM não respondeu: quem chama usa o texto de sempre.
+    """
+    ctx = decisao.contexto_resposta or {}
+    conversa = dict(ctx.get("conversa") or {})
+    situacao = str(conversa.get("situacao") or "REPETICAO")
+    pendente = str(conversa.get("pendente") or ctx.get("pendente") or decisao.aguardando or "")
+    transferindo = situacao.startswith("TRANSFERENCIA_")
+    plano_nome = str(estado.get("plano_em_negociacao") or estado.get("plano_confirmado") or "")
+    retomada = "" if transferindo else _retomada_apos_duvida(pendente, estado, plano_nome=plano_nome)
+
+    guia = _GUIA_SITUACAO.get(situacao) or _GUIA_SITUACAO["REPETICAO"]
+    if situacao == "MIDIA":
+        midia = str(conversa.get("midia") or "audio")
+        guia = guia.format(
+            midia={"audio": "um áudio", "image": "uma imagem", "video": "um vídeo"}.get(midia, "um arquivo"),
+            acao_midia="ouvir esse áudio" if midia == "audio" else "abrir esse tipo de arquivo",
+        )
+    if conversa.get("objetivo_original") == "CLARIFICAR_INTENCAO" and situacao == "REPETICAO":
+        guia = (
+            "Você não teve certeza do que o cliente quis dizer. Diga isso com naturalidade, em uma "
+            "frase, pergunte o que ele quis dizer e lembre o que você estava pedindo."
+        )
+    if conversa.get("objetivo_original") == "EXPLICAR_HORARIOS_UNICOS":
+        guia = (
+            "O cliente não pode nos horários oferecidos ou pediu outro dia ou horário. Diga que "
+            "anotou a preferência dele, explique que os horários da lista são os que têm técnico "
+            "disponível nessa data e pergunte se algum deles serve. Diga que, se nenhum servir, "
+            "você chama a equipe para combinar outro dia."
+        )
+    if conversa.get("repetido") and not transferindo:
+        guia += " Você já pediu isso antes nesta conversa: não use a mesma frase de novo."
+
+    hist_txt = ""
+    for h in historico or []:
+        quem = "Cliente" if h.get("remetente") == "cliente" else "Eva"
+        hist_txt += f"{quem}: {h.get('mensagem')}\n"
+
+    if situacao in {"ESPERA", "ADIAMENTO"} or transferindo:
+        fecho = "Não termine com pedido de dado nem com pergunta de confirmação."
+    else:
+        fecho = (
+            "Termine retomando o atendimento com as suas palavras: peça o que está em O QUE VOCÊ "
+            "TINHA PEDIDO, e só isso — não peça nenhum outro dado."
+        )
+
+    user = f"""O cliente respondeu ao seu último pedido com outra coisa. Escreva a próxima mensagem.
+
+O QUE VOCÊ TINHA PEDIDO: {retomada or _rotulo_pendente(pendente) or '(nada pendente)'}
+MENSAGEM DO CLIENTE: {mensagem_cliente or '(sem texto)'}
+
+O QUE ACONTECEU E COMO REAGIR:
+{guia}
+
+FATOS QUE VOCÊ PODE USAR (não afirme nada além disso):
+{_fatos_da_etapa(decisao, estado, conversa) or '(nenhum fato específico para este momento)'}
+
+O QUE VOCÊ JÁ SABE DESTE CLIENTE:
+{_notas_txt(estado) or '(nada anotado)'}
+
+CONVERSA ATÉ AQUI:
+{hist_txt or '(sem histórico)'}
+
+Como escrever:
+- Fale como uma atendente de verdade no WhatsApp: natural, direta, em primeira pessoa, 1 a 3 frases.
+- Comece respondendo ao que o cliente disse. Nada de frase de sistema ("não entendi sua mensagem", "opção inválida").
+- Não invente preço, desconto, prazo, regra ou promessa. O que não estiver nos fatos, você prefere confirmar com a equipe.
+- Não repita frases que você já usou na conversa acima.
+- {fecho}
+
+Escreva somente a mensagem.
+"""
+    try:
+        texto = (chat(_system_prompt(), user, temperature=0.5) or "").strip()
+    except Exception:  # noqa: BLE001 — LLM fora do ar
+        texto = ""
+    if not texto:
         return ""
-    return (texto or "").strip()
+    if situacao in {"ESPERA", "ADIAMENTO"} or transferindo:
+        return texto
+    return _garantir_retomada(texto, pendente, retomada)
 
 
 def _rag_parece_catalogo_planos(texto: str) -> bool:
@@ -240,6 +575,7 @@ def _plano_do_estado(estado: dict[str, Any], ctx: dict[str, Any] | None = None) 
 def _rotulo_pendente(pendente: str | None) -> str:
     mapa = {
         "localizacao": "cidade e bairro",
+        "confirmar_local": "confirmar se o lugar informado é o bairro, e qual a cidade",
         "nome": "nome completo",
         "cpf": "CPF",
         "email": "e-mail",
@@ -299,6 +635,13 @@ def gerar_resposta(
     historico: list[dict[str, str]] | None = None,
     mensagem_cliente: str = "",
 ) -> str:
+    conversa = (decisao.contexto_resposta or {}).get("conversa") or {}
+    if conversa:
+        texto = _resposta_de_conversa(
+            decisao, estado, origem=origem, historico=historico, mensagem_cliente=mensagem_cliente
+        )
+        if texto:
+            return texto
     texto = _gerar_resposta(
         decisao, estado, origem=origem, historico=historico, mensagem_cliente=mensagem_cliente
     )
@@ -312,6 +655,44 @@ def gerar_resposta(
     return texto
 
 
+def _resposta_de_conversa(
+    decisao: Decisao,
+    estado: dict[str, Any],
+    *,
+    origem: str,
+    historico: list[dict[str, str]] | None,
+    mensagem_cliente: str,
+) -> str:
+    """Turno em que o cliente não avançou: o LLM conversa; sem LLM, cai no texto de sempre."""
+    conversa = (decisao.contexto_resposta or {}).get("conversa") or {}
+    situacao = str(conversa.get("situacao") or "")
+
+    def _com_aviso_de_midia() -> str:
+        base = _gerar_resposta(
+            decisao, estado, origem=origem, historico=historico, mensagem_cliente=""
+        )
+        return f"{_aviso_midia(str(conversa.get('midia') or 'audio'))}\n\n{base}".strip()
+
+    # Primeiro contato já em áudio: a abertura normal, avisando que não deu para ouvir
+    if situacao == "MIDIA" and not int(conversa.get("tentativas") or 0):
+        return _com_aviso_de_midia()
+
+    texto = _conversar(decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente)
+    if texto:
+        return texto
+    if situacao in _SEM_LLM_CONVERSA:
+        return _SEM_LLM_CONVERSA[situacao]
+    if situacao == "MIDIA":
+        return _com_aviso_de_midia()
+    return ""
+
+
+def _aviso_midia(midia: str) -> str:
+    if midia == "audio":
+        return "Não consegui ouvir esse áudio por aqui. Pode me escrever, por favor?"
+    return "Não consegui abrir o que você mandou por aqui. Pode me escrever, por favor?"
+
+
 def _gerar_resposta(
     decisao: Decisao,
     estado: dict[str, Any],
@@ -321,6 +702,10 @@ def _gerar_resposta(
     mensagem_cliente: str = "",
 ) -> str:
     _ = origem
+
+    if decisao.objetivo_resposta == "INFORMAR_TRANSFERENCIA_AJUDA":
+        situacao = str(((decisao.contexto_resposta or {}).get("conversa") or {}).get("situacao") or "")
+        return _SEM_LLM_CONVERSA.get(situacao) or _SEM_LLM_CONVERSA["TRANSFERENCIA_TRAVADO"]
 
     # Última fala do cliente (para espelhar bom dia / oi)
     if not mensagem_cliente and historico:
@@ -354,6 +739,27 @@ def _gerar_resposta(
         quer_planos = bool((decisao.contexto_resposta or {}).get("quer_ver_planos"))
         return mensagem_abertura(mensagem_cliente, quer_planos=quer_planos)
 
+    if decisao.objetivo_resposta == "CONFIRMAR_BAIRRO_OU_CIDADE":
+        from app.utils.formatters import titulo_palavras
+
+        ctx = decisao.contexto_resposta or {}
+        local = titulo_palavras(str(ctx.get("local") or estado.get("bairro") or "").strip())
+        return f"*{local}* é o seu bairro? Se for, me conta também qual é a *cidade*."
+
+    if decisao.objetivo_resposta == "INFORMAR_CIDADE_NAO_ATENDIDA":
+        from app.localizacao_heuristica import cidades_atendidas
+        from app.utils.formatters import titulo_palavras
+
+        ctx = decisao.contexto_resposta or {}
+        cidade = titulo_palavras(str(ctx.get("cidade") or estado.get("cidade") or "").strip())
+        lista = cidades_atendidas()
+        atendidas = ", ".join(lista[:-1]) + f" e {lista[-1]}" if len(lista) > 1 else "".join(lista)
+        return (
+            f"Entendi, *{cidade}* é a cidade. Por enquanto a MOV FIBRA ainda não atende aí.\n\n"
+            f"Hoje atendemos em {atendidas}. Se a instalação for em uma dessas cidades, "
+            "me diz a *cidade* e o *bairro* que eu verifico pra você."
+        )
+
     if decisao.objetivo_resposta == "COMPLETAR_LOCALIZACAO":
         cidade = str(
             decisao.atualizar_dados.get("cidade")
@@ -384,7 +790,9 @@ def _gerar_resposta(
     if decisao.objetivo_resposta == "CUMPRIMENTAR_E_RETOMAR":
         ctx = decisao.contexto_resposta or {}
         pendente = str(ctx.get("pendente") or decisao.aguardando or "")
-        return mensagem_cumprimento_retomar(mensagem_cliente, pendente)
+        return mensagem_cumprimento_retomar(
+            mensagem_cliente, pendente, {**estado, **(decisao.atualizar_dados or {})}
+        )
 
     if decisao.objetivo_resposta == "CLARIFICAR_INTENCAO":
         return clarificar_intencao(decisao.contexto_resposta or {})
@@ -459,16 +867,9 @@ def _gerar_resposta(
         ctx = decisao.contexto_resposta or {}
         topico = str(ctx.get("topico_contexto") or "")
         if topico == "cancelamento":
-            return informar_cancelamento_e_retomar(
+            return _responder_duvida(
+                decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
                 pendente="confirmacao_dados",
-                pergunta_valor=any(
-                    x in normalizar_texto(str(ctx.get("pergunta_original") or ""))
-                    for x in ("quanto", "valor", "ficaria", "multa", "taxa")
-                ),
-                resposta=_resposta_inteligente(
-                    decisao, estado, historico=historico,
-                    mensagem_cliente=mensagem_cliente, topico="cancelamento",
-                ),
             )
         # Demais dúvidas: LLM + RAG (não inventar resposta genérica)
 
@@ -519,51 +920,18 @@ def _gerar_resposta(
 
     if decisao.objetivo_resposta == "RESPONDER_DUVIDA_E_RETOMAR_TERMOS":
         ctx = decisao.contexto_resposta or {}
-        topico = str(ctx.get("topico_contexto") or "")
-        from app.parser import eh_pergunta_instalacao
-        from app.termos_mensagens import responder_duvida_e_pedir_aceite
-
         pergunta_bruta = str(decisao.pergunta or ctx.get("pergunta_original") or "")
         # "sim" solto logo depois de uma dúvida de cancelamento: a explicação já foi dada —
         # pede o aceite de forma direta em vez de repetir o texto inteiro.
         if ctx.get("esclarecer_aceite"):
             return pedir_aceite_termos(pedir_aceite_explicito=True)
-        duvida_instalacao = topico == "instalacao" or eh_pergunta_instalacao(
-            pergunta_bruta, pergunta_bruta, topico=topico
-        )
-        if normalizar_texto(pergunta_bruta) not in {"aceito", "aceita", "concordo"}:
-            inteligente = _resposta_inteligente(
-                decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
-                topico="instalacao" if duvida_instalacao and topico != "cancelamento" else topico,
-            )
-            if inteligente:
-                return responder_duvida_e_pedir_aceite(inteligente)
-        # Sem LLM: textos fixos
-        if topico == "cancelamento":
-            return explicar_cancelamento_termos()
-        if duvida_instalacao:
-            return informar_instalacao_e_retomar(
-                pendente="aceite_termos",
-                plano_nome=str(estado.get("plano_confirmado") or ""),
-            )
-        rag = ctx.get("rag") or {}
-        pergunta_norm = normalizar_texto(pergunta_bruta)
-        if pergunta_norm in {"aceito", "aceita", "concordo"}:
+        if normalizar_texto(pergunta_bruta) in {"aceito", "aceita", "concordo"}:
             return pedir_aceite_termos(
                 termos_enviados=bool(estado.get("termos_enviados")),
             )
-        resp_rag = str(rag.get("resposta") or "").strip()
-        if resp_rag and _rag_parece_catalogo_planos(resp_rag):
-            resp_rag = ""
-        if resp_rag and topico != "cancelamento":
-            base = resp_rag
-        else:
-            base = (
-                "Entendi sua dúvida. Posso te ajudar com isso, mas agora preciso do "
-                "seu aceite ao termo de fidelidade para seguirmos."
-            )
-        return base + "\n\n" + pedir_aceite_termos(
-            termos_enviados=bool(estado.get("termos_enviados")),
+        return _responder_duvida(
+            decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
+            pendente="aceite_termos",
         )
 
     if decisao.objetivo_resposta == "PEDIR_HORARIO_ESPECIFICO":
@@ -729,15 +1097,10 @@ def _gerar_resposta(
 
     if decisao.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR":
         ctx = decisao.contexto_resposta or {}
-        return informar_cancelamento_e_retomar(
+        return _responder_duvida(
+            decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
             pendente=str(ctx.get("pendente") or decisao.aguardando or ""),
-            campos_anotados=list(ctx.get("campos_anotados") or []),
-            pergunta_valor=bool(ctx.get("pergunta_valor_multa")),
-            ja_esclarecido=bool(ctx.get("cancelamento_ja_esclarecido_antes")),
-            resposta=_resposta_inteligente(
-                decisao, estado, historico=historico,
-                mensagem_cliente=mensagem_cliente, topico="cancelamento",
-            ),
+            anotados=list(ctx.get("campos_anotados") or []),
         )
 
     if decisao.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR":
@@ -750,15 +1113,11 @@ def _gerar_resposta(
             or estado.get("plano_confirmado")
             or ""
         )
-        return informar_instalacao_e_retomar(
+        return _responder_duvida(
+            decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
             pendente=str(ctx.get("pendente") or decisao.aguardando or "confirmacao_plano"),
             plano_nome=nome,
-            pergunta_custo=bool(ctx.get("pergunta_custo_instalacao")),
-            ja_esclarecido=bool(ctx.get("instalacao_ja_esclarecido_antes")),
-            resposta=_resposta_inteligente(
-                decisao, estado, historico=historico,
-                mensagem_cliente=mensagem_cliente, topico="instalacao",
-            ),
+            anotados=list(ctx.get("campos_anotados") or []),
         )
 
     if decisao.objetivo_resposta == "INFORMAR_PLANOS_POR_BENEFICIO":
@@ -827,15 +1186,9 @@ def _gerar_resposta(
         if topico == "cancelamento" or eh_pergunta_cancelamento(
             pergunta_bruta, pergunta_bruta, topico=topico
         ):
-            return (
-                prefixo
-                + informar_cancelamento_e_retomar(
-                    pendente=prox_cad[0] if prox_cad else "nome",
-                    pergunta_valor=any(
-                        x in pergunta_txt
-                        for x in ("quanto", "valor", "ficaria", "multa", "taxa")
-                    ),
-                )
+            return prefixo + _responder_duvida(
+                decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
+                pendente=prox_cad[0] if prox_cad else "nome", retomada=retomada,
             )
         if topico == "preco_plano" or eh_pergunta_preco_plano_nomeado(
             pergunta_txt, pergunta_bruta
@@ -857,12 +1210,10 @@ def _gerar_resposta(
                 beneficio or "benefício", com, plano_atual=plano
             ) + f"\n\n{retomada}"
         if topico == "instalacao" or eh_pergunta_instalacao(pergunta_txt, pergunta_bruta):
-            inst = informar_instalacao_e_retomar(
-                pendente=prox_cad[0] if prox_cad else "nome",
-                plano_nome=nome,
-                pergunta_custo=bool(ctx.get("pergunta_custo_instalacao")),
+            return prefixo + _responder_duvida(
+                decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
+                pendente=prox_cad[0] if prox_cad else "nome", plano_nome=nome, retomada=retomada,
             )
-            return prefixo + inst + f"\n\n{retomada}"
         detalhe = informar_detalhes_plano(plano if isinstance(plano, dict) else {})
         return prefixo + detalhe + f"\n\n{retomada}"
 
@@ -935,34 +1286,18 @@ def _gerar_resposta(
         ctx = decisao.contexto_resposta or {}
         pendente = str(ctx.get("pendente") or decisao.aguardando or "")
         topico = str(ctx.get("topico_contexto") or "")
-        inteligente = _resposta_inteligente(
-            decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente, topico=topico
-        )
-        if topico == "cancelamento":
-            return informar_cancelamento_e_retomar(
-                pendente=pendente,
-                pergunta_valor=bool(ctx.get("pergunta_valor_multa")),
-                resposta=inteligente,
-            )
-        if topico == "instalacao":
-            return informar_instalacao_e_retomar(
-                pendente=pendente,
-                plano_nome=str(
-                    estado.get("plano_confirmado")
-                    or estado.get("plano_em_negociacao")
-                    or ""
-                ),
-                pergunta_custo=bool(ctx.get("pergunta_custo_instalacao")),
-                resposta=inteligente,
-            )
+        plano_ref = str(estado.get("plano_confirmado") or estado.get("plano_em_negociacao") or "")
         if topico == "beneficio_plano":
+            # Benefícios vêm do catálogo de planos, não da RAG
             plano = _plano_do_estado(estado, ctx)
+            retomada = _retomada_apos_duvida(pendente, estado, plano_nome=plano_ref)
             return informar_detalhes_plano(plano if isinstance(plano, dict) else {}) + (
-                f"\n\n{responder_sem_base_rag(pendente).split('.')[0]}."
-                if pendente
-                else ""
+                f"\n\n{retomada}" if retomada else ""
             )
-        return responder_sem_base_rag(pendente, topico=topico, resposta=inteligente)
+        return _responder_duvida(
+            decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
+            pendente=pendente, plano_nome=plano_ref,
+        )
 
     if str(estado.get("fase") or "") == "cadastro" and decisao.objetivo_resposta in {
         "CONTINUAR_CONVERSA",
@@ -1013,19 +1348,11 @@ def _gerar_resposta(
         "CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA",
         "CONFIRMAR_HORARIO_E_RESPONDER_PERGUNTA",
     }:
-        pergunta_valor = any(
-            x in normalizar_texto(str(ctx.get("pergunta_original") or decisao.pergunta or ""))
-            for x in ("quanto", "valor", "ficaria", "fica", "custa", "taxa", "multa")
-        )
-        return informar_cancelamento_e_retomar(
+        return _responder_duvida(
+            decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
             pendente=str(ctx.get("pendente") or decisao.aguardando or ""),
-            campos_anotados=list(ctx.get("campos_anotados") or []),
-            pergunta_valor=pergunta_valor,
-            ja_esclarecido=bool(ctx.get("cancelamento_ja_esclarecido_antes")),
-            resposta=_resposta_inteligente(
-                decisao, estado, historico=historico,
-                mensagem_cliente=mensagem_cliente, topico="cancelamento",
-            ),
+            plano_nome=str(estado.get("plano_em_negociacao") or estado.get("plano_confirmado") or ""),
+            anotados=list(ctx.get("campos_anotados") or []),
         )
 
     plano = ctx.get("plano") or {}
@@ -1072,6 +1399,9 @@ PERGUNTA DO CLIENTE (já contextualizada): {decisao.pergunta or '(nenhuma)'}
 BASE DE CONHECIMENTO (RAG — use como fonte; não invente além disso):
 {rag_txt or '(nenhum trecho encontrado — responda só com o que souber dos planos acima)'}
 
+O QUE VOCÊ JÁ SABE DESTE CLIENTE (leve em conta; não pergunte de novo):
+{_notas_txt(estado) or '(nada anotado)'}
+
 ÚLTIMAS MENSAGENS (use para entender follow-ups como "quanto paga?", "pra cancelar", "e a taxa?"):
 {hist_txt or '(sem histórico)'}
 
@@ -1097,14 +1427,10 @@ OUTROS PLANOS:
 {planos_txt or '(nenhum)'}
 
 Como cumprir o objetivo:
-- APRESENTAR_E_PEDIR_LOCALIZACAO / CONVERSAR_E_PEDIR_LOCALIZACAO: (gerado automaticamente — cumprimento na altura + cidade/bairro)
-- CUMPRIMENTAR_E_RETOMAR: (gerado automaticamente — responde bom dia/tarde/noite/oi na altura e retoma)
 - PEDIR_LOCALIZACAO / RETOMAR_LOCALIZACAO / COMPLETAR_LOCALIZACAO / PEDIR_NOVA_LOCALIZACAO: peça só o que falta.
 - APRESENTAR_PLANO_INICIAL / APRESENTAR_PLANO_ESCOLHIDO_E_CONFIRMAR: use 📦 nome, preço e lista ✅ de benefícios; pergunte se quer fechar.
 - APRESENTAR_TROCA_PLANO_E_CONFIRMAR: diga que entendeu a troca, apresente o plano com benefícios e peça confirmação; diga que depois volta aos dados.
 - APRESENTAR_PLANOS_ALTERNATIVOS: NÃO liste todos os planos. Sugira o plano em foco com benefícios; diga que há outras opções se quiser comparar.
-- INFORMAR_PRECO_PLANO_E_RETOMAR / INFORMAR_PLANOS_POR_BENEFICIO / INFORMAR_INSTALACAO_E_RETOMAR: respostas fixas (não invente).
-- INFORMAR_INSTALACAO_E_RETOMAR: instalação só após cadastro; não prometa hoje/amanhã nem invente taxa/fidelidade; retome a confirmação do plano.
 - CONFIRMAR_PLANO_E_AVANCAR: confirme o plano com naturalidade e peça o nome completo.
 - CONFIRMAR_PLANO_E_RESPONDER_PERGUNTA: confirme o plano, responda a dúvida com base na RAG e peça o nome completo.
 - CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA: confirme que os dados estão corretos, responda a dúvida com RAG e peça confirmação final do cadastro.
@@ -1114,16 +1440,14 @@ Como cumprir o objetivo:
 - ANOTAR_DADO_E_RETOMAR_PLANO: anote o dado e retome a escolha/confirmação do plano. Não peça endereço de novo.
 - PEDIR_NOME / PEDIR_CPF / PEDIR_EMAIL / PEDIR_TELEFONE / PEDIR_DATA_NASCIMENTO / PEDIR_CEP / PEDIR_RUA / PEDIR_NUMERO: peça só esse campo.
 - PEDIR_CORRECAO_* / PEDIR_CPF_NOVAMENTE: peça de novo de forma leve.
-- CONFIRMAR_DADOS_CADASTRO: (gerado automaticamente — não use este objetivo via LLM)
-- APRESENTAR_HORARIOS: (gerado automaticamente — não use este objetivo via LLM)
 - ENCERRAR_CADASTRO_BASICO: confirme que o cadastro foi concluído e diga que a equipe segue com instalação/contrato.
 - INFORMAR_SEM_HORARIOS_E_TRANSFERENCIA / INFORMAR_ERRO_AGENDA_E_TRANSFERENCIA: explique que não há horários no momento e encaminhe para a equipe.
 - INFORMAR_PLANO_BLOQUEADO_POS_CADASTRO: cadastro fechado — troca de plano com a equipe.
 - INFORMAR_SEM_COBERTURA: sem cobertura + oferecer outro endereço.
 - INFORMAR_CPF_JA_CADASTRADO / INFORMAR_ERRO_* / INFORMAR_TRANSFERENCIA: explique e diga que vai encaminhar para a equipe humana. NÃO pergunte "posso ajudar com mais alguma coisa" — o atendimento automático encerra aqui.
-- RESPONDER_PERGUNTA_E_RETOMAR: responda a pergunta com base na RAG e no TÓPICO DO CONTEXTO. Follow-ups curtos ("quanto paga?", "tem taxa?", "pra cancelar", "e a multa?") referem-se ao tópico anterior — NÃO troque cancelamento/multa por mensalidade do plano, nem o contrário, sem o cliente pedir. Se citou planos, SEMPRE com preço. Se anotou algum campo nesta mensagem, confirme o dado em 1 frase, responda a dúvida, e retome o pendente. Se cpf_anotado=true, ignore o CPF por enquanto. NUNCA peça data de nascimento, CPF ou outro dado do cadastro para calcular multa, taxa ou cancelamento — a Eva não faz esse cálculo.
+- RESPONDER_PERGUNTA_E_RETOMAR: responda a pergunta com base na RAG e no TÓPICO DO CONTEXTO. Follow-ups curtos ("quanto paga?", "tem taxa?", "pra cancelar", "e a multa?") referem-se ao tópico anterior — NÃO troque cancelamento/multa por mensalidade do plano, nem o contrário, sem o cliente pedir. Se citou planos, SEMPRE com preço. Se anotou algum campo nesta mensagem, confirme o dado em 1 frase, responda a dúvida, e retome o pendente. Se cpf_anotado=true, ignore o CPF por enquanto. Não peça dado de cadastro para responder uma dúvida. Se a resposta não estiver na base nem nos dados acima, diga com naturalidade que prefere confirmar esse detalhe com a equipe.
 - RESPONDER_DUVIDA_E_RETOMAR: agendamento já feito — responda a dúvida com RAG e/ou dados da conversa (plano, horário, endereço). Termine sempre perguntando se tem mais alguma dúvida.
-- CONVERSAR_E_RETOMAR / CUMPRIMENTAR_E_RETOMAR / RETOMAR_ESCOLHA_PLANO: responda e volte ao pendente.
+- CONVERSAR_E_RETOMAR / RETOMAR_ESCOLHA_PLANO: responda ao que o cliente disse e volte ao pendente.
 - CONTINUAR_CONVERSA: responda natural e retome o pendente se houver.
 
 Escreva somente a mensagem final.

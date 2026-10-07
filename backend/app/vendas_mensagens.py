@@ -237,67 +237,6 @@ def rotulo_pendente_cadastro(pendente: str) -> str:
     return mapa.get(str(pendente or "").strip(), "")
 
 
-def informar_instalacao_e_retomar(
-    *,
-    pendente: str = "confirmacao_plano",
-    plano_nome: str = "",
-    pergunta_custo: bool = False,
-    ja_esclarecido: bool = False,
-    resposta: str = "",
-) -> str:
-    """
-    Dúvida sobre instalação + retomada do passo pendente.
-    `resposta` é o texto escrito pelo LLM para a pergunta; sem ele entra o texto fixo
-    (sem inventar 'hoje' nem fidelidade/taxa — agenda só depois do cadastro).
-    """
-    if resposta.strip():
-        corpo = resposta.strip()
-    elif ja_esclarecido:
-        corpo = (
-            "Sobre a instalação, já te expliquei — depois do cadastro você escolhe "
-            "um horário na agenda da região."
-        )
-    elif pergunta_custo:
-        corpo = (
-            "Sim! A *instalação é gratuita* — visita do técnico e configuração "
-            "já estão inclusas no plano, sem taxa extra de instalação."
-        )
-    else:
-        corpo = (
-            "Sim, a gente instala! A visita do técnico é *agendada depois do cadastro* — "
-            "aí você escolhe um horário disponível na agenda da região.\n\n"
-            "Sobre *hoje*: não consigo confirmar agora. A disponibilidade depende da equipe "
-            "e só aparece na hora de agendar."
-        )
-    nome = str(plano_nome or "").strip()
-    if pendente in {"confirmacao_plano", "escolha_plano", "lista_planos"}:
-        ref = f" o *{nome}*" if nome else " esse plano"
-        return (
-            f"{corpo}\n\n"
-            f"Quer confirmar{ref} pra gente seguir com o cadastro e depois marcar a instalação?"
-        )
-    if pendente == "aceite_termos":
-        return (
-            f"{corpo}\n\n"
-            "Primeiro preciso do seu *aceite ao termo* que enviei (responda *sim* ou *aceito*). "
-            "Depois seguimos para escolher o horário da instalação."
-        )
-    if pendente in {"escolha_horario", "confirmacao_horario"}:
-        return (
-            f"{corpo}\n\n"
-            "Quando quiser, me diga o horário que prefere na lista."
-        )
-    if pendente in {
-        "nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero", "confirmacao_dados",
-    }:
-        rotulo = rotulo_pendente_cadastro(pendente) or "Quando quiser, seguimos no próximo passo."
-        return f"{corpo}\n\n{rotulo}"
-    return (
-        f"{corpo}\n\n"
-        "Se quiser, seguimos no passo em que paramos."
-    )
-
-
 def informar_precos_planos(
     planos: list[dict[str, Any]],
     *,
@@ -806,40 +745,6 @@ def esclarecer_promocao_plano(plano: dict[str, Any] | None = None) -> str:
     return (
         f"Sobre o *{nome}*: a condição promocional tem prazo definido na oferta que te mostrei. "
         "Quer seguir com esse plano ou prefere ver outra opção?"
-    )
-
-
-def responder_sem_base_rag(pendente: str = "", *, topico: str = "", resposta: str = "") -> str:
-    retomada = ""
-    mapa = {
-        "confirmacao_plano": "a confirmação do plano",
-        "escolha_plano": "a escolha do plano",
-        "lista_planos": "a escolha do plano",
-        "escolha_horario": "o horário de instalação",
-        "localizacao": "sua cidade e bairro",
-        "nome": "seu cadastro",
-        "cpf": "seu cadastro",
-        "email": "seu cadastro",
-        "telefone": "seu cadastro",
-        "duvidas": "o encerramento do atendimento",
-    }
-    if pendente in mapa:
-        retomada = f"\n\nQuando quiser, seguimos com {mapa[pendente]}."
-    elif pendente in {"data_nascimento", "cep", "rua", "numero", "confirmacao_dados"}:
-        retomada = "\n\nQuando quiser, seguimos com seu cadastro."
-    if pendente == "duvidas":
-        retomada = "\n\nMais alguma dúvida antes de encerrar?"
-    if resposta.strip():
-        # Resposta escrita pelo LLM para a pergunta (com o que há de confirmado) + retomada
-        return f"{resposta.strip()}{retomada}"
-    extra_topico = ""
-    if topico == "preco_plano":
-        extra_topico = " Sobre preço, posso te mostrar os planos disponíveis na região."
-    return (
-        "Boa pergunta! Não tenho essa informação confirmada aqui agora — "
-        "prefiro não te passar algo impreciso."
-        f"{extra_topico}{retomada}\n\n"
-        "Se precisar de detalhe técnico ou comercial específico, posso encaminhar para a equipe."
     )
 
 

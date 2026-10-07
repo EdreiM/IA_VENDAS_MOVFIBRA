@@ -76,6 +76,19 @@ def _mensagem_de_conteudo(payload: dict[str, Any]) -> str:
     return ""
 
 
+def _audio_url(payload: dict[str, Any]) -> str | None:
+    """Endereço do áudio quando a mensagem é um áudio sem texto (para transcrever)."""
+    content = payload.get("content")
+    if content is not None and str(content).strip():
+        return None
+    for att in _attachments(payload):
+        if str(att.get("file_type") or "").lower() == "audio":
+            url = str(att.get("data_url") or "").strip()
+            if url:
+                return url
+    return None
+
+
 def _inbox_id(payload: dict[str, Any]) -> str | None:
     for candidate in (
         payload.get("inboxId"),
@@ -136,6 +149,7 @@ def _normalizar_pre_parseado(payload: dict[str, Any]) -> dict[str, Any] | None:
             payload.get("message_id") or payload.get("messageId") or payload.get("id") or ""
         ).strip()
         or None,
+        "audio_url": str(payload.get("audio_url") or payload.get("audioUrl") or "").strip() or None,
     }
 
 
@@ -242,6 +256,7 @@ def analisar_evento_chatwoot(payload: dict[str, Any]) -> dict[str, Any]:
         "inbox_id": inbox,
         "event": event or "message_created",
         "message_id": str(raw.get("id") or raw.get("message_id") or "").strip() or None,
+        "audio_url": _audio_url(raw),
     }
     base.update(processavel=True, evento=evento, motivo=None)
     return base

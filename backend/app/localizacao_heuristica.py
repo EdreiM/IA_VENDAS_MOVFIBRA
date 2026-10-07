@@ -66,6 +66,20 @@ def _aliases_cidades_atendidas() -> set[str]:
 CIDADES_CONHECIDAS = _aliases_cidades_atendidas()
 
 
+def cidade_atendida(nome: str) -> bool:
+    """O nome é uma das cidades em que a MOV atende (lista acima)."""
+    chave = re.sub(r"[\s/,\-]+pa$", "", _norm(nome)).strip()
+    return chave in CIDADES_ATENDIDAS_CANONICAS
+
+
+def cidades_atendidas() -> list[str]:
+    return sorted(CIDADES_ATENDIDAS_CANONICAS.values())
+
+
+def bairro_conhecido(nome: str) -> bool:
+    return _norm(nome) in BAIRROS_CONHECIDOS
+
+
 def _canonical_cidade(norm: str) -> str:
     chave = re.sub(r"\s+pa$", "", _norm(norm)).strip()
     return CIDADES_ATENDIDAS_CANONICAS.get(chave, _titulo(norm))
@@ -142,7 +156,7 @@ _RE_SAUDACAO = re.compile(
     r"^(?:oi+e?|ola+|opa|e\s*ai|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+(?:bem|bom|certo))\b"
 )
 _PALAVRAS_CONVERSA = frozenset({
-    "sim", "nao", "ok", "blz", "obrigado", "obrigada",
+    "sim", "nao", "ok", "blz", "obrigado", "obrigada", "isso", "esse", "essa", "ele", "ela",
     "quero", "queria", "gostaria", "preciso", "pode", "posso", "tem",
     "voce", "voces", "vc", "vcs", "atende", "atendem",
     "qual", "quais", "quanto", "como", "quando",
@@ -293,7 +307,8 @@ def extrair_clarificacao_localizacao(mensagem: str) -> dict[str, str] | None:
     if m:
         nome = next((g for g in m.groups() if g), "").strip()
         nome = _limpar_nome_local(nome, preferir="bairro")
-        if nome and _norm(nome) not in {"bairro", "cidade"}:
+        # "sim, é o bairro" / "isso é o bairro" responde a uma pergunta — não nomeia o lugar
+        if nome and _norm(nome) not in {"bairro", "cidade"} and not _parece_conversa(nome):
             return {"bairro": nome, "papel": "bairro"}
 
     # "cidade santarem" sozinho (sem segundo lugar)
@@ -317,7 +332,8 @@ def extrair_clarificacao_localizacao(mensagem: str) -> dict[str, str] | None:
                         "papel": "par",
                     }
         nome = _limpar_nome_local(nome, preferir="cidade")
-        if nome and _norm(nome) not in {"bairro", "cidade"}:
+        # "não, é a cidade" responde a uma pergunta — "Nao" não é nome de cidade
+        if nome and _norm(nome) not in {"bairro", "cidade"} and not _parece_conversa(nome):
             return {"cidade": nome, "papel": "cidade"}
 
     return None
@@ -363,7 +379,7 @@ def aplicar_heuristica_localizacao(
         return flags
 
     fase_ok = fase in {"inicio", "viabilidade", "sem_cobertura", "vendas"}
-    aguardando_ok = aguardando in {"localizacao", "confirmar_bairro"}
+    aguardando_ok = aguardando in {"localizacao", "confirmar_bairro", "confirmar_local"}
     if not fase_ok and not aguardando_ok:
         return flags
     if fase == "vendas" and not aguardando_ok:
@@ -400,6 +416,9 @@ def aplicar_heuristica_localizacao(
 
     if clar and clar.get("papel") == "cidade":
         nome = clar["cidade"]
+        # Mesmo nome que o LLM leu: fica a grafia dele, com acento ("Óbidos", não "Obidos")
+        if c_llm and _norm(c_llm) == _norm(nome):
+            nome = c_llm
         dados.cidade = nome
         if _texto(dados.bairro) and _norm(dados.bairro) == _norm(nome):
             dados.bairro = ""

@@ -42,6 +42,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from app.interpreter import _strip_markdown, interpretar
 from app.models import CAMPOS_DADOS
+from app import conversa
 from app.parser import parse_interpretacao
 from app.resolver import normalizar_campo
 
@@ -101,10 +102,26 @@ def _valor_confere(campo: str, esperado: str, obtido: str) -> bool:
 
 
 def conferir(
-    esperado: dict[str, Any], eventos: list[str], dados: dict[str, str]
+    esperado: dict[str, Any],
+    eventos: list[str],
+    dados: dict[str, str],
+    leitura: dict[str, str] | None = None,
 ) -> list[str]:
-    """Lista de problemas; vazia = acertou."""
+    """Lista de problemas; vazia = acertou.
+
+    `leitura` traz a situação e a nota do turno (ver app/conversa.py); só é conferida
+    quando o caso define `situacao` ou `tem_nota`.
+    """
     problemas: list[str] = []
+    if leitura is not None:
+        if "situacao" in esperado and leitura.get("situacao", "") != esperado["situacao"]:
+            problemas.append(
+                f"situacao: esperado {esperado['situacao']!r}, veio {leitura.get('situacao', '')!r}"
+            )
+        if "tem_nota" in esperado and bool(leitura.get("nota")) != bool(esperado["tem_nota"]):
+            problemas.append(
+                f"nota: {'faltou' if esperado['tem_nota'] else 'não devia ter'} ({leitura.get('nota', '')!r})"
+            )
     for ev in esperado.get("eventos") or []:
         if ev not in eventos:
             problemas.append(f"faltou evento {ev}")
@@ -129,6 +146,12 @@ def avaliar_caso(caso: dict[str, Any]) -> dict[str, Any]:
     raw = interpretar(mensagem, estado, historico=historico)
     eventos_llm, dados_llm = _bruto_do_llm(raw)
     final = parse_interpretacao(raw, mensagem, estado)
+    # A situação que vale no atendimento é a do modelo completada pelas regras
+    leitura_llm = {"situacao": final.situacao, "nota": final.nota}
+    leitura_final = {
+        "situacao": conversa.classificar(mensagem, estado, final.situacao),
+        "nota": final.nota,
+    }
     eventos_final = list(final.eventos)
     dados_final = final.dados.model_dump()
 
@@ -142,11 +165,13 @@ def avaliar_caso(caso: dict[str, Any]) -> dict[str, Any]:
         "dados_final": {k: v for k, v in dados_final.items() if v},
         "pergunta": final.pergunta,
         "confianca": final.confianca,
+        "situacao": leitura_final["situacao"],
+        "nota": final.nota,
     }
     esperado = caso.get("esperado")
     if isinstance(esperado, dict):
-        out["problemas_llm"] = conferir(esperado, eventos_llm, dados_llm)
-        out["problemas_final"] = conferir(esperado, eventos_final, dados_final)
+        out["problemas_llm"] = conferir(esperado, eventos_llm, dados_llm, leitura_llm)
+        out["problemas_final"] = conferir(esperado, eventos_final, dados_final, leitura_final)
     registrado = (caso.get("registrado") or {}).get("eventos")
     if isinstance(registrado, list):
         out["eventos_registrados"] = registrado

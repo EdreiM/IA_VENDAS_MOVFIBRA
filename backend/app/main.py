@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import traceback
 from typing import Any
 
@@ -492,6 +493,28 @@ def chat_endpoint(body: ChatIn):
     return payload
 
 
+def _transcrever_se_for_audio(evento: dict[str, Any]) -> list[str]:
+    """Troca "[audio]" pelo texto falado em `evento["mensagem"]`; devolve os sinais do turno."""
+    from app.conversa import tipo_de_midia
+
+    url = str(evento.get("audio_url") or "").strip()
+    if not url or tipo_de_midia(str(evento.get("mensagem") or "")) != "audio":
+        return []
+    # Conversa já com a equipe: a Eva não responde, então não há por que transcrever
+    from app import db
+
+    if str(db.carregar_ou_criar_estado(evento["id_cliente"]).get("fase") or "") == "transferido":
+        return []
+    from app.transcricao import transcrever_audio
+
+    resultado = transcrever_audio(url)
+    if resultado.get("ok"):
+        evento["mensagem"] = str(resultado["texto"])
+        return ["audio_transcrito"]
+    logging.getLogger(__name__).info("Áudio não transcrito: %s", resultado.get("motivo"))
+    return ["audio_nao_transcrito"]
+
+
 @app.post("/webhooks/chatwoot")
 async def webhook_chatwoot(
     request: Request,
@@ -549,6 +572,10 @@ async def webhook_chatwoot(
             "id_cliente": id_cliente,
         }
 
+    # Áudio do cliente: transcreve antes de interpretar. Se não der, segue como "[audio]"
+    # e a Eva pede para ele escrever.
+    sinais_extra = await asyncio.to_thread(_transcrever_se_for_audio, evento)
+
     def _process(cid: str, msg: str):
         return process_message(
             cid,
@@ -556,6 +583,7 @@ async def webhook_chatwoot(
             conversation_id=evento.get("conversation_id"),
             contact_id=evento.get("contact_id"),
             message_id=message_id,
+            sinais_extra=sinais_extra,
         )
 
     enviar_resposta = True
@@ -672,6 +700,33 @@ def metrics_conversas(
     return {
         "items": metrics.conversas(limite, unidade_id=unidade_id, status=status),
     }
+
+
+@app.get("/metrics/atencao")
+def metrics_atencao(
+    dias: int = 7,
+    limite: int = 60,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Onde a conversa não fluiu: travas, objeções, base sem resposta, transferências."""
+    _exigir_admin(authorization, x_admin_token)
+    return metrics.atencao(dias, limite)
+
+
+@app.post("/admin/perguntas-sem-resposta/{pergunta_id}/resolver")
+def admin_resolver_pergunta_sem_resposta(
+    pergunta_id: int,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Marca a pergunta como resolvida (a resposta já foi incluída na base de conhecimento)."""
+    _exigir_admin(authorization, x_admin_token)
+    from app.db import marcar_pergunta_resolvida
+
+    if not marcar_pergunta_resolvida(pergunta_id):
+        raise HTTPException(status_code=404, detail="Pergunta não encontrada")
+    return {"ok": True, "id": pergunta_id}
 
 
 @app.get("/metrics/turnos/{id_cliente}")

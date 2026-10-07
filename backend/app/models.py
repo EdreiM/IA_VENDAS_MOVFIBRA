@@ -99,6 +99,9 @@ class Interpretacao(BaseModel):
     campos_corrigidos: list[str] = Field(default_factory=list)
     pergunta: str = ""
     confianca: float = 0.0
+    # Como o cliente reagiu ao passo atual (ver app/conversa.py) e o que vale lembrar depois
+    situacao: str = ""
+    nota: str = ""
 
 
 class Decisao(BaseModel):

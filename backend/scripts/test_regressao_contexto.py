@@ -48,6 +48,44 @@ def _assert(cond: bool, msg: str) -> None:
         raise AssertionError(msg)
 
 
+_FRASES_DE_BLOCO_FIXO = ("não calcula", "nao calcula", "boa pergunta", "já te expliquei", "entendi sua dúvida")
+
+
+def _duvida_respondida_pelo_llm(dec, estado: dict, *, sinal_retomada: str) -> str:
+    """Dúvidas são respondidas pelo LLM com a RAG — não existe mais bloco de texto pronto.
+
+    Confere que a resposta do LLM é a que vai para o cliente, que a mensagem termina
+    retomando o atendimento, e que sem LLM não sai regra comercial nem frase de robô.
+    Devolve o texto gerado sem LLM (o pior caso) para checagens extras do teste.
+    """
+    from unittest.mock import patch
+
+    from app import response
+
+    resposta_llm = "RESPOSTA-NATURAL-DO-LLM sobre a dúvida do cliente."
+    with patch.object(response, "chat", lambda *a, **k: resposta_llm):
+        com_llm = response.gerar_resposta(dec, estado)
+    _assert(resposta_llm in com_llm, f"a resposta do LLM não foi usada: {com_llm}")
+
+    def _sem_llm(*a, **k):
+        raise RuntimeError("LLM fora do ar")
+
+    with patch.object(response, "chat", _sem_llm):
+        sem_llm = response.gerar_resposta(dec, estado)
+    for txt in (com_llm, sem_llm):
+        low = txt.casefold()
+        for frase in _FRASES_DE_BLOCO_FIXO:
+            _assert(frase not in low, f"frase de bloco fixo {frase!r}: {txt}")
+        sinais = response._SINAIS_DE_RETOMADA.get(sinal_retomada) or ()
+        _assert(
+            not sinais or any(s in low[-220:] for s in sinais),
+            f"não retomou o atendimento ({sinal_retomada}): {txt}",
+        )
+    for regra in ("proporcional", "gratuita", "12 meses"):
+        _assert(regra not in sem_llm.casefold(), f"regra comercial fixa no código ({regra}): {sem_llm}")
+    return sem_llm
+
+
 def _turno(estado: dict, msg: str, llm: dict) -> tuple[dict, object]:
     interp = parse_interpretacao(_raw(llm), msg, estado)
     ctx = enriquecer_pergunta(
@@ -240,9 +278,7 @@ def test_cadastro_instalacao_gratis() -> None:
         {"eventos": ["PERGUNTA"], "pergunta": msg, "confianca": 0.9},
     )
     _assert(dec.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR", dec.objetivo_resposta)
-    txt = gerar_resposta(dec, estado)
-    _assert("grátis" in txt.casefold() or "gratuita" in txt.casefold(), txt)
-    _assert("sobre *hoje*" not in txt.casefold() and "sobre hoje" not in txt.casefold(), txt)
+    txt = _duvida_respondida_pelo_llm(dec, estado, sinal_retomada="data_nascimento")
     _assert("data de nascimento" in txt.casefold(), txt)
 
 
@@ -332,12 +368,10 @@ def test_cancelamento_followup_nao_pede_data_nascimento_para_calcular() -> None:
         {"eventos": ["PERGUNTA"], "dados": {}, "confianca": 0.9},
     )
     _assert(dec.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR", dec.objetivo_resposta)
-    txt = gerar_resposta(dec, estado)
+    txt = _duvida_respondida_pelo_llm(dec, estado, sinal_retomada=str(dec.aguardando or ""))
     low = txt.casefold()
-    _assert("nao calcula" in low or "não calcula" in low, txt)
     _assert("para calcular" not in low, txt)
     _assert("preciso da sua data de nascimento" not in low, txt)
-    _assert("proporcional" in low, txt)
 
 
 def test_cadastro_cpf_mais_pergunta() -> None:
@@ -1548,13 +1582,12 @@ def test_cadastro_email_telefone_mais_cancelamento() -> None:
         },
     )
     _assert(dec.objetivo_resposta == "INFORMAR_CANCELAMENTO_E_RETOMAR", dec.objetivo_resposta)
-    txt = gerar_resposta(
+    txt = _duvida_respondida_pelo_llm(
         dec,
         {**estado, **(dec.atualizar_dados or {}), "email": "edreiteste@gmail.com", "telefone": "93992219098"},
+        sinal_retomada=str(dec.aguardando or ""),
     )
-    low = txt.casefold()
-    _assert("nao calcula" in low or "não calcula" in low or "proporcional" in low, txt)
-    _assert("para calcular" not in low, txt)
+    _assert("para calcular" not in txt.casefold(), txt)
 
 
 def test_esclarecer_promo_6950_nao_50() -> None:
@@ -1589,8 +1622,10 @@ def test_termos_cancelamento_explica_sem_opcoes_vagas() -> None:
         {"eventos": ["PERGUNTA"], "pergunta": "Mas tenho que pagar se eu cancelar?", "confianca": 0.9},
     )
     _assert(dec.objetivo_resposta == "RESPONDER_DUVIDA_E_RETOMAR_TERMOS", dec.objetivo_resposta)
-    txt = gerar_resposta(dec, {**base, **(dec.contexto_resposta or {})})
-    _assert("multa" in txt.casefold(), txt)
+    txt = _duvida_respondida_pelo_llm(
+        dec, {**base, **(dec.contexto_resposta or {})}, sinal_retomada="aceite_termos"
+    )
+    _assert("aceito" in txt.casefold(), txt)
     _assert("opções" not in txt.casefold() and "opcoes" not in txt.casefold(), txt)
 
 
@@ -2336,9 +2371,8 @@ def test_plano_nao_encontrado_instalacao_redireciona() -> None:
     )
     _assert(dec.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR", dec.objetivo_resposta)
     _assert(dec.fase == "cadastro", dec.fase)
-    txt = gerar_resposta(dec, estado)
+    txt = _duvida_respondida_pelo_llm(dec, estado, sinal_retomada=str(dec.aguardando or ""))
     _assert("nao encontrei um plano" not in txt.casefold(), txt)
-    _assert("instala" in txt.casefold(), txt)
 
 
 def test_email_nao_herda_topico_instalacao() -> None:
@@ -2465,13 +2499,14 @@ def test_plano_bloqueado_pos_cadastro() -> None:
             "confianca": 0.9,
         },
     )
-    _assert(
-        dec.objetivo_resposta == "INFORMAR_PLANO_BLOQUEADO_POS_CADASTRO",
-        dec.objetivo_resposta,
-    )
+    # Antes a Eva perguntava "posso te encaminhar para um atendente?" e o "sim" do cliente
+    # era lido como aceite dos termos. Agora ela já encaminha.
+    _assert(dec.acao == "TRANSFERIR_HUMANO", dec.acao)
+    _assert(dec.fase == "transferido", dec.fase)
+    _assert("trocar de plano" in dec.motivo, dec.motivo)
     txt = gerar_resposta(dec, estado)
     _assert("atendente" in txt.casefold() or "equipe" in txt.casefold(), txt)
-    _assert("super+" in txt.casefold(), txt)
+    _assert("?" not in txt, txt)
 
 
 def test_alteracao_bloqueada_pos_cadastro() -> None:
@@ -2493,12 +2528,13 @@ def test_alteracao_bloqueada_pos_cadastro() -> None:
             "confianca": 0.9,
         },
     )
-    _assert(
-        dec.objetivo_resposta == "INFORMAR_ALTERACAO_BLOQUEADA_POS_CADASTRO",
-        dec.objetivo_resposta,
-    )
+    # Mesma razão do teste acima: encaminha em vez de perguntar se pode encaminhar
+    _assert(dec.acao == "TRANSFERIR_HUMANO", dec.acao)
+    _assert(dec.fase == "transferido", dec.fase)
+    _assert("alterar dados" in dec.motivo, dec.motivo)
     txt = gerar_resposta(dec, estado)
     _assert("atendente" in txt.casefold() or "equipe" in txt.casefold(), txt)
+    _assert("?" not in txt, txt)
 
 
 def test_troca_plano_retoma_cadastro() -> None:
