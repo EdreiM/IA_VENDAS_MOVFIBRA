@@ -154,7 +154,9 @@ ROTULO_SINAL = {
     "nao_entendeu": "Não entendeu o pedido",
     "espera": "Pediu um tempo",
     "adiamento": "Quis deixar para depois",
-    "midia": "Mandou áudio ou arquivo",
+    "midia": "Mandou áudio ou arquivo que a Eva não leu",
+    "audio_transcrito": "Áudio transcrito",
+    "audio_nao_transcrito": "Áudio que não deu para transcrever",
     "repeticao": "Respondeu outra coisa",
     "esclarecimento": "Eva pediu esclarecimento",
     "sem_base": "Base de conhecimento sem resposta",
@@ -168,7 +170,9 @@ ROTULO_SINAL = {
 }
 
 # Sinais que não são problema — ficam fora do total de turnos com atenção
-_SINAIS_NEUTROS = {"espera", "voltou_apos_encerrar", "retomou_de_onde_parou", "reenvio_termos"}
+_SINAIS_NEUTROS = {
+    "espera", "voltou_apos_encerrar", "retomou_de_onde_parou", "reenvio_termos", "audio_transcrito",
+}
 
 
 def _sinais_do_turno(row: dict[str, Any]) -> list[str]:

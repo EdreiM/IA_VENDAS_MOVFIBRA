@@ -296,7 +296,7 @@ _GUIA_SITUACAO: dict[str, str] = {
         "precisa e para quê, com um exemplo do formato se ajudar."
     ),
     "MIDIA": (
-        "O cliente mandou {midia} e por aqui você não consegue {acao_midia}. Diga isso com "
+        "O cliente mandou {midia} e você não conseguiu {acao_midia}. Diga isso com "
         "naturalidade, sem pedir desculpas longas, e peça para ele escrever."
     ),
     "REPETICAO": (
@@ -439,7 +439,7 @@ def _conversar(
         midia = str(conversa.get("midia") or "audio")
         guia = guia.format(
             midia={"audio": "um áudio", "image": "uma imagem", "video": "um vídeo"}.get(midia, "um arquivo"),
-            acao_midia="ouvir áudio" if midia == "audio" else "abrir esse tipo de arquivo",
+            acao_midia="ouvir esse áudio" if midia == "audio" else "abrir esse tipo de arquivo",
         )
     if conversa.get("objetivo_original") == "CLARIFICAR_INTENCAO" and situacao == "REPETICAO":
         guia = (
@@ -689,7 +689,7 @@ def _resposta_de_conversa(
 
 def _aviso_midia(midia: str) -> str:
     if midia == "audio":
-        return "Por aqui eu não consigo ouvir áudio. Pode me escrever, por favor?"
+        return "Não consegui ouvir esse áudio por aqui. Pode me escrever, por favor?"
     return "Não consegui abrir o que você mandou por aqui. Pode me escrever, por favor?"
 
 

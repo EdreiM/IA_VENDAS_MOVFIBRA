@@ -365,6 +365,7 @@ def process_message(
     conversation_id: str | None = None,
     contact_id: str | None = None,
     message_id: str | None = None,
+    sinais_extra: list[str] | None = None,
 ) -> TurnoResultado:
     t0 = time.perf_counter()
     mensagem = (mensagem or "").strip()
@@ -556,7 +557,11 @@ def process_message(
     rag = ctx_final.get("rag") if isinstance(ctx_final.get("rag"), dict) else {}
     rag_hit = bool(rag.get("encontrado") or rag.get("chunks") or rag.get("resposta"))
 
-    sinais = [str(s) for s in [*sinais_do_turno, *(ctx_final.get("sinais") or [])] if s]
+    sinais = [
+        str(s)
+        for s in [*(sinais_extra or []), *sinais_do_turno, *(ctx_final.get("sinais") or [])]
+        if s
+    ]
     if decisao.objetivo_resposta == "CLARIFICAR_INTENCAO":
         sinais.append("esclarecimento")
     if decisao.acao == "AGUARDAR":

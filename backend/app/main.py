@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import traceback
 from typing import Any
 
@@ -492,6 +493,28 @@ def chat_endpoint(body: ChatIn):
     return payload
 
 
+def _transcrever_se_for_audio(evento: dict[str, Any]) -> list[str]:
+    """Troca "[audio]" pelo texto falado em `evento["mensagem"]`; devolve os sinais do turno."""
+    from app.conversa import tipo_de_midia
+
+    url = str(evento.get("audio_url") or "").strip()
+    if not url or tipo_de_midia(str(evento.get("mensagem") or "")) != "audio":
+        return []
+    # Conversa já com a equipe: a Eva não responde, então não há por que transcrever
+    from app import db
+
+    if str(db.carregar_ou_criar_estado(evento["id_cliente"]).get("fase") or "") == "transferido":
+        return []
+    from app.transcricao import transcrever_audio
+
+    resultado = transcrever_audio(url)
+    if resultado.get("ok"):
+        evento["mensagem"] = str(resultado["texto"])
+        return ["audio_transcrito"]
+    logging.getLogger(__name__).info("Áudio não transcrito: %s", resultado.get("motivo"))
+    return ["audio_nao_transcrito"]
+
+
 @app.post("/webhooks/chatwoot")
 async def webhook_chatwoot(
     request: Request,
@@ -549,6 +572,10 @@ async def webhook_chatwoot(
             "id_cliente": id_cliente,
         }
 
+    # Áudio do cliente: transcreve antes de interpretar. Se não der, segue como "[audio]"
+    # e a Eva pede para ele escrever.
+    sinais_extra = await asyncio.to_thread(_transcrever_se_for_audio, evento)
+
     def _process(cid: str, msg: str):
         return process_message(
             cid,
@@ -556,6 +583,7 @@ async def webhook_chatwoot(
             conversation_id=evento.get("conversation_id"),
             contact_id=evento.get("contact_id"),
             message_id=message_id,
+            sinais_extra=sinais_extra,
         )
 
     enviar_resposta = True

@@ -30,6 +30,7 @@ python scripts/test_varredura_frases.py
 python scripts/test_auditoria_interpretacao.py
 python scripts/test_imports_internos.py
 python scripts/test_conversa_natural.py
+python scripts/test_transcricao.py
 ```
 
 `test_conversa_natural.py` cobre a conversa no meio do funil (seção abaixo): pedido de tempo, "não tenho esse dado", objeção de preço, áudio, quem já é cliente, alteração depois do cadastro, reenvio dos termos, transferência quando trava e cliente que volta depois do encerramento.
@@ -61,7 +62,7 @@ O interpretador devolve dois campos a mais: `situacao` e `nota`. As regras de `c
 | `IMPEDIMENTO` | "não tenho e-mail", "não sei meu CEP" | Ajuda com um caminho prático. Conta 2. |
 | `OBJECAO_PRECO` | "tá caro", "a concorrente faz por 99" | Responde com os fatos do plano, da RAG e os planos mais em conta do catálogo. Conta 1. |
 | `NAO_ENTENDEU` | "não entendi", "como assim?" | Explica de outro jeito. Conta 1. |
-| `MIDIA` | áudio, imagem ou arquivo sem texto (`[audio]`) | Avisa que não consegue ouvir/abrir e pede para escrever. Conta 1. |
+| `MIDIA` | imagem ou arquivo sem texto, ou áudio que não deu para transcrever (`[audio]`) | Avisa que não conseguiu ouvir/abrir e pede para escrever. Conta 1. |
 | `SUPORTE` | "minha internet caiu, já sou cliente", "segunda via do boleto" | Transfere para a equipe na hora. |
 | (nenhuma) | "kkk", comentário solto | Responde em uma frase e retoma. Conta 1. |
 
@@ -73,6 +74,14 @@ O interpretador devolve dois campos a mais: `situacao` e `nota`. As regras de `c
 - **Sem LLM:** `_conversar` devolve vazio e sai o texto fixo de sempre.
 
 As orientações de `_GUIA_SITUACAO` dizem como conversar; não trazem regra comercial. Os fatos continuam vindo do catálogo de planos e da RAG.
+
+## Áudio do cliente
+
+Áudio que chega pelo Chatwoot é transcrito antes de a Eva interpretar (`app/transcricao.py`): o anexo (`data_url`) é baixado e enviado à API de transcrição com a chave de **Config IA → API Key transcrição de áudio**. Chave `gsk_…` usa o Whisper da Groq (`whisper-large-v3-turbo`); as demais usam a OpenAI (`whisper-1`). O texto transcrito entra no atendimento como se o cliente tivesse digitado, e é ele que aparece no histórico.
+
+Sem chave, com falha na API, áudio mudo ou maior que 20 MB, a mensagem segue como `[audio]` e a Eva pede para o cliente escrever (situação `MIDIA`). Conversa já transferida para a equipe não é transcrita. Os turnos ficam marcados com `audio_transcrito` ou `audio_nao_transcrito` nos Pontos de atenção.
+
+`scripts/test_transcricao.py` cobre esse fluxo sem rede.
 
 ## Pontos de atenção (medição)
 

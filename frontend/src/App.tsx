@@ -2669,8 +2669,9 @@ export default function App() {
                   autoComplete="off"
                 />
                 <small className="field-hint">
-                  Reserva para quando o cliente mandar áudio: transcreve pra texto antes da Eva
-                  processar. Pode ser Groq/Whisper — implementação em seguida.
+                  Quando o cliente manda áudio, ele é transcrito para texto antes de a Eva
+                  processar. Chave Groq (gsk_…) usa o Whisper da Groq; outras usam a OpenAI. Sem
+                  chave, a Eva pede para o cliente escrever.
                 </small>
               </label>
 
