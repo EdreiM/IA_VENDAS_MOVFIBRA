@@ -243,12 +243,16 @@ def informar_instalacao_e_retomar(
     plano_nome: str = "",
     pergunta_custo: bool = False,
     ja_esclarecido: bool = False,
+    resposta: str = "",
 ) -> str:
     """
-    Resposta fixa sobre instalação — sem inventar 'hoje' nem fidelidade/taxa.
-    Agenda só depois do cadastro.
+    Dúvida sobre instalação + retomada do passo pendente.
+    `resposta` é o texto escrito pelo LLM para a pergunta; sem ele entra o texto fixo
+    (sem inventar 'hoje' nem fidelidade/taxa — agenda só depois do cadastro).
     """
-    if ja_esclarecido:
+    if resposta.strip():
+        corpo = resposta.strip()
+    elif ja_esclarecido:
         corpo = (
             "Sobre a instalação, já te expliquei — depois do cadastro você escolhe "
             "um horário na agenda da região."
@@ -805,7 +809,7 @@ def esclarecer_promocao_plano(plano: dict[str, Any] | None = None) -> str:
     )
 
 
-def responder_sem_base_rag(pendente: str = "", *, topico: str = "") -> str:
+def responder_sem_base_rag(pendente: str = "", *, topico: str = "", resposta: str = "") -> str:
     retomada = ""
     mapa = {
         "confirmacao_plano": "a confirmação do plano",
@@ -825,6 +829,9 @@ def responder_sem_base_rag(pendente: str = "", *, topico: str = "") -> str:
         retomada = "\n\nQuando quiser, seguimos com seu cadastro."
     if pendente == "duvidas":
         retomada = "\n\nMais alguma dúvida antes de encerrar?"
+    if resposta.strip():
+        # Resposta escrita pelo LLM para a pergunta (com o que há de confirmado) + retomada
+        return f"{resposta.strip()}{retomada}"
     extra_topico = ""
     if topico == "preco_plano":
         extra_topico = " Sobre preço, posso te mostrar os planos disponíveis na região."

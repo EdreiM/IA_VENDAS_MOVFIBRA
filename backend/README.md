@@ -37,6 +37,12 @@ python scripts/test_imports_internos.py
 
 `test_varredura_frases.py` passa frases comuns ("tá bom", "pera aí", "não entendi", "tá caro") por todos os estados do funil e falha se alguma for gravada como dado do cliente ou fizer o funil avançar. Ele bloqueia toda chamada HTTP: o `.env` local pode apontar para o n8n real, então qualquer simulação de fluxo fora das suítes deve fazer o mesmo.
 
+## Respostas a dúvidas
+
+Dúvidas de cancelamento, instalação, da etapa dos termos e as que não têm base de conhecimento são respondidas pelo LLM a cada pergunta (`response._resposta_inteligente`): ele recebe a pergunta, a conversa e os fatos confirmados, responde só o que foi perguntado e não repete o que já explicou. A continuação do atendimento (pedir o próximo dado, o aceite) é acrescentada pelo código, sempre igual.
+
+O que a Eva pode afirmar sobre cada assunto está em `app/duvidas_fatos.py`; para mudar uma informação comercial (fidelidade, multa, instalação), edite esse arquivo. Se o LLM falhar, entram os textos fixos antigos.
+
 ## Avaliação do interpretador (LLM real)
 
 Mede o que o modelo configurado realmente devolve — os testes acima não medem isso. Usa a chave e o modelo do painel (Config IA).

@@ -1467,8 +1467,10 @@ def test_termos_sim_apos_cancelamento_nao_ativa() -> None:
         dec.objetivo_resposta,
     )
     txt = gerar_resposta(dec, base)
-    _assert("multa" in txt.casefold(), txt)
+    # A multa já foi explicada no turno anterior: aqui só se pede o aceite, sem repetir
+    # a explicação inteira (antes o teste exigia o texto da multa de novo).
     _assert("aceito" in txt.casefold(), txt)
+    _assert("proporcional" not in txt.casefold(), f"repetiu a explicação da multa: {txt}")
 
 
 def test_termos_instalar_hoje_nao_lista_planos() -> None:

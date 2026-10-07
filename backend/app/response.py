@@ -78,6 +78,7 @@ Estilo:
 - Confirme o que o cliente acabou de dizer antes de pedir o próximo passo
 - Não pareça menu, formulário, FAQ ou robô (evite "Opção 1", "Digite sim ou não", listas numeradas longas)
 - Varie um pouco as aberturas; não use sempre a mesma frase-clichê
+- Não repita uma explicação que você já deu na conversa; se o assunto voltar, responda só o ponto novo, com outras palavras
 - Não se apresente de novo se cumprimento_feito=true
 - Se houver correção, diga que atualizou sem drama
 - Gere SOMENTE a mensagem ao cliente
@@ -96,6 +97,78 @@ def _system_prompt() -> str:
         else "Não use emojis nas respostas."
     )
     return SYSTEM.format(nome_ia=nome, tom_voz=tom or "profissional e acolhedora", emoji_rule=emoji_rule)
+
+
+def _resposta_inteligente(
+    decisao: Decisao,
+    estado: dict[str, Any],
+    *,
+    historico: list[dict[str, str]] | None,
+    mensagem_cliente: str,
+    topico: str = "",
+) -> str:
+    """Resposta à dúvida do cliente, escrita na hora a partir dos fatos confirmados.
+
+    Substitui os blocos de texto fixos: responde o que foi perguntado e, com o
+    histórico, não repete o que já foi explicado. Devolve "" se o LLM falhar — quem
+    chama cai no texto fixo. A continuação do atendimento (pedir o próximo dado, o
+    aceite etc.) NÃO é escrita aqui: o código acrescenta depois, de forma fixa.
+    """
+    from app.duvidas_fatos import fatos_do_topico
+
+    ctx = decisao.contexto_resposta or {}
+    original = str(ctx.get("pergunta_original") or mensagem_cliente or "").strip()
+    pergunta = str(decisao.pergunta or original).strip()
+    if not pergunta:
+        return ""
+
+    fatos = fatos_do_topico(topico)
+    rag_txt = formatar_contexto_rag(ctx.get("rag") or {})
+    if rag_txt and _rag_parece_catalogo_planos(rag_txt):
+        rag_txt = ""
+    plano = _plano_do_estado(estado, ctx)
+    plano_txt = ""
+    if plano.get("nome"):
+        plano_txt = (
+            f"{plano.get('nome')} — {_fmt_money(plano.get('valor'))}/mês. "
+            f"{plano.get('beneficios') or plano.get('descricao') or ''}"
+        ).strip()
+
+    hist_txt = ""
+    for h in historico or []:
+        quem = "Cliente" if h.get("remetente") == "cliente" else "Eva"
+        hist_txt += f"{quem}: {h.get('mensagem')}\n"
+
+    user = f"""Responda UMA dúvida do cliente, no meio do atendimento.
+
+DÚVIDA: {pergunta}
+MENSAGEM COMO O CLIENTE ESCREVEU: {original or pergunta}
+
+FATOS CONFIRMADOS:
+{fatos or '(nenhum fato específico para este assunto)'}
+
+BASE DE CONHECIMENTO:
+{rag_txt or '(nenhum trecho encontrado)'}
+
+PLANO DO CLIENTE: {plano_txt or '(ainda não escolhido)'}
+
+CONVERSA ATÉ AQUI:
+{hist_txt or '(sem histórico)'}
+
+Como responder:
+- Responda exatamente o que foi perguntado, em 1 a 3 frases. Se for pergunta de sim ou não, comece pelo "sim" ou "não".
+- Use somente os fatos confirmados, a base de conhecimento e os dados do plano acima. Se a resposta não estiver ali, diga com naturalidade que não tem essa informação confirmada e que a equipe pode detalhar. Não invente e não comece com "boa pergunta".
+- Nunca informe valor de multa, taxa, prazo ou data que não esteja escrito acima.
+- Olhe a conversa: não repita o que a Eva já explicou. Se o cliente voltou ao mesmo assunto, responda só o ponto que ele perguntou agora, com outras palavras, ou resuma em uma frase. Se ele pareceu não entender, explique de um jeito mais simples.
+- Não peça dados, não fale do próximo passo e não se despeça: o sistema acrescenta a continuação do atendimento logo depois da sua resposta.
+
+Escreva somente a resposta.
+"""
+    try:
+        texto = chat(_system_prompt(), user, temperature=0.4)
+    except Exception:  # noqa: BLE001 — sem LLM, quem chama usa o texto fixo
+        return ""
+    return (texto or "").strip()
 
 
 def _rag_parece_catalogo_planos(texto: str) -> bool:
@@ -392,6 +465,10 @@ def _gerar_resposta(
                     x in normalizar_texto(str(ctx.get("pergunta_original") or ""))
                     for x in ("quanto", "valor", "ficaria", "multa", "taxa")
                 ),
+                resposta=_resposta_inteligente(
+                    decisao, estado, historico=historico,
+                    mensagem_cliente=mensagem_cliente, topico="cancelamento",
+                ),
             )
         # Demais dúvidas: LLM + RAG (não inventar resposta genérica)
 
@@ -443,16 +520,28 @@ def _gerar_resposta(
     if decisao.objetivo_resposta == "RESPONDER_DUVIDA_E_RETOMAR_TERMOS":
         ctx = decisao.contexto_resposta or {}
         topico = str(ctx.get("topico_contexto") or "")
-        if topico == "cancelamento" or ctx.get("esclarecer_aceite"):
-            return explicar_cancelamento_termos()
         from app.parser import eh_pergunta_instalacao
+        from app.termos_mensagens import responder_duvida_e_pedir_aceite
 
         pergunta_bruta = str(decisao.pergunta or ctx.get("pergunta_original") or "")
-        if topico == "instalacao" or eh_pergunta_instalacao(
+        # "sim" solto logo depois de uma dúvida de cancelamento: a explicação já foi dada —
+        # pede o aceite de forma direta em vez de repetir o texto inteiro.
+        if ctx.get("esclarecer_aceite"):
+            return pedir_aceite_termos(pedir_aceite_explicito=True)
+        duvida_instalacao = topico == "instalacao" or eh_pergunta_instalacao(
             pergunta_bruta, pergunta_bruta, topico=topico
-        ):
-            from app.vendas_mensagens import informar_instalacao_e_retomar
-
+        )
+        if normalizar_texto(pergunta_bruta) not in {"aceito", "aceita", "concordo"}:
+            inteligente = _resposta_inteligente(
+                decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
+                topico="instalacao" if duvida_instalacao and topico != "cancelamento" else topico,
+            )
+            if inteligente:
+                return responder_duvida_e_pedir_aceite(inteligente)
+        # Sem LLM: textos fixos
+        if topico == "cancelamento":
+            return explicar_cancelamento_termos()
+        if duvida_instalacao:
             return informar_instalacao_e_retomar(
                 pendente="aceite_termos",
                 plano_nome=str(estado.get("plano_confirmado") or ""),
@@ -645,11 +734,13 @@ def _gerar_resposta(
             campos_anotados=list(ctx.get("campos_anotados") or []),
             pergunta_valor=bool(ctx.get("pergunta_valor_multa")),
             ja_esclarecido=bool(ctx.get("cancelamento_ja_esclarecido_antes")),
+            resposta=_resposta_inteligente(
+                decisao, estado, historico=historico,
+                mensagem_cliente=mensagem_cliente, topico="cancelamento",
+            ),
         )
 
     if decisao.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR":
-        from app.vendas_mensagens import informar_instalacao_e_retomar
-
         ctx = decisao.contexto_resposta or {}
         plano = _plano_do_estado(estado, ctx)
         nome = str(
@@ -664,6 +755,10 @@ def _gerar_resposta(
             plano_nome=nome,
             pergunta_custo=bool(ctx.get("pergunta_custo_instalacao")),
             ja_esclarecido=bool(ctx.get("instalacao_ja_esclarecido_antes")),
+            resposta=_resposta_inteligente(
+                decisao, estado, historico=historico,
+                mensagem_cliente=mensagem_cliente, topico="instalacao",
+            ),
         )
 
     if decisao.objetivo_resposta == "INFORMAR_PLANOS_POR_BENEFICIO":
@@ -840,10 +935,14 @@ def _gerar_resposta(
         ctx = decisao.contexto_resposta or {}
         pendente = str(ctx.get("pendente") or decisao.aguardando or "")
         topico = str(ctx.get("topico_contexto") or "")
+        inteligente = _resposta_inteligente(
+            decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente, topico=topico
+        )
         if topico == "cancelamento":
             return informar_cancelamento_e_retomar(
                 pendente=pendente,
                 pergunta_valor=bool(ctx.get("pergunta_valor_multa")),
+                resposta=inteligente,
             )
         if topico == "instalacao":
             return informar_instalacao_e_retomar(
@@ -854,6 +953,7 @@ def _gerar_resposta(
                     or ""
                 ),
                 pergunta_custo=bool(ctx.get("pergunta_custo_instalacao")),
+                resposta=inteligente,
             )
         if topico == "beneficio_plano":
             plano = _plano_do_estado(estado, ctx)
@@ -862,7 +962,7 @@ def _gerar_resposta(
                 if pendente
                 else ""
             )
-        return responder_sem_base_rag(pendente, topico=topico)
+        return responder_sem_base_rag(pendente, topico=topico, resposta=inteligente)
 
     if str(estado.get("fase") or "") == "cadastro" and decisao.objetivo_resposta in {
         "CONTINUAR_CONVERSA",
@@ -922,6 +1022,10 @@ def _gerar_resposta(
             campos_anotados=list(ctx.get("campos_anotados") or []),
             pergunta_valor=pergunta_valor,
             ja_esclarecido=bool(ctx.get("cancelamento_ja_esclarecido_antes")),
+            resposta=_resposta_inteligente(
+                decisao, estado, historico=historico,
+                mensagem_cliente=mensagem_cliente, topico="cancelamento",
+            ),
         )
 
     plano = ctx.get("plano") or {}

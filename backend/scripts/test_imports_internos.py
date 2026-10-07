@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Nome importado dentro de uma função e usado antes desse import.
+Nome importado dentro de uma função e usado onde esse import não foi executado.
 
 Em Python, um `from x import nome` dentro da função torna `nome` local na função
-inteira. Se outro trecho da mesma função usa o `nome` importado no topo do módulo
-antes da linha do import interno, estoura UnboundLocalError em produção — foi o que
-derrubava a resposta a qualquer dúvida feita na etapa de aceite dos termos.
+inteira. Se o import fica dentro de um `if` e outro trecho da mesma função usa o
+`nome` (antes dele, ou em outro `if`), estoura UnboundLocalError em produção — foi o
+que derrubava a resposta a qualquer dúvida feita na etapa de aceite dos termos.
+
+Regra conferida: todo uso de um nome importado dentro da função precisa estar depois
+de um import desse nome feito no mesmo bloco ou num bloco que contém o uso.
 """
 from __future__ import annotations
 
@@ -17,13 +20,49 @@ import sys
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+_ESCOPOS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 
-def _escopos_internos(fn: ast.AST) -> set[int]:
-    ids: set[int] = set()
-    for n in ast.walk(fn):
-        if n is not fn and isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
-            ids |= {id(x) for x in ast.walk(n) if x is not n}
-    return ids
+
+def _blocos(fn: ast.AST):
+    """Percorre a função (sem entrar em funções aninhadas) guardando o bloco de cada nó.
+
+    O "caminho" de um nó é a sequência de listas de comandos (corpo de if/for/try...)
+    em que ele está; um import alcança um uso se o bloco do import faz parte do
+    caminho do uso.
+    """
+    imports: list[tuple[str, int, int]] = []  # (nome, linha, id do bloco)
+    usos: list[tuple[str, int, tuple[int, ...]]] = []  # (nome, linha, caminho de blocos)
+
+    def visitar(no: ast.AST, caminho: tuple[int, ...]) -> None:
+        if isinstance(no, (ast.Import, ast.ImportFrom)):
+            for alias in no.names:
+                imports.append(((alias.asname or alias.name).split(".")[0], no.lineno, caminho[-1]))
+            return
+        if isinstance(no, ast.Name) and isinstance(no.ctx, ast.Load):
+            usos.append((no.id, no.lineno, caminho))
+        for campo, valor in ast.iter_fields(no):
+            if isinstance(valor, list) and valor and all(isinstance(x, ast.stmt) for x in valor):
+                # O corpo de `with` e de `try` sempre executa: conta como o bloco de fora
+                sempre_executa = campo == "body" and isinstance(
+                    no, (ast.With, ast.AsyncWith, ast.Try)
+                )
+                novo = caminho if sempre_executa else caminho + (id(valor),)
+                for filho in valor:
+                    if not isinstance(filho, _ESCOPOS):
+                        visitar(filho, novo)
+            elif isinstance(valor, list):
+                for filho in valor:
+                    if isinstance(filho, ast.AST) and not isinstance(filho, _ESCOPOS):
+                        visitar(filho, caminho)
+            elif isinstance(valor, ast.AST) and not isinstance(valor, _ESCOPOS):
+                visitar(valor, caminho)
+
+    corpo = getattr(fn, "body", [])
+    raiz = (id(corpo),)
+    for comando in corpo:
+        if not isinstance(comando, _ESCOPOS):
+            visitar(comando, raiz)
+    return imports, usos
 
 
 def achados() -> list[str]:
@@ -31,29 +70,27 @@ def achados() -> list[str]:
     for arq in sorted(glob.glob(os.path.join(BACKEND, "app", "**", "*.py"), recursive=True)):
         with open(arq, encoding="utf-8") as f:
             arvore = ast.parse(f.read())
+        rel = os.path.relpath(arq, BACKEND)
         for fn in ast.walk(arvore):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            aninhados = _escopos_internos(fn)
-            internos: dict[str, int] = {}
-            for n in ast.walk(fn):
-                if id(n) in aninhados or not isinstance(n, (ast.Import, ast.ImportFrom)):
+            imports, usos = _blocos(fn)
+            if not imports:
+                continue
+            nomes = {n for n, _, _ in imports}
+            vistos: set[tuple[str, int]] = set()
+            for nome, linha, caminho in usos:
+                if nome not in nomes or (nome, linha) in vistos:
                     continue
-                for alias in n.names:
-                    nome = (alias.asname or alias.name).split(".")[0]
-                    internos[nome] = min(internos.get(nome, n.lineno), n.lineno)
-            for n in ast.walk(fn):
-                if (
-                    isinstance(n, ast.Name)
-                    and isinstance(n.ctx, ast.Load)
-                    and n.id in internos
-                    and id(n) not in aninhados
-                    and n.lineno < internos[n.id]
-                ):
-                    rel = os.path.relpath(arq, BACKEND)
+                alcanca = any(
+                    n == nome and l_imp < linha and bloco in caminho for n, l_imp, bloco in imports
+                )
+                if not alcanca:
+                    vistos.add((nome, linha))
+                    onde = sorted(l_imp for n, l_imp, _ in imports if n == nome)
                     out.append(
-                        f"{rel}:{n.lineno} usa {n.id!r} antes do import interno da linha "
-                        f"{internos[n.id]} (função {fn.name})"
+                        f"{rel}:{linha} usa {nome!r} fora do alcance do import interno "
+                        f"(linha(s) {', '.join(map(str, onde))}; função {fn.name})"
                     )
     return out
 
@@ -63,9 +100,9 @@ def main() -> None:
     for p in problemas:
         print(f"  FALHOU {p}")
     if problemas:
-        print(f"\n❌ {len(problemas)} uso(s) antes do import interno")
+        print(f"\n❌ {len(problemas)} uso(s) fora do alcance do import interno")
         sys.exit(1)
-    print("  OK nenhum nome usado antes do import interno")
+    print("  OK todo nome importado dentro de função é usado ao alcance do import")
     print("\n✅ Imports internos OK")
 
 
