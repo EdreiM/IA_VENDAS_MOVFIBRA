@@ -39,9 +39,11 @@ python scripts/test_imports_internos.py
 
 ## Respostas a dúvidas
 
-Dúvidas de cancelamento, instalação, da etapa dos termos e as que não têm base de conhecimento são respondidas pelo LLM a cada pergunta (`response._resposta_inteligente`): ele recebe a pergunta, a conversa e os fatos confirmados, responde só o que foi perguntado e não repete o que já explicou. A continuação do atendimento (pedir o próximo dado, o aceite) é acrescentada pelo código, sempre igual.
+A fonte das respostas é a **RAG** (webhook cadastrado em Config IA): cancelamento, multa, instalação e as informações da empresa ficam lá, não no código. Toda dúvida consulta a RAG, inclusive as de cancelamento e instalação.
 
-O que a Eva pode afirmar sobre cada assunto está em `app/duvidas_fatos.py`; para mudar uma informação comercial (fidelidade, multa, instalação), edite esse arquivo. Se o LLM falhar, entram os textos fixos antigos.
+A resposta é escrita pelo LLM a cada pergunta (`response._resposta_inteligente`): ele recebe a pergunta, a conversa e o que a RAG devolveu, responde só o que foi perguntado e não repete o que já explicou. A continuação do atendimento (pedir o próximo dado, o aceite) é acrescentada pelo código, sempre igual.
+
+Para mudar o que a Eva afirma sobre um assunto, altere o conteúdo da RAG. Os textos fixos antigos só entram como reserva: quando o LLM falha, ou quando a RAG não devolve nada sobre cancelamento/instalação.
 
 ## Avaliação do interpretador (LLM real)
 

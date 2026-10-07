@@ -252,7 +252,7 @@ def _enriquecer_com_rag(
     estado: dict[str, Any],
     mensagem: str,
 ) -> Decisao:
-    """Consulta RAG externa quando o cliente faz pergunta (fidelidade, mesh, etc.)."""
+    """Consulta a RAG quando o cliente faz pergunta — é a fonte das respostas a dúvidas."""
     pergunta = (decisao.pergunta or "").strip()
     objetivos_com_rag = {
         "RESPONDER_PERGUNTA_E_RETOMAR",
@@ -267,17 +267,19 @@ def _enriquecer_com_rag(
         "RETOMAR_ESCOLHA_HORARIO",
         "CONTINUAR_CONVERSA",
     }
-    if not pergunta and decisao.objetivo_resposta not in objetivos_com_rag:
+    # Cancelamento e instalação também saem da RAG (é lá que fica a informação da empresa).
+    # Sem conteúdo na RAG, estes dois mantêm o objetivo e caem no texto de reserva.
+    objetivos_com_texto_reserva = {
+        "INFORMAR_CANCELAMENTO_E_RETOMAR",
+        "INFORMAR_INSTALACAO_E_RETOMAR",
+    }
+    if not pergunta and decisao.objetivo_resposta not in (
+        objetivos_com_rag | objetivos_com_texto_reserva
+    ):
         return decisao
 
     ctx_dec = decisao.contexto_resposta or {}
-    topico_rag = str(ctx_dec.get("topico_contexto") or "")
-    if topico_rag in {"cancelamento", "instalacao"}:
-        return decisao
-    if decisao.objetivo_resposta in {
-        "INFORMAR_CANCELAMENTO_E_RETOMAR",
-        "PEDIR_ACEITE_TERMOS",
-    }:
+    if decisao.objetivo_resposta == "PEDIR_ACEITE_TERMOS":
         return decisao
     plano = ctx_dec.get("plano") or {}
     rag = consultar_rag(

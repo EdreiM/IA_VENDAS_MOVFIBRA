@@ -107,25 +107,27 @@ def _resposta_inteligente(
     mensagem_cliente: str,
     topico: str = "",
 ) -> str:
-    """Resposta à dúvida do cliente, escrita na hora a partir dos fatos confirmados.
+    """Resposta à dúvida do cliente, escrita na hora a partir da base de conhecimento.
 
-    Substitui os blocos de texto fixos: responde o que foi perguntado e, com o
-    histórico, não repete o que já foi explicado. Devolve "" se o LLM falhar — quem
-    chama cai no texto fixo. A continuação do atendimento (pedir o próximo dado, o
-    aceite etc.) NÃO é escrita aqui: o código acrescenta depois, de forma fixa.
+    A fonte é a RAG (onde ficam cancelamento, instalação e as informações da empresa),
+    mais os dados do plano. Responde o que foi perguntado e, com o histórico, não
+    repete o que já foi explicado. Devolve "" se o LLM falhar, ou se a RAG não trouxe
+    nada sobre cancelamento/instalação — aí quem chama usa o texto de reserva.
+    A continuação do atendimento (pedir o próximo dado, o aceite etc.) NÃO é escrita
+    aqui: o código acrescenta depois, de forma fixa.
     """
-    from app.duvidas_fatos import fatos_do_topico
-
     ctx = decisao.contexto_resposta or {}
     original = str(ctx.get("pergunta_original") or mensagem_cliente or "").strip()
     pergunta = str(decisao.pergunta or original).strip()
     if not pergunta:
         return ""
 
-    fatos = fatos_do_topico(topico)
     rag_txt = formatar_contexto_rag(ctx.get("rag") or {})
     if rag_txt and _rag_parece_catalogo_planos(rag_txt):
         rag_txt = ""
+    # Regra comercial (multa, fidelidade, instalação) só com a base em mãos
+    if not rag_txt and topico in {"cancelamento", "instalacao"}:
+        return ""
     plano = _plano_do_estado(estado, ctx)
     plano_txt = ""
     if plano.get("nome"):
@@ -144,11 +146,8 @@ def _resposta_inteligente(
 DÚVIDA: {pergunta}
 MENSAGEM COMO O CLIENTE ESCREVEU: {original or pergunta}
 
-FATOS CONFIRMADOS:
-{fatos or '(nenhum fato específico para este assunto)'}
-
-BASE DE CONHECIMENTO:
-{rag_txt or '(nenhum trecho encontrado)'}
+BASE DE CONHECIMENTO DA EMPRESA (sua fonte):
+{rag_txt or '(nenhum trecho encontrado para esta pergunta)'}
 
 PLANO DO CLIENTE: {plano_txt or '(ainda não escolhido)'}
 
@@ -157,8 +156,9 @@ CONVERSA ATÉ AQUI:
 
 Como responder:
 - Responda exatamente o que foi perguntado, em 1 a 3 frases. Se for pergunta de sim ou não, comece pelo "sim" ou "não".
-- Use somente os fatos confirmados, a base de conhecimento e os dados do plano acima. Se a resposta não estiver ali, diga com naturalidade que não tem essa informação confirmada e que a equipe pode detalhar. Não invente e não comece com "boa pergunta".
+- Use somente a base de conhecimento e os dados do plano acima. Se a resposta não estiver ali, diga com naturalidade que não tem essa informação confirmada e que a equipe pode detalhar. Não invente e não comece com "boa pergunta".
 - Nunca informe valor de multa, taxa, prazo ou data que não esteja escrito acima.
+- A base pode trazer mais do que foi perguntado: use só o trecho que responde a esta dúvida.
 - Olhe a conversa: não repita o que a Eva já explicou. Se o cliente voltou ao mesmo assunto, responda só o ponto que ele perguntou agora, com outras palavras, ou resuma em uma frase. Se ele pareceu não entender, explique de um jeito mais simples.
 - Não peça dados, não fale do próximo passo e não se despeça: o sistema acrescenta a continuação do atendimento logo depois da sua resposta.
 
