@@ -27,7 +27,9 @@ def consultar_horarios(estado: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
     provider = (settings.agenda_provider or "mock").lower()
 
-    if provider == "webhook":
+    # Cliente real (conversa no Chatwoot): nunca simular horários. Sem webhook
+    # cadastrado no painel o retorno é erro e o atendimento vai para um humano.
+    if provider == "webhook" or str(estado.get("conversation_id") or "").strip():
         return buscar_horarios_webhook(estado)
 
     data = _data_br(_proximo_dia_util())

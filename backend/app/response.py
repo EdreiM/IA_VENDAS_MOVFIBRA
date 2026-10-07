@@ -486,6 +486,11 @@ def _gerar_resposta(
     if decisao.objetivo_resposta == "PEDIR_FALAR_DUVIDA":
         return pedir_falar_duvida()
 
+    if decisao.objetivo_resposta == "CORTESIA_POS_ENCERRAMENTO":
+        from app.pos_venda_mensagens import cortesia_pos_encerramento
+
+        return cortesia_pos_encerramento(str(estado.get("nome") or ""))
+
     if decisao.objetivo_resposta == "DESPEDIDA_ENCERRAMENTO":
         ctx = decisao.contexto_resposta or {}
         return despedida_encerramento(str(ctx.get("nome") or estado.get("nome") or ""))

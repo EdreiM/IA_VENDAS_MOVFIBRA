@@ -394,17 +394,24 @@ def aplicar_guards_interpretacao(
                 pergunta = extrair_parte_pergunta(bruto, msg) or bruto
 
     if aguardando == "localizacao" and intencao_nao_dado:
-        eventos[:] = [
-            e
-            for e in eventos
-            if e
-            not in {
-                Evento.LOCALIZACAO_INFORMADA.value,
-                Evento.DADO_INFORMADO.value,
-            }
-        ]
-        dados.cidade = ""
-        dados.bairro = ""
+        # "Quero ver os planos, aqui em Santarém" traz a cidade junto com o pedido:
+        # fica o que está escrito na mensagem e não é frase de conversa.
+        from app.localizacao_heuristica import _parece_conversa
+
+        for campo_loc in ("cidade", "bairro"):
+            v = _texto(getattr(dados, campo_loc, ""))
+            if v and (_norm(v) not in _norm(bruto) or _parece_conversa(v)):
+                setattr(dados, campo_loc, "")
+        if not (dados.cidade or dados.bairro):
+            eventos[:] = [
+                e
+                for e in eventos
+                if e
+                not in {
+                    Evento.LOCALIZACAO_INFORMADA.value,
+                    Evento.DADO_INFORMADO.value,
+                }
+            ]
 
     from app.interpretacao_confianca import CONFIANCA_MINIMA_CADASTRO
     from app.state_machine import ORDEM_CADASTRO

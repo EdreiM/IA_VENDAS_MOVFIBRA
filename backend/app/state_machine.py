@@ -1546,6 +1546,24 @@ def _decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     if fase == "transferido":
         return dec("AGUARDAR", None, "transferido", None, {}, "Já transferido", "TERMINAL")
     if fase == "finalizado":
+        from app.pos_venda_mensagens import cortesia_pos_encerramento, eh_agradecimento_ou_despedida
+
+        # "Obrigado" logo depois do encerramento: resposta curta, uma vez só, e a conversa
+        # que o Chatwoot reabriu é resolvida de novo — não recomeça o atendimento.
+        if eh_agradecimento_ou_despedida(msg_gps):
+            ja_respondeu = _texto(estado.get("ultima_mensagem_sofia")) == cortesia_pos_encerramento(
+                _texto(estado.get("nome"))
+            )
+            return dec(
+                "AGUARDAR" if ja_respondeu else "RESPONDER",
+                None if ja_respondeu else "CORTESIA_POS_ENCERRAMENTO",
+                "finalizado",
+                None,
+                {},
+                "Agradecimento após encerramento",
+                "TERMINAL",
+                contexto={"resolver_conversa": True},
+            )
         return dec("AGUARDAR", None, "finalizado", None, {}, "Já finalizado", "TERMINAL")
 
     msg_cliente = str(

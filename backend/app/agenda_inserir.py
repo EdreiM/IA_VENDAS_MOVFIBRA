@@ -31,7 +31,9 @@ def inserir_agendamento(estado: dict[str, Any]) -> dict[str, Any]:
     if not tecnico:
         return {"resultado": "erro", "motivo": "id_tecnico ausente", "erro": True}
 
-    if provider == "webhook":
+    # Cliente real (conversa no Chatwoot): nunca confirmar agendamento simulado —
+    # sem webhook no painel o retorno é erro e o atendimento vai para um humano.
+    if provider == "webhook" or _texto(estado.get("conversation_id")):
         return inserir_agendamento_webhook(estado)
 
     return {

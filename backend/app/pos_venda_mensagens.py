@@ -157,6 +157,44 @@ def retomar_duvidas() -> str:
     return "\n\nMais alguma dúvida antes de encerrar?"
 
 
+_RE_AGRADECIMENTO = re.compile(
+    r"\b(?:muito|muit[ao]s?|obrigad[oa]o?|obg|obgd|brigad[oa]|valeu|vlw|tmj|agradec\w*|"
+    r"show|top|perfeito|otimo|otima|maravilha|legal|beleza|blz|ok|okay|certo|combinado|fechado|"
+    r"tudo|bem|bom|boa|dia|tarde|noite|ate|mais|logo|breve|tchau|abraco|abracos|"
+    r"deus|abencoe|amem|igualmente|por|de|nada|pela|pelo|atencao|atendimento|ajuda|"
+    r"voce|voces|vc|vcs|eva|moca|mesmo|demais|viu|ta|tá|e|a|o|para|pra|ai)\b"
+)
+
+
+_RE_NUCLEO_AGRADECIMENTO = re.compile(
+    r"\b(?:obrigad[oa]o?|obg|obgd|brigad[oa]|valeu|vlw|tmj|agradec\w*|tchau|ate|"
+    r"show|top|perfeito|otimo|otima|maravilha|beleza|blz|ok|okay|certo|combinado|fechado)\b"
+)
+
+
+def eh_agradecimento_ou_despedida(msg: str) -> bool:
+    """'Obrigado', 'valeu, até mais', '👍' — fecho de conversa, sem pedido novo."""
+    bruto = str(msg or "").strip()
+    if not bruto or "?" in bruto:
+        return False
+    t = re.sub(r"[^\w\s]", " ", _norm_encerrar(bruto))
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t:
+        return True  # só emoji/pontuação
+    if len(t.split()) > 8:
+        return False
+    # "boa tarde" sozinho é um novo cumprimento, não um fecho
+    if not _RE_NUCLEO_AGRADECIMENTO.search(t):
+        return False
+    return not _RE_AGRADECIMENTO.sub(" ", t).strip()
+
+
+def cortesia_pos_encerramento(nome: str = "") -> str:
+    primeiro = nome.split()[0] if nome.strip() else ""
+    quem = f", {primeiro}" if primeiro else ""
+    return f"Por nada{quem}! 😊 Qualquer coisa, é só chamar."
+
+
 def despedida_encerramento(nome: str = "") -> str:
     primeiro = nome.split()[0] if nome.strip() else ""
     quem = f", {primeiro}" if primeiro else ""

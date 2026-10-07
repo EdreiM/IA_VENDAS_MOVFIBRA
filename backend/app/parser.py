@@ -1004,15 +1004,29 @@ def _extrair_cep(bruto: str) -> str:
     return digitos if len(digitos) == 8 else ""
 
 
+_MESES = {
+    "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+    "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12,
+}
+_RE_DATA_POR_EXTENSO = re.compile(
+    r"\b(\d{1,2})\s*(?:de\s+)?(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*\.?"
+    r"\s*(?:de\s+)?(\d{4})\b"
+)
+
+
 def _extrair_data_nascimento(bruto: str) -> str:
     principal = _parte_principal_dado(bruto)
     m = re.search(r"\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})\b", principal)
-    if not m:
-        return ""
-    d, mes, ano = m.group(1), m.group(2), m.group(3)
-    if len(ano) == 2:
-        ano = f"19{ano}" if int(ano) > 30 else f"20{ano}"
-    return f"{int(d):02d}/{int(mes):02d}/{ano}"
+    if m:
+        d, mes, ano = m.group(1), m.group(2), m.group(3)
+        if len(ano) == 2:
+            ano = f"19{ano}" if int(ano) > 30 else f"20{ano}"
+        return f"{int(d):02d}/{int(mes):02d}/{ano}"
+    # "16 de agosto de 2000" / "16 ago 2000"
+    m = _RE_DATA_POR_EXTENSO.search(normalizar_texto(principal))
+    if m and 1 <= int(m.group(1)) <= 31:
+        return f"{int(m.group(1)):02d}/{_MESES[m.group(2)]:02d}/{m.group(3)}"
+    return ""
 
 
 def _extrair_numero_endereco(bruto: str) -> str:
@@ -1985,6 +1999,12 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         campos = []
     campos_corrigidos = [texto(c).lower() for c in campos if texto(c)]
 
+    # Data que o LLM devolveu por extenso ("16 de agosto de 2000") → dd/mm/aaaa
+    if dados.data_nascimento:
+        dados.data_nascimento = (
+            _extrair_data_nascimento(dados.data_nascimento) or dados.data_nascimento
+        )
+
     # LLM pôs um celular no campo CPF (os dois têm 11 dígitos) — vai para telefone
     if dados.cpf and celular_e_nao_cpf(dados.cpf):
         if not dados.telefone:
@@ -2020,6 +2040,14 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
         and bool(_RE_POSICAO_LISTA.search(msg))
         and bool(extrair_referencia_plano_na_mensagem(dados.plano))
     )
+    # "pode ser o infinity" / "sim, o one+" — a mensagem nomeia um plano: é escolha desse
+    # plano. Se for o mesmo que está em negociação, a máquina de estados confirma.
+    if aguardando_plano and not escolha_por_posicao:
+        plano_citado = _detectar_plano_na_mensagem(msg)
+        if plano_citado and not eh_pergunta_informativa_sobre_plano(msg, msg_bruto):
+            escolha_por_posicao = True
+            if not extrair_referencia_plano_na_mensagem(dados.plano):
+                dados.plano = plano_citado
     if escolha_por_posicao:
         eventos = [e for e in eventos if e != Evento.CONFIRMACAO.value]
         if Evento.PLANO_INFORMADO.value not in eventos:

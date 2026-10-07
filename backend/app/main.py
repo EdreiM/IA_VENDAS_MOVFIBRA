@@ -587,6 +587,20 @@ async def webhook_chatwoot(
     )
     if envio is not None:
         payload["chatwoot_envio"] = envio
+
+    # Agradecimento depois do encerramento: o Chatwoot reabre/cria a conversa com a
+    # mensagem do cliente — resolve de novo para não ficar na fila como atendimento novo.
+    ctx_final = result.decisao.contexto_resposta or {}
+    if ctx_final.get("resolver_conversa") and evento.get("conversation_id"):
+        try:
+            from app.integrations.chatwoot import atualizar_status
+
+            payload["chatwoot_resolvida"] = await asyncio.to_thread(
+                atualizar_status, evento["conversation_id"], "resolved"
+            )
+        except Exception as exc:  # noqa: BLE001
+            payload["chatwoot_resolvida"] = {"ok": False, "motivo": str(exc)}
+
     payload["ok"] = True
     return payload
 

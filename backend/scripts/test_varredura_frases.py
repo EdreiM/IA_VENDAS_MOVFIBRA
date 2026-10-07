@@ -272,8 +272,103 @@ def dado_com_duvida() -> tuple[int, list[str]]:
     return turnos, violacoes
 
 
+def conversa_real_7_outubro() -> list[str]:
+    """Trechos de um atendimento real em que a interpretação do LLM estava certa
+    e o parser apagou o valor (cidade, plano e data de nascimento)."""
+    v: list[str] = []
+
+    # "Quero ver os planos / Aqui em santarém" → a cidade tem que ficar guardada
+    est, _ = regressao._turno(
+        {"fase": "viabilidade", "aguardando": "localizacao", "cumprimento_feito": True},
+        "Quero ver os planos ai\nAqui em santarém",
+        {"eventos": ["PEDIDO_CONTRATACAO", "LOCALIZACAO_INFORMADA"], "dados": {"cidade": "Santarém"}, "confianca": 0.95},
+    )
+    if str(est.get("cidade") or "").casefold() != "santarém":
+        v.append(f"cidade não foi guardada junto com o pedido de planos: {est.get('cidade')!r}")
+
+    # "Pode ser o infinity" com o SUPER+ em negociação → não pode fechar o SUPER+
+    base_plano = dict(
+        BASE, fase="vendas", aguardando="confirmacao_plano",
+        plano_em_negociacao="MOV SUPER+", plano_em_negociacao_id=2, plano_apresentado_id=2,
+    )
+    for llm in (
+        {"eventos": ["PLANO_INFORMADO"], "dados": {"plano": "infinity"}},
+        {"eventos": ["CONFIRMACAO"], "dados": {}},
+    ):
+        est, dec = regressao._turno(dict(base_plano), "Pode ser o infinity", {**llm, "confianca": 0.9})
+        if est.get("plano_confirmado"):
+            v.append(f"'Pode ser o infinity' confirmou {est.get('plano_confirmado')!r} (llm={llm['eventos']})")
+        if "INFINITY" not in str(est.get("plano_em_negociacao") or "").upper():
+            v.append(f"'Pode ser o infinity' deixou em negociação {est.get('plano_em_negociacao')!r}")
+
+    # "16 de agosto de 2000 / 68020000" → data por extenso e CEP na mesma mensagem
+    for valor_llm in ("16/08/2000", "16 de agosto de 2000"):
+        est, dec = regressao._turno(
+            dict(
+                BASE, **CONFIRMADO, fase="cadastro", aguardando="data_nascimento",
+                documento_cpf_validado=True, **{c: CAD[c] for c in ORDEM[:4]},
+            ),
+            "16 de agosto de 2000\n68020000",
+            {"eventos": ["DADO_INFORMADO"], "dados": {"data_nascimento": valor_llm, "cep": "68020000"}, "confianca": 0.95},
+        )
+        if est.get("data_nascimento") != "16/08/2000" or dec.aguardando == "data_nascimento":
+            v.append(f"data por extenso não foi aceita: {est.get('data_nascimento')!r}, aguardando={dec.aguardando}")
+    return v
+
+
+def depois_do_encerramento() -> list[str]:
+    """'Obrigado' após o encerramento: resposta curta, uma vez, sem recomeçar o funil."""
+    v: list[str] = []
+    from app.pos_venda_mensagens import cortesia_pos_encerramento
+
+    final = dict(BASE, **CONFIRMADO, **CAD, fase="finalizado", cadastro_completo=True, agendamento_confirmado=True)
+    est, dec = regressao._turno(dict(final), "Obrigado", {"eventos": ["CONVERSA_SOCIAL"], "dados": {}, "confianca": 0.9})
+    if dec.fase != "finalizado" or dec.objetivo_resposta != "CORTESIA_POS_ENCERRAMENTO":
+        v.append(f"'Obrigado' após encerrar → {dec.acao}/{dec.objetivo_resposta} fase={dec.fase}")
+    if not (dec.contexto_resposta or {}).get("resolver_conversa"):
+        v.append("'Obrigado' após encerrar não pede para resolver a conversa reaberta")
+    if est.get("nome") != CAD["nome"]:
+        v.append("dados do cliente foram perdidos depois do agradecimento")
+    # Segundo agradecimento: silêncio (não fica respondendo em laço)
+    ja = dict(final, ultima_mensagem_sofia=cortesia_pos_encerramento(CAD["nome"]))
+    _, dec2 = regressao._turno(ja, "👍", {"eventos": ["CONVERSA_SOCIAL"], "dados": {}, "confianca": 0.9})
+    if dec2.acao != "AGUARDAR":
+        v.append(f"segundo agradecimento deveria ficar em silêncio, veio {dec2.acao}")
+    return v
+
+
+def agenda_de_cliente_real() -> list[str]:
+    """Com conversa do Chatwoot, horário e agendamento nunca podem ser simulados."""
+    v: list[str] = []
+    from app.agenda import consultar_horarios
+    from app.agenda_inserir import inserir_agendamento
+
+    real = {
+        "id_cliente": "5593999999999", "conversation_id": "999", "ixc_cliente_id": "1",
+        "tecnico_id": "159", "data_agendamento": "08/10/2026", "horario_escolhido": "8h às 9h",
+        "cidade": "Santarém", "bairro": "Diamantino",
+    }
+    for nome, fn in (("horários", consultar_horarios), ("agendamento", inserir_agendamento)):
+        r = fn(dict(real))
+        if r.get("provider") == "mock" or (str(r.get("resultado")).lower() == "ok" and not r.get("erro")):
+            v.append(f"{nome} de cliente real voltou simulado/ok sem chamar o webhook: {r}")
+    return v
+
+
 def main() -> None:
     falhas = 0
+
+    for rotulo, checagem in (
+        ("atendimento real de 07/10: cidade, plano e data preservados", conversa_real_7_outubro),
+        ("'Obrigado' após encerrar: cortesia única, sem recomeçar", depois_do_encerramento),
+        ("agenda de cliente real nunca é simulada", agenda_de_cliente_real),
+    ):
+        violacoes = checagem()
+        for v in violacoes:
+            print(f"  FALHOU {v}")
+        falhas += len(violacoes)
+        if not violacoes:
+            print(f"  OK {rotulo}")
 
     turnos, violacoes = dado_com_duvida()
     for v in violacoes:
