@@ -152,6 +152,7 @@ Regras rápidas:
 - "não posso nesse horário" / "tem outro?" / "outro dia" → NEGACAO (não é PERGUNTA)
 - Ordem ideal do cadastro: nome → cpf → email → telefone → data_nascimento → cep → rua → numero → confirmação
 - rua, número, CEP, complemento, data de nascimento → DADO_INFORMADO (NÃO é LOCALIZACAO — cidade/bairro de cobertura já foram definidos)
+- Endereço escrito de uma vez segue a ordem rua → número → complemento: o que vem ANTES do número é a rua, o que vem DEPOIS é o complemento. "sérgio henn, 891 residencial plácido" → rua="sérgio henn", numero="891", complemento="residencial plácido" (o nome do residencial/condomínio NUNCA é a rua). "rua 7" → rua="rua 7", numero="" (o 7 é o nome da rua). "sem número" / "s/n" → numero="S/N"
 - Na fase cadastro, NÃO use LOCALIZACAO_INFORMADA só porque o cliente deu endereço de instalação (rua, CEP, etc.)
 - "e se eu quiser mudar de endereço?" / "depois de contratar posso mudar?" → PERGUNTA (informação), NÃO PEDIU_TROCAR_LOCALIZACAO
 - "e se não tiver cobertura?" / "funciona no meu prédio?" → PERGUNTA, NÃO PEDIU_TROCAR_LOCALIZACAO (sem cidade/bairro novos)

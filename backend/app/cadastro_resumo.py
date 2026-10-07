@@ -27,6 +27,7 @@ def montar_resumo_cadastro(estado: dict[str, Any]) -> str:
     cep = formatar_cep(_valor(estado, "cep"))
     rua = titulo_palavras(_valor(estado, "rua"))
     numero = _valor(estado, "numero")
+    complemento = titulo_palavras(_valor(estado, "complemento"))
     bairro = titulo_palavras(_valor(estado, "bairro"))
     cidade = titulo_palavras(_valor(estado, "cidade"))
     plano = _valor(estado, "plano_confirmado") or _valor(estado, "plano_em_negociacao")
@@ -44,6 +45,7 @@ def montar_resumo_cadastro(estado: dict[str, Any]) -> str:
         f"• CEP: {cep}",
         f"• Rua: {rua}",
         f"• Número: {numero}",
+        *([f"• Complemento: {complemento}"] if complemento else []),
         f"• Bairro: {bairro}",
         f"• Cidade: {cidade}",
         "",

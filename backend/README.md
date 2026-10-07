@@ -31,7 +31,7 @@ python scripts/test_auditoria_interpretacao.py
 python scripts/test_imports_internos.py
 ```
 
-`test_auditoria_interpretacao.py` é a auditoria do funil: 1.490 mensagens em todos os estados e 4 conversas completas, sempre com a interpretação correta do modelo, conferindo que as regras não estragam essa leitura (dado não gravado ou pedido de novo, conversa gravada como dado, objeção que avança, plano trocado, texto pedindo outro campo). Quando aparecer um erro novo em produção, acrescente a mensagem no banco correspondente desse arquivo. `--exportar` regrava `eval/casos_auditoria.jsonl` para medir o LLM real com esses mesmos casos.
+`test_auditoria_interpretacao.py` é a auditoria do funil: 1.525 mensagens em todos os estados e 9 conversas completas, sempre com a interpretação correta do modelo, conferindo que as regras não estragam essa leitura (dado não gravado ou pedido de novo, conversa gravada como dado, objeção que avança, plano trocado, texto pedindo outro campo). Quando aparecer um erro novo em produção, acrescente a mensagem no banco correspondente desse arquivo. `--exportar` regrava `eval/casos_auditoria.jsonl` para medir o LLM real com esses mesmos casos.
 
 `test_imports_internos.py` procura nome usado antes de um `import` feito dentro da mesma função, o que em produção vira `UnboundLocalError`.
 
@@ -54,6 +54,10 @@ A lista de cidades atendidas fica em `app/localizacao_heuristica.py` (`CIDADES_A
 - qualquer outro nome → a Eva pergunta "*X* é o seu bairro?" (`aguardando=confirmar_local`). Se for, guarda como bairro e pede a cidade; se o cliente disser que é a cidade, ela está fora da área e a Eva informa as cidades atendidas.
 
 Assim um nome solto nunca é gravado como cidade só porque o modelo chutou.
+
+## Endereço: rua, número e complemento
+
+No endereço escrito de uma vez ("sérgio henn, 891 residencial plácido"), a posição decide: o que vem antes do número é a rua, o que vem depois é o complemento (`parser._separar_endereco`). Isso vale mesmo quando o modelo devolve os dois trocados. O complemento aparece no resumo de confirmação. Número que faz parte do nome ("rua 7", "travessa 15 de agosto") não é tomado como número da casa, e "sem número" / "s/n" fica registrado como `S/N`.
 
 ## Avaliação do interpretador (LLM real)
 

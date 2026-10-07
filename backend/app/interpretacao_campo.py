@@ -255,7 +255,7 @@ def _valor_parece_resposta_campo(
         )
 
     if campo == "numero":
-        return bool(re.search(r"\b\d+[A-Za-z]?\b", bruto))
+        return bool(re.search(r"\b\d+[A-Za-z]?\b", bruto)) or v == "S/N"
 
     if campo in {"cidade", "bairro"}:
         return _mensagem_tem_sinal_localizacao(bruto)

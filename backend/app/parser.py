@@ -1216,6 +1216,141 @@ def _split_rua_numero(bruto: str, *, aguardando: str = "") -> tuple[str, str]:
     return "", ""
 
 
+_TIPOS_LOGRADOURO = {
+    "rua", "r", "av", "avenida", "travessa", "tv", "trav", "alameda", "al", "rodovia",
+    "rod", "estrada", "passagem", "psg", "beco", "viela", "vicinal", "ramal", "praca",
+    "br", "pa",
+}
+_MARCAS_COMPLEMENTO = {
+    "casa", "cs", "apto", "apt", "ap", "apartamento", "bloco", "bl", "lote", "lt",
+    "quadra", "qd", "sala", "loja", "andar", "km", "kitnet",
+}
+_RE_NUMERO_CASA = re.compile(
+    r"(?<![\w/.\-])(?:n(?:º|°|o\.|ú?m(?:ero)?\.?)\s*)?(\d{1,5}[A-Za-z]?)(?![\w/\-])(?!\.\d)",
+    re.I,
+)
+_RE_SEM_NUMERO = re.compile(
+    r"(?i)(?<!\w)(s\s*/\s*n|(?:(?:a\s+casa\s+)?n[aã]o\s+tem|sem)\s+n(?:ú|u)mero)(?!\w)"
+)
+_RE_INTRO_ENDERECO = re.compile(
+    r"(?i)^(?:(?:eu\s+)?moro\s+|fica\s+|(?:o\s+)?(?:meu\s+)?endere[cç]o\s*(?:é|e|:)?\s*|é\s+)"
+    r"(?:(?:na|no|em)\s+)?"
+)
+_RE_COMPLEMENTO_NAO_E = re.compile(
+    r"(?i)[?@]|\d{5,}|\b(?:cep|cpf|e-?mail|telefone|celular|nascimento|bairro|cidade)\b"
+)
+_INICIO_DE_CONVERSA = {
+    "mas", "e", "ok", "ta", "tudo", "pode", "obrigado", "obrigada", "por", "ne", "certo",
+    "blz", "beleza", "sim", "nao", "isso", "so", "tem", "qual", "quanto", "como",
+}
+
+
+def _separar_endereco(bruto: str, *, numero_lido: str = "") -> tuple[str, str, str]:
+    """Separa "<rua>, <número> <complemento>" pela posição na mensagem.
+
+    No endereço escrito de uma vez, o que vem antes do número da casa é a rua e o que
+    vem depois é o complemento ("sérgio henn, 891 residencial plácido"). Devolve
+    ("", "", "") quando a mensagem não tem esse formato — aí vale a leitura do LLM.
+    """
+    linhas = [p.strip() for p in re.split(r"[\r\n]+", texto(bruto)) if p.strip()]
+    principal = _parte_principal_dado(linhas[0]) if linhas else ""
+    if not principal:
+        return "", "", ""
+
+    def _palavras(trecho: str) -> list[str]:
+        return re.findall(r"[a-z]+", normalizar_texto(trecho))
+
+    candidatos = [(m.start(), m.end(), m.group(1)) for m in _RE_NUMERO_CASA.finditer(principal)]
+    sem_numero = _RE_SEM_NUMERO.search(principal)
+    if sem_numero:
+        candidatos.append((sem_numero.start(), sem_numero.end(), "S/N"))
+    # O número que o LLM leu como o da casa é tentado antes dos outros
+    candidatos.sort(key=lambda c: (c[2].lower() != texto(numero_lido).lower(), c[0]))
+
+    for inicio, fim, numero in candidatos:
+        antes = principal[:inicio].strip(" ,;-–")
+        depois = principal[fim:].strip(" ,;-–.")
+        palavras_antes = _palavras(antes)
+        if not any(len(p) >= 3 for p in palavras_antes):
+            continue
+        # "15 de agosto", "rua 7", "casa 12": o número faz parte do nome ou do complemento
+        if re.match(r"(?i)\s+de\s+\w", principal[fim:]):
+            continue
+        if palavras_antes[-1] in _TIPOS_LOGRADOURO | _MARCAS_COMPLEMENTO:
+            continue
+        # "casa 12, rua das flores 40": começou pelo complemento — não dá para separar por posição
+        if palavras_antes[0] in _MARCAS_COMPLEMENTO:
+            return "", "", ""
+        rua = _RE_INTRO_ENDERECO.sub("", antes).strip(" ,;-–") or antes
+        palavras_depois = _palavras(depois)
+        if (
+            not palavras_depois
+            or len(depois) > 60
+            or _RE_COMPLEMENTO_NAO_E.search(depois)
+            or palavras_depois[0] in _INICIO_DE_CONVERSA
+            or palavras_depois[0] in _TIPOS_LOGRADOURO
+        ):
+            depois = ""
+        return rua[:160], numero, depois
+    return "", "", ""
+
+
+def _ajustar_endereco_pela_posicao(
+    dados: DadosExtraidos, estado: dict[str, Any], aguardando: str, msg_bruto: str
+) -> None:
+    """Rua, número e complemento conferidos pela ordem em que o cliente escreveu.
+
+    O LLM às vezes devolve o complemento no lugar da rua ("sérgio henn, 891 residencial
+    plácido" → rua "Residencial Plácido"). Como o valor está escrito na mensagem ele
+    passava pelos filtros; a posição em relação ao número desfaz a troca.
+    """
+    principal = _parte_principal_dado(msg_bruto)
+    if aguardando == "numero" and texto(estado.get("rua")):
+        # Casa sem número: fica registrado, senão o pedido do número se repete para sempre
+        if not re.search(r"\d", principal) and _RE_SEM_NUMERO.search(principal):
+            dados.numero = "S/N"
+            return
+        # Rua já salva: "891 residencial plácido" → número + complemento
+        m = re.fullmatch(r"\s*(\d{1,5}[A-Za-z]?)[\s,;\-–]+(\S.*?)\s*", _parte_principal_dado(msg_bruto))
+        if m and dados.numero == m.group(1) and not dados.complemento:
+            resto = m.group(2)
+            palavras = re.findall(r"[a-z]+", normalizar_texto(resto))
+            if (
+                palavras
+                and len(resto) <= 60
+                and not _RE_COMPLEMENTO_NAO_E.search(resto)
+                and palavras[0] not in _INICIO_DE_CONVERSA
+            ):
+                dados.complemento = resto
+        return
+    if aguardando != "rua":
+        return
+
+    rua, numero, complemento = _separar_endereco(msg_bruto, numero_lido=dados.numero)
+    if not rua:
+        # "rua 7", "travessa 3": o número é o nome da rua, não o da casa
+        so_rua = _RE_INTRO_ENDERECO.sub("", principal.strip()).strip(" ,;.")
+        m = re.fullmatch(r"([A-Za-zÀ-ÿ]+)\.?\s+(\d{1,5}[A-Za-z]?)", so_rua)
+        if m and normalizar_texto(m.group(1)) in _TIPOS_LOGRADOURO:
+            dados.rua = so_rua
+            if dados.numero == m.group(2):
+                dados.numero = ""
+        return
+    rua_n = normalizar_texto(rua)
+    lida = normalizar_texto(dados.rua)
+    # A leitura do LLM vale quando é um trecho do que vem antes do número
+    if not lida or lida not in rua_n:
+        dados.rua = rua
+    if numero and dados.numero != numero:
+        dados.numero = numero
+    compl_n = normalizar_texto(dados.complemento)
+    if compl_n and (compl_n in rua_n or compl_n not in normalizar_texto(msg_bruto)):
+        dados.complemento = ""
+    locais = {normalizar_texto(texto(estado.get(c))) for c in ("bairro", "cidade")} - {""}
+    if complemento and not dados.complemento and normalizar_texto(complemento) not in locais:
+        dados.complemento = complemento
+
+
 def _extrair_cep_sem_data(bruto: str) -> str:
     principal = _parte_principal_dado(bruto)
     sem_data = re.sub(r"\b\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}\b", " ", principal)
@@ -3170,6 +3305,10 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
             aguardando=aguardando,
             msg_bruto=msg_bruto,
         )
+        if dados.rua or dados.numero or aguardando == "numero":
+            _ajustar_endereco_pela_posicao(dados, estado, aguardando, msg_bruto)
+            if dados.numero == "S/N" and Evento.DADO_INFORMADO.value not in eventos:
+                eventos.append(Evento.DADO_INFORMADO.value)
 
     return Interpretacao(
         eventos=eventos,

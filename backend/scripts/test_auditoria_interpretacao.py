@@ -57,6 +57,7 @@ from app.parser import (
 from app.plano_intencao import contexto_por_objetivo_resposta
 from app.plans_catalog import listar_planos
 from app.resolver import normalizar_campo, resolver
+from app.parser import normalizar_texto
 from app.state_machine import decidir
 
 # ── Integrações simuladas ────────────────────────────────────────────────────
@@ -243,6 +244,18 @@ def gravou(**campos: str) -> Check:
         for campo, esperado in campos.items():
             if not _igual(campo, esperado, d.get(campo)):
                 return f"não gravou {campo}={esperado!r} (ficou {d.get(campo)!r})"
+        return None
+    return f
+
+
+def endereco(rua: str, numero: str, complemento: str = "") -> Check:
+    """Rua, número e complemento exatos — `gravou` aceita a rua como trecho do que ficou."""
+    def f(a, d, dec, i, msg):
+        esperado = {"rua": rua, "numero": numero, "complemento": complemento}
+        for campo, valor in esperado.items():
+            obtido = normalizar_texto(str(d.get(campo) or ""))
+            if obtido != normalizar_texto(valor):
+                return f"endereço: {campo} devia ser {valor!r} (ficou {d.get(campo)!r})"
         return None
     return f
 
@@ -763,6 +776,38 @@ POS_VENDA = [
     ("como pago a primeira fatura?", ["PERGUNTA"], "pos_venda"), ("tenho sim, quanto tempo dura a instalação?", ["PERGUNTA"], "pos_venda"),
     ("sim", ["CONFIRMACAO"], "pos_venda"), ("tenho uma dúvida", ["OUTRO"], "pos_venda"),
 ]
+# Endereço escrito de uma vez: o que vem antes do número é a rua, o que vem depois é o
+# complemento — mesmo quando o modelo devolve os dois trocados.
+ENDERECOS = [
+    # (estado, mensagem, o que o LLM devolveu, rua, número, complemento)
+    ("cad/rua", "sérgio henn, 891 residencial plácido", {"rua": "Residencial Plácido", "numero": "891"}, "sérgio henn", "891", "residencial plácido"),
+    ("cad/rua", "sérgio henn, 891 residencial plácido", {"rua": "Residencial Plácido", "numero": "891", "complemento": "sérgio henn"}, "sérgio henn", "891", "residencial plácido"),
+    ("cad/rua", "sérgio henn, 891 residencial plácido", {"rua": "sérgio henn, 891 residencial plácido"}, "sérgio henn", "891", "residencial plácido"),
+    ("cad/rua", "sérgio henn, 891 residencial plácido", {"rua": "Sérgio Henn", "numero": "891", "complemento": "Residencial Plácido"}, "Sérgio Henn", "891", "Residencial Plácido"),
+    ("cad/rua", "sérgio henn, 891 residencial plácido", {}, "sérgio henn", "891", "residencial plácido"),
+    ("cad/rua", "avenida tapajós 1500 próximo ao mercado", {"rua": "próximo ao mercado", "numero": "1500"}, "avenida tapajós", "1500", "próximo ao mercado"),
+    ("cad/rua", "Rua das Flores 123 apto 302", {"rua": "Rua das Flores", "numero": "123", "complemento": "apto 302"}, "Rua das Flores", "123", "apto 302"),
+    ("cad/rua", "Av. Mendonça Furtado, 2040, casa B", {"rua": "Av. Mendonça Furtado", "numero": "2040"}, "Av. Mendonça Furtado", "2040", "casa B"),
+    ("cad/rua", "travessa 15 de agosto 77 fundos", {"rua": "travessa 15 de agosto", "numero": "77", "complemento": "fundos"}, "travessa 15 de agosto", "77", "fundos"),
+    ("cad/rua", "rua 24 de outubro, 1200, condomínio jardins", {"rua": "condomínio jardins", "numero": "1200"}, "rua 24 de outubro", "1200", "condomínio jardins"),
+    ("cad/rua", "casa 12, rua das flores", {"rua": "rua das flores", "numero": "12"}, "rua das flores", "12", ""),
+    ("cad/rua", "891, sérgio henn", {"rua": "sérgio henn", "numero": "891"}, "sérgio henn", "891", ""),
+    ("cad/rua", "moro na rua sergio henn 891", {"rua": "rua sergio henn", "numero": "891"}, "rua sergio henn", "891", ""),
+    ("cad/rua", "Rua das Flores 123, cep 68005-000", {"rua": "Rua das Flores", "numero": "123"}, "Rua das Flores", "123", ""),
+    ("cad/rua", "rua das flores 123 ta bom?", {"rua": "rua das flores", "numero": "123"}, "rua das flores", "123", ""),
+    ("cad/rua", "rua 7", {"rua": "rua 7", "numero": "7"}, "rua 7", "", ""),
+    ("cad/rua", "rua 7, 120", {"rua": "rua 7", "numero": "120"}, "rua 7", "120", ""),
+    ("cad/rua", "travessa 3 número 45", {"rua": "travessa 3", "numero": "45"}, "travessa 3", "45", ""),
+    ("cad/rua", "rua sergio henn s/n", {"rua": "rua sergio henn", "numero": "s/n"}, "rua sergio henn", "S/N", ""),
+    ("cad/rua", "sergio henn sem número", {"rua": "sergio henn"}, "sergio henn", "S/N", ""),
+    ("cad/numero", "891 residencial plácido", {"numero": "891"}, "Rua A", "891", "residencial plácido"),
+    ("cad/numero", "891 casa B", {"numero": "891", "complemento": "casa B"}, "Rua A", "891", "casa B"),
+    ("cad/numero", "é 891, tá bom?", {"numero": "891"}, "Rua A", "891", ""),
+    ("cad/numero", "s/n", {"numero": "s/n"}, "Rua A", "S/N", ""),
+    ("cad/numero", "não tem número", {}, "Rua A", "S/N", ""),
+    ("cad/numero", "a casa não tem número não", {}, "Rua A", "S/N", ""),
+    ("cad/numero", "não sei o número", {}, "Rua A", "", ""),
+]
 
 
 def casos_rodada_2() -> Iterator[Caso]:
@@ -816,6 +861,14 @@ def casos_rodada_2() -> Iterator[Caso]:
     # 19. Pós-venda
     for m, ev, fase_ok in POS_VENDA:
         yield ("pos_venda", "pos", m, L(ev, pergunta=m if "PERGUNTA" in ev else ""), [fase_e(fase_ok), nao_mexeu_em()])
+
+    # 20. Endereço: rua, número e complemento pela ordem em que foram escritos
+    for est, m, dados, rua, numero, complemento in ENDERECOS:
+        checks = [endereco(rua, numero, complemento), fase_e("cadastro"),
+                  so_mexeu_em("rua", "numero", "complemento"), texto_pede_o_aguardado()]
+        if numero:
+            checks.append(nao_pede_de_novo("numero"))
+        yield ("endereco", est, m, L(["DADO_INFORMADO"] if dados else ["OUTRO"], dados), checks)
 
 
 def todos_os_casos() -> Iterator[Caso]:
@@ -1047,10 +1100,19 @@ def exportar(caminho: str) -> int:
     # O que a interpretação do LLM precisa trazer (o resto é detalhe de classificação)
     sempre = {"DADO_INFORMADO", "PLANO_INFORMADO", "LOCALIZACAO_INFORMADA", "PEDIU_HUMANO", "CORRECAO_DADO"}
     campos_dado = set(ORDEM) | {"cidade", "bairro"}
+    # No banco de endereços o "llm" é de propósito uma leitura errada: o esperado do
+    # modelo real é a separação correta.
+    endereco_certo = {
+        (est, m): {k: v for k, v in (("rua", rua), ("numero", numero)) if v and (k != "rua" or est == "cad/rua")}
+        for est, m, _, rua, numero, _ in ENDERECOS
+    }
     for n, (cat, est, msg, llm, _) in enumerate(todos_os_casos(), 1):
         if (est, msg) in vistos:
             continue
         vistos.add((est, msg))
+        if cat == "endereco":
+            certo = endereco_certo[(est, msg)]
+            llm = {**llm, "dados": certo, "eventos": ["DADO_INFORMADO"] if certo else llm["eventos"]}
         exigidos = [e for e in llm["eventos"] if e in sempre]
         if cat in {"confirmacao", "typo"} and "CONFIRMACAO" in llm["eventos"]:
             exigidos.append("CONFIRMACAO")
