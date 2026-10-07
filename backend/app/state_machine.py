@@ -1324,9 +1324,29 @@ def _decidir_agendamento(
 
 
 def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
-    decisao = _decidir(estado, resolucao)
-    decisao = _resumo_quando_cadastro_completou(decisao, estado)
-    return _validar_cpf_antes_de_responder_duvida(decisao, estado, resolucao)
+    """Decisão do turno: o funil (`_decidir`) e, em volta dele, a conversa (`app.conversa`)."""
+    from app import conversa
+
+    resolucao["situacao"] = conversa.classificar(
+        str(resolucao.get("mensagem") or ""), estado, str(resolucao.get("situacao_llm") or "")
+    )
+    # Cliente que voltou depois do atendimento encerrado continua de onde parou
+    estado, dados_reabertura, sinais_reabertura = conversa.reabrir_se_encerrado(estado, resolucao)
+
+    decisao = conversa.antes(estado, resolucao)
+    if decisao is None:
+        decisao = _decidir(estado, resolucao)
+        decisao = _resumo_quando_cadastro_completou(decisao, estado)
+        decisao = _validar_cpf_antes_de_responder_duvida(decisao, estado, resolucao)
+        decisao = conversa.depois(decisao, estado, resolucao)
+
+    if dados_reabertura:
+        decisao.atualizar_dados = {**dados_reabertura, **(decisao.atualizar_dados or {})}
+    if sinais_reabertura:
+        ctx = dict(decisao.contexto_resposta or {})
+        ctx["sinais"] = [*sinais_reabertura, *ctx.get("sinais", [])]
+        decisao.contexto_resposta = ctx
+    return decisao
 
 
 def _precisa_confirmar_local(

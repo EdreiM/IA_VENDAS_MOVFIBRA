@@ -383,6 +383,14 @@ def _detectar_plano_na_mensagem(msg: str) -> str:
             if rotulo in _PLANOS_GENERICOS and not tem_contexto:
                 continue
             return rotulo
+    # Preço de outra empresa ("a concorrente faz por 99", "hoje eu pago 80") é objeção,
+    # não escolha de plano pelo valor.
+    if re.search(
+        r"\b(concorr\w+|outr[ao] (operadora|empresa|provedor|internet)|(eu )?pago (hoje|so|apenas|\d)|"
+        r"hoje (eu )?pago|pagava)\b",
+        msg,
+    ):
+        return ""
     # Preço só com contexto explícito de plano — evita confundir CPF (604...) com plano
     if re.search(r"\b(?:plano|de|por)\s+\d{2,3}(?:[.,]\d{2})?\b", msg):
         m = re.search(r"\b(\d{2,3}(?:[.,]\d{2})?)\b", msg)
@@ -2239,6 +2247,38 @@ def _reconciliar_com_llm(
 
 
 def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any]) -> Interpretacao:
+    """Interpretação do turno: eventos e dados conferidos pelas regras + leitura de conversa."""
+    interpretacao = _parse_interpretacao(raw, mensagem_cliente, estado)
+    interpretacao.situacao, interpretacao.nota = _leitura_de_conversa(raw, mensagem_cliente)
+    return interpretacao
+
+
+def _leitura_de_conversa(raw: str, mensagem_cliente: str) -> tuple[str, str]:
+    """`situacao` e `nota` do interpretador (ver app/conversa.py), sem passar pelas regras de dados."""
+    from app.conversa import SITUACOES_LLM
+
+    try:
+        data = json.loads(_strip_markdown(raw))
+    except json.JSONDecodeError:
+        return "", ""
+    if not isinstance(data, dict):
+        return "", ""
+    situacao = texto(data.get("situacao")).upper()
+    if situacao not in SITUACOES_LLM:
+        situacao = ""
+    nota = re.sub(r"\s+", " ", texto(data.get("nota")))[:160]
+    # Nota não é lugar de dado de cadastro nem cópia da mensagem
+    if (
+        re.search(r"\d{5,}", re.sub(r"\D", "", nota))
+        or "@" in nota
+        or normalizar_texto(nota) == normalizar_texto(mensagem_cliente)
+        or len(nota) < 8
+    ):
+        nota = ""
+    return situacao, nota
+
+
+def _parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any]) -> Interpretacao:
     try:
         data = json.loads(_strip_markdown(raw))
     except json.JSONDecodeError:

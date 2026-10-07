@@ -8,6 +8,7 @@ from typing import Any
 
 from openai import BadRequestError
 
+from app.conversa import SITUACOES_LLM
 from app.llm import chat, modelo_ativo
 from app.models import CAMPOS_DADOS, Evento
 
@@ -84,6 +85,7 @@ rua atual: {estado.get('rua') or ''}
 numero atual: {estado.get('numero') or ''}
 cadastro_completo: {bool(estado.get('cadastro_completo'))}
 tópico recente: {estado.get('ultimo_topico') or ''}
+o que o cliente já contou (notas): {'; '.join(ln for ln in str(estado.get('notas_conversa') or '').split(chr(10)) if ln.strip()) or '(nada)'}
 ÚLTIMA MENSAGEM DA EVA: {estado.get('ultima_mensagem_sofia') or ''}
 """
 
@@ -142,7 +144,8 @@ Regras rápidas:
 - "pode ser esse" / "sim" / "quero esse" (sem nome de plano) → CONFIRMACAO, dados.plano=""
 - Depois de uma lista de planos da Eva: "o segundo" / "pode ser o último" → PLANO_INFORMADO + dados.plano só com o nome do plano nessa posição da lista (ex.: "MOV SUPER+")
 - "pode ser o infinity" / "sim, o one+" / "vou de flex" (nomeia um plano) → PLANO_INFORMADO + dados.plano, NÃO CONFIRMACAO
-- Objeção ou adiamento ("tá caro", "vou pensar", "deixa eu ver", "depois eu vejo", "sim mas tá caro") → OUTRO; nunca CONFIRMACAO
+- Objeção ou adiamento ("tá caro", "vou pensar", "deixa eu ver", "depois eu vejo", "sim mas tá caro") → OUTRO; nunca CONFIRMACAO (e preencha situacao)
+- Mensagem "[audio]", "[image]", "[file]" ou "[video]": o cliente mandou mídia sem texto → OUTRO, dados vazios
 - "não entendi" / "como assim?" / "não sei" → OUTRO ou PERGUNTA; nunca NEGACAO
 - "tem outro?" / "quero outro plano" / "muda o plano" → PEDIU_TROCAR_PLANO
 - "esse não" → NEGACAO
@@ -184,8 +187,20 @@ Formato:
   }},
   "campos_corrigidos": [],
   "pergunta": "",
+  "situacao": "",
+  "nota": "",
   "confianca": 0.95
 }}
+
+situacao — como o cliente reagiu ao que a Eva pediu por último. Deixe "" quando ele respondeu o que foi pedido, fez uma pergunta comum ou seguiu o atendimento.
+- ESPERA: pediu um tempo para pegar ou procurar ("pera aí", "já mando", "vou procurar")
+- ADIAMENTO: quer pensar ou deixar para depois ("vou pensar", "depois eu vejo", "vou falar com minha esposa")
+- IMPEDIMENTO: não tem, não sabe ou não conseguiu o que foi pedido ("não tenho e-mail", "não sei meu CEP", "não consegui abrir o PDF", "nenhum desses horários dá pra mim")
+- OBJECAO_PRECO: achou caro ou comparou o preço com outra empresa
+- NAO_ENTENDEU: não entendeu o que a Eva pediu ou explicou
+- SUPORTE: a pessoa JÁ É CLIENTE da MOV e quer resolver algo do serviço que já tem (internet caiu ou está lenta, boleto ou 2ª via, técnico que não veio, cancelar ou mudar o serviço atual). Dúvida de quem está contratando ("a internet cai muito?", "como vou pagar a fatura?", "tem suporte 24h?") NÃO é SUPORTE.
+
+nota — um fato que o cliente contou NESTA mensagem e que vale lembrar no resto do atendimento, em uma frase curta na terceira pessoa. Ex.: "só pode receber o técnico à tarde", "a instalação é na casa da mãe dele", "trabalha em home office e precisa de internet estável", "achou o plano caro". Não anote dado de cadastro (nome, CPF, e-mail, telefone, endereço), pergunta, cumprimento nem o que já está nas notas. Na maioria das mensagens fica "".
 
 confianca (0 a 1): quão certo você está da interpretação.
 - 0.95+: mensagem clara (dado explícito, confirmação óbvia, pergunta direta).
@@ -218,7 +233,9 @@ SCHEMA_INTERPRETACAO: dict[str, Any] = {
         "schema": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["eventos", "dados", "campos_corrigidos", "pergunta", "confianca"],
+            "required": [
+                "eventos", "dados", "campos_corrigidos", "pergunta", "situacao", "nota", "confianca",
+            ],
             "properties": {
                 "eventos": {
                     "type": "array",
@@ -235,6 +252,8 @@ SCHEMA_INTERPRETACAO: dict[str, Any] = {
                     "items": {"type": "string", "enum": list(CAMPOS_DADOS)},
                 },
                 "pergunta": {"type": "string"},
+                "situacao": {"type": "string", "enum": list(SITUACOES_LLM)},
+                "nota": {"type": "string"},
                 "confianca": {"type": "number"},
             },
         },

@@ -3,6 +3,7 @@ import { ReactNode } from "react";
 export type Tab =
   | "chat"
   | "metricas"
+  | "atencao"
   | "conversas"
   | "clientes"
   | "planos"
@@ -19,6 +20,7 @@ export const NAV_GROUPS: { title: string; tabs: { id: Tab; label: string }[] }[]
     tabs: [
       { id: "chat", label: "Simulador" },
       { id: "metricas", label: "Métricas" },
+      { id: "atencao", label: "Pontos de atenção" },
       { id: "conversas", label: "Conversas" },
       { id: "clientes", label: "Clientes" },
     ],

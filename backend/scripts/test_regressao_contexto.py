@@ -2499,13 +2499,14 @@ def test_plano_bloqueado_pos_cadastro() -> None:
             "confianca": 0.9,
         },
     )
-    _assert(
-        dec.objetivo_resposta == "INFORMAR_PLANO_BLOQUEADO_POS_CADASTRO",
-        dec.objetivo_resposta,
-    )
+    # Antes a Eva perguntava "posso te encaminhar para um atendente?" e o "sim" do cliente
+    # era lido como aceite dos termos. Agora ela já encaminha.
+    _assert(dec.acao == "TRANSFERIR_HUMANO", dec.acao)
+    _assert(dec.fase == "transferido", dec.fase)
+    _assert("trocar de plano" in dec.motivo, dec.motivo)
     txt = gerar_resposta(dec, estado)
     _assert("atendente" in txt.casefold() or "equipe" in txt.casefold(), txt)
-    _assert("super+" in txt.casefold(), txt)
+    _assert("?" not in txt, txt)
 
 
 def test_alteracao_bloqueada_pos_cadastro() -> None:
@@ -2527,12 +2528,13 @@ def test_alteracao_bloqueada_pos_cadastro() -> None:
             "confianca": 0.9,
         },
     )
-    _assert(
-        dec.objetivo_resposta == "INFORMAR_ALTERACAO_BLOQUEADA_POS_CADASTRO",
-        dec.objetivo_resposta,
-    )
+    # Mesma razão do teste acima: encaminha em vez de perguntar se pode encaminhar
+    _assert(dec.acao == "TRANSFERIR_HUMANO", dec.acao)
+    _assert(dec.fase == "transferido", dec.fase)
+    _assert("alterar dados" in dec.motivo, dec.motivo)
     txt = gerar_resposta(dec, estado)
     _assert("atendente" in txt.casefold() or "equipe" in txt.casefold(), txt)
+    _assert("?" not in txt, txt)
 
 
 def test_troca_plano_retoma_cadastro() -> None:

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import threading
 import time
 from typing import Any
 
@@ -39,6 +42,8 @@ from app.state_machine import (
     decidir_resultado_imagem_plano,
     retomar_duvida_apos_cpf,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def tem_pergunta(interpretacao: Any) -> bool:
@@ -273,12 +278,22 @@ def _enriquecer_com_rag(
         "INFORMAR_CANCELAMENTO_E_RETOMAR",
         "INFORMAR_INSTALACAO_E_RETOMAR",
     }
+    ctx_dec = decisao.contexto_resposta or {}
+    # Objeção de preço ou "não tenho esse dado": a base pode trazer o argumento ou a alternativa
+    situacao = str((ctx_dec.get("conversa") or {}).get("situacao") or "")
+    if situacao in {"OBJECAO_PRECO", "IMPEDIMENTO"}:
+        rag = consultar_rag(pergunta=mensagem, mensagem=mensagem, estado=estado, plano=None)
+        if rag.get("encontrado") or rag.get("chunks") or rag.get("resposta"):
+            decisao.contexto_resposta = {**ctx_dec, "rag": rag}
+        return decisao
+    if situacao:
+        return decisao
+
     if not pergunta and decisao.objetivo_resposta not in (
         objetivos_com_rag | objetivos_com_texto_reserva
     ):
         return decisao
 
-    ctx_dec = decisao.contexto_resposta or {}
     if decisao.objetivo_resposta == "PEDIR_ACEITE_TERMOS":
         return decisao
     plano = ctx_dec.get("plano") or {}
@@ -304,6 +319,43 @@ def _enriquecer_com_rag(
     ctx["rag"] = rag
     decisao.contexto_resposta = ctx
     return decisao
+
+
+def _registrar_pergunta_sem_resposta(
+    estado: dict[str, Any], decisao: Decisao, mensagem: str
+) -> None:
+    """A Eva disse que vai confirmar com a equipe: a equipe precisa ficar sabendo.
+
+    A pergunta entra na lista do painel (para completar a RAG) e vira nota privada
+    na conversa do Chatwoot. Falha aqui nunca derruba o atendimento.
+    """
+    id_cliente = str(estado.get("id_cliente") or "")
+    pergunta = str(decisao.pergunta or mensagem or "").strip()
+    if not id_cliente or not pergunta:
+        return
+    try:
+        db.registrar_pergunta_sem_resposta(
+            id_cliente,
+            pergunta,
+            mensagem=mensagem,
+            fase=str(estado.get("fase") or ""),
+            motivo="base de conhecimento sem resposta",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Falha ao registrar pergunta sem resposta")
+    cid = str(estado.get("conversation_id") or "").strip()
+    if not cid:
+        return
+    from app.integrations.chatwoot import enviar_mensagem
+
+    nota = (
+        f'[Eva] Não encontrei na base de conhecimento a resposta para: "{pergunta[:300]}". '
+        "Respondi que vou confirmar com a equipe."
+    )
+    # Em segundo plano: a nota não pode atrasar a resposta ao cliente
+    threading.Thread(
+        target=enviar_mensagem, args=(cid, nota), kwargs={"private": True}, daemon=True
+    ).start()
 
 
 def process_message(
@@ -339,7 +391,13 @@ def process_message(
     historico_prev = db.historico_recente(id_cliente, limite=9)
     estado_antes = snapshot_estado(estado)
 
-    raw = interpretar(mensagem, estado, historico=historico_prev)
+    from app import conversa
+
+    if conversa.tipo_de_midia(mensagem):
+        # Áudio/imagem sem texto: não há o que interpretar (ver conversa.MIDIA)
+        raw = json.dumps({"eventos": ["OUTRO"], "dados": {}, "confianca": 0.99})
+    else:
+        raw = interpretar(mensagem, estado, historico=historico_prev)
     interpretacao = parse_interpretacao(raw, mensagem, estado)
 
     from app.contexto_conversa import enriquecer_pergunta
@@ -372,6 +430,10 @@ def process_message(
         topico_meta["limpar_topico"] = True
     if interpretacao.pergunta:
         topico_meta["ultima_pergunta_cliente"] = interpretacao.pergunta
+    if interpretacao.nota:
+        notas = conversa.juntar_nota(estado.get("notas_conversa"), interpretacao.nota)
+        if notas != str(estado.get("notas_conversa") or ""):
+            topico_meta["notas_conversa"] = notas
     if topico_meta:
         estado = db.salvar_transicao(
             id_cliente,
@@ -413,6 +475,7 @@ def process_message(
     }:
         decisao.pergunta = interpretacao.pergunta
 
+    sinais_do_turno: list[str] = list((decisao.contexto_resposta or {}).get("sinais") or [])
     for _ in range(5):
         if decisao.acao in {"RESPONDER", "TRANSFERIR_HUMANO", "AGUARDAR"}:
             break
@@ -423,6 +486,7 @@ def process_message(
             decisao.atualizar_dados,
         )
         decisao = _executar_acao(estado, decisao)
+        sinais_do_turno += list((decisao.contexto_resposta or {}).get("sinais") or [])
 
     from app.plano_intencao import contexto_por_objetivo_resposta
 
@@ -452,7 +516,7 @@ def process_message(
         resposta = ""
     else:
         decisao = _enriquecer_com_rag(decisao, estado, mensagem)
-        historico = db.historico_recente(id_cliente, limite=6)
+        historico = db.historico_recente(id_cliente, limite=10)
         resposta = gerar_resposta(
             decisao, estado, historico=historico, mensagem_cliente=mensagem
         )
@@ -492,6 +556,17 @@ def process_message(
     rag = ctx_final.get("rag") if isinstance(ctx_final.get("rag"), dict) else {}
     rag_hit = bool(rag.get("encontrado") or rag.get("chunks") or rag.get("resposta"))
 
+    sinais = [str(s) for s in [*sinais_do_turno, *(ctx_final.get("sinais") or [])] if s]
+    if decisao.objetivo_resposta == "CLARIFICAR_INTENCAO":
+        sinais.append("esclarecimento")
+    if decisao.acao == "AGUARDAR":
+        sinais.append("silencio")
+    sem_base = bool(ctx_final.get("sem_base") or ctx_final.get("rag_vazia"))
+    if sem_base and decisao.acao != "AGUARDAR":
+        sinais.append("sem_base")
+        _registrar_pergunta_sem_resposta(estado, decisao, mensagem)
+    sinais = list(dict.fromkeys(sinais))
+
     imagens = _imagens_plano_do_contexto(ctx_final)
     # Painel local: registra imagem no histórico; Chatwoot já recebeu via webhook/API
     cid_conv = str(estado.get("conversation_id") or conversation_id or "").strip()
@@ -520,6 +595,7 @@ def process_message(
         estado_antes=estado_antes,
         interpretacao_llm=raw,
         confianca=float(interpretacao.confianca or 0),
+        sinais=sinais,
     )
 
     return TurnoResultado(

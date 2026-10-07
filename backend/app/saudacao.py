@@ -98,7 +98,9 @@ def mensagem_pedir_local_para_planos() -> str:
     )
 
 
-def mensagem_cumprimento_retomar(mensagem_cliente: str, pendente: str = "") -> str:
+def mensagem_cumprimento_retomar(
+    mensagem_cliente: str, pendente: str = "", estado: dict | None = None
+) -> str:
     """Cliente cumprimenta no meio do fluxo — responde na altura e retoma."""
     # No meio da conversa, "oi" → Olá; se não houver saudação clara, ainda responde leve
     tipo = detectar_saudacao(mensagem_cliente)
@@ -107,13 +109,15 @@ def mensagem_cumprimento_retomar(mensagem_cliente: str, pendente: str = "") -> s
     else:
         cumprimento = frase_cumprimento(mensagem_cliente, usar_relogio_se_padrao=False)
 
-    from app.cadastro_mensagens import par_de, pedir_campos
+    from app.cadastro_mensagens import campos_para_pedir, par_de, pedir_campos
 
     cadastro_campos = {
         "nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero",
     }
     if pendente in cadastro_campos:
-        retoma = pedir_campos(list(par_de(pendente) or [pendente]))
+        # Com o estado em mãos, pede só o que falta do par (não o dado que já foi informado)
+        faltam = campos_para_pedir(estado, pendente) if estado else []
+        retoma = pedir_campos(faltam or list(par_de(pendente) or [pendente]))
     else:
         retomadas = {
             "localizacao": texto_pedir_localizacao_instalacao(compacto=True),

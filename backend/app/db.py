@@ -224,6 +224,20 @@ SCHEMA_STATEMENTS = [
         created_at TIMESTAMPTZ
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS perguntas_sem_resposta_ia (
+        id BIGSERIAL PRIMARY KEY,
+        id_cliente TEXT NOT NULL,
+        pergunta TEXT NOT NULL,
+        mensagem TEXT,
+        fase TEXT,
+        motivo TEXT,
+        resolvida INTEGER DEFAULT 0,
+        created_at TIMESTAMPTZ
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_perguntas_sem_resposta ON perguntas_sem_resposta_ia(resolvida, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_turno_log_criado ON turno_log_ia(created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_historico_cliente ON historico_mensagens_ia(id_cliente, id)",
     "CREATE INDEX IF NOT EXISTS idx_turno_log_cliente ON turno_log_ia(id_cliente, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_estado_conversation ON estado_cliente_ia(conversation_id)",
@@ -310,6 +324,7 @@ def _row_to_dict(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "ativado_ixc",
         "imagem_plano_enviada",
         "rag_hit",
+        "resolvida",
     ):
         if key in data and data[key] is not None:
             data[key] = bool(data[key])
@@ -395,6 +410,8 @@ def _migrar_colunas(cur: Any) -> None:
         ("last_client_message_at", "TIMESTAMPTZ"),
         ("last_followup_at", "TIMESTAMPTZ"),
         ("contexto_plano", "TEXT"),
+        ("tentativas_travadas", "INTEGER DEFAULT 0"),
+        ("notas_conversa", "TEXT"),
     ]
     for nome, tipo in extras:
         if nome not in cols:
@@ -408,6 +425,7 @@ def _migrar_turno_log(cur: Any) -> None:
         ("estado_antes", "TEXT"),
         ("interpretacao_llm", "TEXT"),
         ("confianca", "REAL"),
+        ("sinais", "TEXT"),
     ]
     for nome, tipo in extras:
         if nome not in cols:
@@ -670,8 +688,14 @@ def marcar_encerrado_inatividade(id_cliente: str, *, motivo: str = "") -> None:
             cur.execute(
                 """
                 UPDATE estado_cliente_ia
-                SET fase = 'finalizado',
+                SET retorno_estado = CASE
+                        WHEN COALESCE(fase, '') NOT IN ('finalizado', 'transferido')
+                        THEN json_build_object('fase', fase, 'aguardando', aguardando)::text
+                        ELSE retorno_estado
+                    END,
+                    fase = 'finalizado',
                     aguardando = NULL,
+                    tentativas_travadas = 0,
                     motivo_transferencia = COALESCE(NULLIF(%s, ''), motivo_transferencia),
                     updated_at = %s
                 WHERE id_cliente = %s
@@ -711,6 +735,11 @@ def aplicar_transicao(
     as mesmas regras em memória.
     """
     novo = dict(estado)
+    if atualizar.get("reiniciar_atendimento"):
+        # Cliente voltou depois de encerrado sem venda: funil limpo, histórico mantido
+        from app.conversa import estado_reiniciado
+
+        novo = estado_reiniciado(novo)
     novo["fase"] = fase
     novo["aguardando"] = aguardando
     novo["versao_fluxo"] = 4
@@ -812,6 +841,16 @@ def aplicar_transicao(
         novo["contexto_plano"] = (
             str(val_ctx).strip() if val_ctx is not None else None
         ) or None
+    if "tentativas_travadas" in atualizar:
+        try:
+            novo["tentativas_travadas"] = max(0, int(atualizar["tentativas_travadas"] or 0))
+        except (TypeError, ValueError):
+            novo["tentativas_travadas"] = 0
+    if "notas_conversa" in atualizar:
+        novo["notas_conversa"] = str(atualizar["notas_conversa"] or "").strip() or None
+    if "retorno_estado" in atualizar:
+        # Onde o atendimento estava quando foi encerrado sem venda (ver conversa.retomar_encerrado)
+        novo["retorno_estado"] = atualizar["retorno_estado"] or None
     return novo
 
 
@@ -851,6 +890,7 @@ def salvar_transicao(
                     fidelidade_aceita = %s, ativado_ixc = %s,
                     imagem_plano_enviada = %s, imagens_plano_enviadas = %s,
                     contexto_plano = %s,
+                    tentativas_travadas = %s, notas_conversa = %s, retorno_estado = %s,
                     updated_at = %s
                 WHERE id_cliente = %s
                 """,
@@ -914,10 +954,24 @@ def salvar_transicao(
                     if isinstance(novo.get("imagens_plano_enviadas"), list)
                     else (novo.get("imagens_plano_enviadas") or "[]"),
                     novo.get("contexto_plano"),
+                    int(novo.get("tentativas_travadas") or 0),
+                    novo.get("notas_conversa"),
+                    json.dumps(novo.get("retorno_estado"), ensure_ascii=False)
+                    if isinstance(novo.get("retorno_estado"), dict)
+                    else (novo.get("retorno_estado") or None),
                     _now(),
                     id_cliente,
                 ),
             )
+            if atualizar.get("reiniciar_atendimento"):
+                cur.execute(
+                    """
+                    UPDATE estado_cliente_ia
+                    SET cumprimento_feito = 0, followup_count = 0, ultima_mensagem_sofia = NULL
+                    WHERE id_cliente = %s
+                    """,
+                    (id_cliente,),
+                )
 
     return carregar_ou_criar_estado(id_cliente)
 
@@ -1020,6 +1074,7 @@ def log_turno(
     estado_antes: dict[str, Any] | None = None,
     interpretacao_llm: str = "",
     confianca: float | None = None,
+    sinais: list[str] | None = None,
 ) -> None:
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -1028,8 +1083,8 @@ def log_turno(
                 INSERT INTO turno_log_ia (
                     id_cliente, mensagem_cliente, eventos, acao, objetivo,
                     fase, aguardando, topico, rag_hit, duracao_ms, message_id, created_at,
-                    estado_antes, interpretacao_llm, confianca
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    estado_antes, interpretacao_llm, confianca, sinais
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     id_cliente,
@@ -1047,8 +1102,55 @@ def log_turno(
                     json.dumps(estado_antes, ensure_ascii=False) if estado_antes else None,
                     (interpretacao_llm or "")[:4000] or None,
                     confianca,
+                    json.dumps(sinais, ensure_ascii=False) if sinais else None,
                 ),
             )
+
+
+def registrar_pergunta_sem_resposta(
+    id_cliente: str, pergunta: str, *, mensagem: str = "", fase: str = "", motivo: str = ""
+) -> None:
+    """Dúvida que a base de conhecimento não respondeu — vira pendência no painel."""
+    pergunta = (pergunta or "").strip()
+    if not pergunta:
+        return
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO perguntas_sem_resposta_ia
+                    (id_cliente, pergunta, mensagem, fase, motivo, resolvida, created_at)
+                VALUES (%s, %s, %s, %s, %s, 0, %s)
+                """,
+                (id_cliente, pergunta[:500], (mensagem or "")[:1000], fase, motivo[:200], _now()),
+            )
+
+
+def listar_perguntas_sem_resposta(*, resolvidas: bool = False, limite: int = 100) -> list[dict[str, Any]]:
+    limite = max(1, min(int(limite or 100), 500))
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, id_cliente, pergunta, mensagem, fase, motivo, resolvida, created_at
+                FROM perguntas_sem_resposta_ia
+                WHERE resolvida = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (int(bool(resolvidas)), limite),
+            )
+            return [_row_to_dict(r) or {} for r in cur.fetchall()]
+
+
+def marcar_pergunta_resolvida(pergunta_id: int, resolvida: bool = True) -> bool:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE perguntas_sem_resposta_ia SET resolvida = %s WHERE id = %s",
+                (int(bool(resolvida)), int(pergunta_id)),
+            )
+            return cur.rowcount > 0
 
 
 def mensagem_ja_processada(message_id: str) -> bool:

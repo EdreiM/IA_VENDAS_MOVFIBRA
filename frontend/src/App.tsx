@@ -38,6 +38,9 @@ import {
   fetchFerramentas,
   syncCatalogoFerramentas,
   fetchFunil,
+  fetchAtencao,
+  resolverPerguntaSemResposta,
+  Atencao,
   fetchHealth,
   fetchLabels,
   fetchPlanos,
@@ -237,6 +240,8 @@ export default function App() {
 
   const [resumo, setResumo] = useState<Resumo | null>(null);
   const [funil, setFunil] = useState<Funil | null>(null);
+  const [atencao, setAtencao] = useState<Atencao | null>(null);
+  const [atencaoDias, setAtencaoDias] = useState(7);
   const [conversas, setConversas] = useState<Conversa[]>([]);
   const [statusFiltro, setStatusFiltro] = useState("");
   const [convBusca, setConvBusca] = useState("");
@@ -394,6 +399,10 @@ export default function App() {
     setResumo(r);
     setFunil(f);
   }, []);
+
+  const refreshAtencao = useCallback(async () => {
+    setAtencao(await fetchAtencao(atencaoDias));
+  }, [atencaoDias]);
 
   const refreshConversas = useCallback(async () => {
     const c = await fetchConversas(60, {
@@ -567,6 +576,7 @@ export default function App() {
         /* só health + token — chat é interativo */
       }
       if (tab === "metricas") await refreshMetrics();
+      if (tab === "atencao") await refreshAtencao();
       if (tab === "conversas") {
         await refreshConversas();
         const [a, t, l] = await Promise.all([fetchAgents(), fetchTeams(), fetchLabels()]);
@@ -591,6 +601,7 @@ export default function App() {
     tab,
     refreshUnidades,
     refreshMetrics,
+    refreshAtencao,
     refreshConversas,
     refreshClientes,
     refreshPlanos,
@@ -1501,6 +1512,189 @@ export default function App() {
                   </div>
                 ))}
               </div>
+            </div>
+          </section>
+        )}
+
+        {tab === "atencao" && (
+          <section className="panel">
+            <PageHeader
+              title="Pontos de atenção"
+              subtitle="Onde a conversa não fluiu: cliente que travou num passo, objeções, perguntas que a base de conhecimento não respondeu e transferências."
+            />
+            <div className="toolbar" style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16 }}>
+              <label className="muted" htmlFor="atencao-dias">
+                Período
+              </label>
+              <select
+                id="atencao-dias"
+                value={atencaoDias}
+                onChange={(e) => setAtencaoDias(Number(e.target.value))}
+              >
+                <option value={1}>Hoje e ontem</option>
+                <option value={7}>Últimos 7 dias</option>
+                <option value={30}>Últimos 30 dias</option>
+              </select>
+            </div>
+            <div className="metrics-hero">
+              <div className="stat-hero">
+                <span className="stat-hero-label">Conversas</span>
+                <strong className="stat-hero-value">{atencao?.conversas ?? "—"}</strong>
+                <span className="stat-hero-hint">Com mensagem no período</span>
+              </div>
+              <div className="stat-hero">
+                <span className="stat-hero-label">Com ponto de atenção</span>
+                <strong className="stat-hero-value">{atencao?.conversas_com_atencao ?? "—"}</strong>
+                <span className="stat-hero-hint">Tiveram algum turno abaixo</span>
+              </div>
+              <div className="stat-hero">
+                <span className="stat-hero-label">Perguntas sem resposta</span>
+                <strong className="stat-hero-value">
+                  {atencao ? atencao.perguntas_sem_resposta.length : "—"}
+                </strong>
+                <span className="stat-hero-hint">Faltam na base de conhecimento</span>
+              </div>
+            </div>
+
+            <div className="funil-section">
+              <h2>O que aconteceu</h2>
+              {(atencao?.por_sinal || []).length === 0 ? (
+                <p className="muted">Nenhum ponto de atenção registrado no período.</p>
+              ) : (
+                <div className="funil">
+                  {(atencao?.por_sinal || []).map((s) => (
+                    <div key={s.sinal} className="funil-row">
+                      <span>{s.rotulo}</span>
+                      <div className="bar-wrap">
+                        <div
+                          className="bar"
+                          style={{
+                            width: `${Math.round(
+                              (s.quantidade / Math.max(1, atencao?.por_sinal[0]?.quantidade || 1)) * 100,
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                      <strong>{s.quantidade}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {(atencao?.por_etapa || []).length > 0 && (
+              <div className="funil-section">
+                <h2>Em que passo o cliente travou</h2>
+                <div className="funil">
+                  {(atencao?.por_etapa || []).map((e) => (
+                    <div key={e.etapa} className="funil-row">
+                      <span>{e.etapa.replace(/_/g, " ")}</span>
+                      <div className="bar-wrap">
+                        <div
+                          className="bar"
+                          style={{
+                            width: `${Math.round(
+                              (e.quantidade / Math.max(1, atencao?.por_etapa[0]?.quantidade || 1)) * 100,
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                      <strong>{e.quantidade}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="funil-section">
+              <h2>Perguntas que a base de conhecimento não respondeu</h2>
+              <p className="muted">
+                A Eva disse ao cliente que ia confirmar com a equipe. Inclua a resposta na base (RAG) e
+                marque como resolvida.
+              </p>
+              {(atencao?.perguntas_sem_resposta || []).length === 0 ? (
+                <p className="muted">Nenhuma pergunta pendente.</p>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Pergunta</th>
+                        <th>Etapa</th>
+                        <th>Cliente</th>
+                        <th>Quando</th>
+                        <th aria-label="Ações" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(atencao?.perguntas_sem_resposta || []).map((p) => (
+                        <tr key={p.id}>
+                          <td>{p.pergunta}</td>
+                          <td>{p.fase || "—"}</td>
+                          <td>{p.id_cliente}</td>
+                          <td>{p.created_at ? new Date(p.created_at).toLocaleString("pt-BR") : "—"}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="btn"
+                              onClick={() => {
+                                void (async () => {
+                                  try {
+                                    await resolverPerguntaSemResposta(p.id);
+                                    await refreshAtencao();
+                                  } catch (err) {
+                                    setError(err instanceof Error ? err.message : String(err));
+                                  }
+                                })();
+                              }}
+                            >
+                              Resolvida
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="funil-section">
+              <h2>Turnos recentes</h2>
+              {(atencao?.turnos_recentes || []).length === 0 ? (
+                <p className="muted">Nenhum turno com ponto de atenção no período.</p>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Quando</th>
+                        <th>Cliente</th>
+                        <th>Passo</th>
+                        <th>Mensagem do cliente</th>
+                        <th>O que aconteceu</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(atencao?.turnos_recentes || []).map((t) => (
+                        <tr key={t.id}>
+                          <td>{t.created_at ? new Date(t.created_at).toLocaleString("pt-BR") : "—"}</td>
+                          <td>{t.id_cliente}</td>
+                          <td>{(t.etapa || "—").replace(/_/g, " ")}</td>
+                          <td>{t.mensagem}</td>
+                          <td>
+                            {t.sinais
+                              .map(
+                                (s) => atencao?.por_sinal.find((x) => x.sinal === s)?.rotulo || s,
+                              )
+                              .join(" · ")}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </section>
         )}

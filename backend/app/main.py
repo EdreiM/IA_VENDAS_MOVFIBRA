@@ -674,6 +674,33 @@ def metrics_conversas(
     }
 
 
+@app.get("/metrics/atencao")
+def metrics_atencao(
+    dias: int = 7,
+    limite: int = 60,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Onde a conversa não fluiu: travas, objeções, base sem resposta, transferências."""
+    _exigir_admin(authorization, x_admin_token)
+    return metrics.atencao(dias, limite)
+
+
+@app.post("/admin/perguntas-sem-resposta/{pergunta_id}/resolver")
+def admin_resolver_pergunta_sem_resposta(
+    pergunta_id: int,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Marca a pergunta como resolvida (a resposta já foi incluída na base de conhecimento)."""
+    _exigir_admin(authorization, x_admin_token)
+    from app.db import marcar_pergunta_resolvida
+
+    if not marcar_pergunta_resolvida(pergunta_id):
+        raise HTTPException(status_code=404, detail="Pergunta não encontrada")
+    return {"ok": True, "id": pergunta_id}
+
+
 @app.get("/metrics/turnos/{id_cliente}")
 def metrics_turnos_cliente(
     id_cliente: str,

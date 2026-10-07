@@ -238,6 +238,42 @@ export const fetchConversas = (limite = 40, opts?: { unidade_id?: number; status
   if (opts?.status) q.set("status", opts.status);
   return api<{ items: Conversa[] }>(`/metrics/conversas?${q}`);
 };
+export type AtencaoTurno = {
+  id: number;
+  id_cliente: string;
+  mensagem: string;
+  etapa: string;
+  fase: string;
+  aguardando: string;
+  acao: string;
+  objetivo: string;
+  sinais: string[];
+  created_at: string | null;
+};
+export type PerguntaSemResposta = {
+  id: number;
+  id_cliente: string;
+  pergunta: string;
+  mensagem: string | null;
+  fase: string | null;
+  created_at: string | null;
+};
+export type Atencao = {
+  dias: number;
+  turnos: number;
+  conversas: number;
+  conversas_com_atencao: number;
+  por_sinal: { sinal: string; rotulo: string; quantidade: number }[];
+  por_etapa: { etapa: string; quantidade: number }[];
+  turnos_recentes: AtencaoTurno[];
+  perguntas_sem_resposta: PerguntaSemResposta[];
+};
+export const fetchAtencao = (dias = 7) => api<Atencao>(`/metrics/atencao?dias=${dias}&limite=80`);
+export const resolverPerguntaSemResposta = (id: number) =>
+  api<{ ok: boolean; id: number }>(`/admin/perguntas-sem-resposta/${id}/resolver`, {
+    method: "POST",
+  });
+
 export const fetchTurnos = (idCliente: string) =>
   api<{ items: unknown[] }>(`/metrics/turnos/${encodeURIComponent(idCliente)}`);
 

@@ -407,7 +407,18 @@ def aplicar_guards_interpretacao(
     if tinha_dado and not campos_restantes:
         eventos[:] = [e for e in eventos if e != Evento.DADO_INFORMADO.value]
 
-    if (intencao_nao_dado or tem_duvida) and not campos_restantes:
+    # "tá", "ok", "pera aí", "não tenho": conversa, não pergunta. Marcar PERGUNTA aqui fazia
+    # a Eva consultar a base e responder "prefiro confirmar com a equipe" a um simples "ok".
+    from app import conversa
+    from app.parser import eh_ack_curto
+
+    so_conversa = not tem_duvida and (
+        eh_ack_curto(bruto)
+        or conversa.classificar(bruto, estado)
+        in {conversa.ESPERA, conversa.ADIAMENTO, conversa.IMPEDIMENTO, conversa.NAO_ENTENDEU,
+            conversa.OBJECAO_PRECO, conversa.MIDIA}
+    )
+    if (intencao_nao_dado or tem_duvida) and not campos_restantes and not so_conversa:
         if Evento.CORRECAO_DADO.value not in eventos:
             if Evento.PERGUNTA.value not in eventos:
                 eventos.append(Evento.PERGUNTA.value)
