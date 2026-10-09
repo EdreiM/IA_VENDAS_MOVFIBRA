@@ -107,6 +107,9 @@ def pedir_campo(campo: str) -> str:
     return f"Me informe seu {rotulo}, por favor."
 
 
+ORDEM_CADASTRO_ACK = ("nome", "cpf", "email", "telefone", "data_nascimento", "cep", "rua", "numero")
+
+
 def anotar_e_pedir_proximo(
     *,
     campos_anotados: list[str],
@@ -143,12 +146,25 @@ def anotar_e_pedir_proximo(
         itens = [rotulos.get(c, c) for c in campos if c in rotulos]
         if not itens:
             return "Atualizei!" if corrigiu else "Anotei!"
-        verbo = "Atualizei" if corrigiu else "Anotei"
         if len(itens) == 1:
-            return f"{verbo} {itens[0]}."
-        if len(itens) == 2:
-            return f"{verbo} {itens[0]} e {itens[1]}."
-        return f"{verbo} {', '.join(itens[:-1])} e {itens[-1]}."
+            lista = itens[0]
+        elif len(itens) == 2:
+            lista = f"{itens[0]} e {itens[1]}"
+        else:
+            lista = f"{', '.join(itens[:-1])} e {itens[-1]}"
+        if corrigiu:
+            return f"Atualizei {lista}."
+        # Uma atendente não repete "Anotei X." oito vezes: a frase muda a cada passo do cadastro
+        feitos = sum(1 for c in ORDEM_CADASTRO_ACK if str(estado.get(c) or "").strip())
+        primeiro_nome = str(estado.get("nome") or "").strip().split(" ")[0] if "nome" not in campos else ""
+        chamar = f", {primeiro_nome}" if primeiro_nome else ""
+        variacoes = (
+            f"Anotei {lista}.",
+            f"Perfeito{chamar}! Anotei {lista}.",
+            f"Peguei {lista}, obrigada!",
+            f"Ótimo{chamar}, já tenho {lista}.",
+        )
+        return variacoes[feitos % len(variacoes)]
 
     anotados_ok = [
         c

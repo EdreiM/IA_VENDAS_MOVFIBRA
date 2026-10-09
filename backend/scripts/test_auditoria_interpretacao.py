@@ -617,8 +617,9 @@ def casos() -> Iterator[Caso]:
     for est in ESTADOS_CONFIRMACAO:
         for m, ev in NAO_CONFIRMA:
             if est == "termos" and ev == ["NEGACAO"]:
-                # Recusar os termos encaminha para um humano (FLUXO_SOFIA.md)
-                yield ("nao_confirma", est, m, L(ev), [fase_e("transferido"), nao_mexeu_em()])
+                # Recusou os termos: a Eva responde à objeção uma vez antes de encaminhar para um
+                # humano; a segunda recusa transfere (conferida em test_venda_consultiva.py).
+                yield ("nao_confirma", est, m, L(ev), [fase_e("termos"), nao_mexeu_em()])
                 continue
             yield ("nao_confirma", est, m, L(ev), [nao_avanca(), nao_mexeu_em()])
 

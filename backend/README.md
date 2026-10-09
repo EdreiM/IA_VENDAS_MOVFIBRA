@@ -32,6 +32,7 @@ python scripts/test_imports_internos.py
 python scripts/test_conversa_natural.py
 python scripts/test_transcricao.py
 python scripts/test_robustez.py
+python scripts/test_venda_consultiva.py
 ```
 
 `test_conversa_natural.py` cobre a conversa no meio do funil (seção abaixo): pedido de tempo, "não tenho esse dado", objeção de preço, áudio, quem já é cliente, alteração depois do cadastro, reenvio dos termos, transferência quando trava e cliente que volta depois do encerramento.
@@ -83,6 +84,21 @@ As orientações de `_GUIA_SITUACAO` dizem como conversar; não trazem regra com
 Sem chave, com falha na API, áudio mudo ou maior que 20 MB, a mensagem segue como `[audio]` e a Eva pede para o cliente escrever (situação `MIDIA`). Conversa já transferida para a equipe não é transcrita. Os turnos ficam marcados com `audio_transcrito` ou `audio_nao_transcrito` nos Pontos de atenção.
 
 `scripts/test_transcricao.py` cobre esse fluxo sem rede.
+
+## Venda consultiva
+
+A Eva mostra o plano em destaque logo depois da cobertura e investiga se ele serve ("quantos aparelhos usam a internet aí, ou o que você procura?"). A partir daí ela conduz como vendedora. `scripts/test_venda_consultiva.py` cobre tudo isto.
+
+- **Consultor de planos** (`app/consultor.py`): quando o cliente conta o que precisa ("somos 8 em casa", "queria com Disney", "só quero internet", "o mais em conta") ou diz que quer outro plano sem dizer qual, o modelo escolhe um plano **do catálogo do painel** e escreve a abertura ligando a indicação ao que o cliente disse. O código confere: o plano precisa existir no catálogo, e a abertura só cita número que esteja nos fatos. Três desfechos: indica outro plano (abertura + ficha do painel), reforça o plano que já está em conversa (sem repetir a ficha) ou pergunta o que falta para indicar. Pedido explícito da lista e plano citado pelo nome seguem o caminho de sempre; sem o modelo, também.
+- **Primeiro plano já indicado:** se o cliente contou o que precisa antes de ver plano, o primeiro mostrado é o indicado para ele, não o destaque genérico.
+- **Objeções na oferta** (`conversa.antes` → `CONTORNAR_OBJECAO`): preço, fidelidade, já ter internet de outra empresa, desconfiança, prazo. A Eva responde à objeção com fatos do plano e da base, em vez de tratar o "não quero…" como recusa do plano e oferecer outro. Para preço, entram os planos mais em conta do catálogo.
+- **Recusa dos termos:** a primeira recusa é respondida (o que a fidelidade significa e garante, pela base); a segunda transfere para a equipe.
+- **Fechamento:** enquanto o plano não foi confirmado, as respostas a dúvidas e objeções recebem o bloco "Condução da venda": ligar a resposta ao que este cliente precisa e terminar com uma pergunta de avanço, sem pressão e sem urgência inventada.
+- **Base de venda** (`pipeline.base_de_venda`): além da busca pela mensagem, uma busca pelos fatos gerais da oferta (fibra, instalação, fidelidade, suporte), guardada por 10 minutos.
+- **Base sem as linhas de preço:** de um trecho da RAG saem só as linhas "MOV X — R$ …" (preço de plano vem do painel). O resto fica — "não vendemos por megas", o que é cada benefício. Antes, um trecho com dois nomes de plano fazia a base inteira ser descartada.
+- **Cadastro conversado:** a confirmação do dado varia a cada passo e usa o primeiro nome; quando o cliente comenta algo junto do dado, o modelo escreve a reação e o código pede o próximo campo.
+
+**Nada é oferecido além do catálogo e da base.** Desconto, brinde ou condição que não esteja cadastrado não passa: o consultor só escolhe entre os planos do painel e a conferência de fatos barra número inventado.
 
 ## Proteções contra erro de leitura e invenção
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import logging
 from typing import Any
 
@@ -143,6 +145,36 @@ def consultar_rag(
 
     logger.warning("RAG provider desconhecido: %s", provider)
     return {"encontrado": False, "motivo": f"Provider inválido: {provider}", "provider": provider}
+
+
+_RE_LINHA_DE_PLANO = re.compile(r"(?i)\bmov\s+[\w+ ]{2,30}.*(r\$|\d+\s*/\s*m[eê]s)")
+
+
+def sem_linhas_de_plano(texto: str) -> str:
+    """Tira as linhas "MOV X — R$ 139/mês — ..." de um trecho da base.
+
+    Preço e benefício de plano vêm do catálogo do painel; se a base trouxer a própria
+    lista, ela pode divergir. O resto do trecho fica: "conexão 100% fibra e ilimitada",
+    o que é cada benefício, formas de pagamento. Antes, um trecho com dois nomes de
+    plano fazia a base INTEIRA ser descartada.
+    """
+    linhas = [ln for ln in str(texto or "").splitlines() if not _RE_LINHA_DE_PLANO.search(ln)]
+    return "\n".join(linhas).strip()
+
+
+def formatar_sem_catalogo(rag: dict[str, Any]) -> str:
+    """Texto da base para o prompt, sem as linhas de preço de plano."""
+    if not rag or not rag.get("encontrado"):
+        return ""
+    partes: list[str] = []
+    resposta = sem_linhas_de_plano(rag.get("resposta") or "")
+    if resposta:
+        partes.append(f"Resposta resumida da base (confira com os trechos): {resposta}")
+    for chunk in rag.get("chunks") or []:
+        conteudo = sem_linhas_de_plano(chunk.get("conteudo") or "")
+        if conteudo:
+            partes.append(f"[{chunk.get('titulo') or 'FAQ'}] {conteudo}")
+    return "\n".join(partes).strip()
 
 
 def formatar_contexto_rag(rag: dict[str, Any]) -> str:

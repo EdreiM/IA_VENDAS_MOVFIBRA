@@ -17,12 +17,19 @@ import unicodedata
 
 from app.fala import numeros_por_extenso
 
+# "R$ 150,00", "$400,00" (a base escreve assim) e "150 reais"
 _RE_DINHEIRO = re.compile(
-    r"r\$\s*(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)"
+    r"r?\$\s*(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)"
     r"|(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?)\s*(?:reais|real)\b"
 )
 _RE_PERCENTUAL = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:%|por cento)")
-_RE_PRAZO = re.compile(r"(?<![\d/.,])(\d{1,4})\s*(dias?|meses|mes|anos?|horas?|minutos?|semanas?)\b")
+# "12h a 24h uteis" conta como horas; "14h" de um horário de agenda também (precisa estar nos fatos)
+_RE_PRAZO = re.compile(
+    r"(?<![\d/.,:])(\d{1,4})\s*(dias?|meses|mes|anos?|horas?|hrs?|h|minutos?|semanas?)\b(?!\d)"
+)
+_RE_QUANTIDADE = re.compile(
+    r"(?<![\d/.,])(\d{1,3})\s*(dispositivos?|aparelhos?|gb de internet|gb)\b"
+)
 _RE_VELOCIDADE = re.compile(r"(?<![\d/.,])(\d{1,5})\s*(megas?|mb|mbps|gigas?|gb)\b")
 
 Afirmacao = tuple[str, float]
@@ -66,10 +73,13 @@ def afirmacoes(texto: str) -> set[Afirmacao]:
             out.add(("mes", n))
         elif unidade.startswith("dia"):
             out.add(("dia", n))
-        elif unidade.startswith("hora"):
+        elif unidade.startswith("h"):
             out.add(("hora", n))
         else:
             out.add(("minuto", n))
+    for m in _RE_QUANTIDADE.finditer(t):
+        if m.group(2).startswith(("dispositivo", "aparelho")):
+            out.add(("dispositivo", float(m.group(1))))
     for m in _RE_VELOCIDADE.finditer(t):
         n, unidade = float(m.group(1)), m.group(2)
         out.add(("mega", n * 1000 if unidade.startswith("g") else n))
@@ -110,6 +120,7 @@ def _rotulo(af: Afirmacao) -> str:
         "hora": f"{num} horas",
         "minuto": f"{num} minutos",
         "mega": f"{num} mega",
+        "dispositivo": f"{num} dispositivos",
     }[tipo]
 
 
@@ -122,6 +133,7 @@ def afirmacoes_sem_base(resposta: str, fatos: str) -> list[str]:
     valores = sorted({n for tipo, n in base if tipo == "dinheiro"})
     # Diferença entre dois valores dos fatos ("você economiza R$ 20") é conta, não invenção
     diferencas = {round(a - b, 2) for a in valores for b in valores if a > b}
+    # "8 aparelhos" que o próprio cliente disse aparece nos fatos (mensagem, notas, conversa)
     sem_base: list[str] = []
     for af in sorted(ditas):
         if _equivalentes(af) & base:

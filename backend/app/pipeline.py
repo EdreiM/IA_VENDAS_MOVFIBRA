@@ -198,7 +198,17 @@ def _executar_acao(estado: dict[str, Any], decisao: Decisao) -> Decisao:
 
     if acao == "BUSCAR_PLANO_INICIAL":
         plano = plano_destaque(estado)
+        # Cliente já contou o que precisa antes de ver plano ("somos 8 em casa"): o primeiro
+        # plano mostrado é o indicado para ele, não o destaque genérico.
+        if str(estado.get("notas_conversa") or "").strip():
+            rec = _consultar_consultor(estado, "(o cliente ainda não viu nenhum plano)")
+            if rec and rec.get("plano"):
+                dec = decidir_plano_inicial(rec["plano"], estado)
+                return _com_contexto(dec, abertura_plano=rec.get("abertura") or "", sinais=["plano_recomendado"])
         return decidir_plano_inicial(plano, estado)
+
+    if acao == "RECOMENDAR_PLANO":
+        return _recomendar_plano(estado, decisao)
 
     if acao == "BUSCAR_PLANOS":
         # Persist desvio already applied in salvar_transicao before this call
@@ -252,6 +262,123 @@ def _executar_acao(estado: dict[str, Any], decisao: Decisao) -> Decisao:
     return decisao
 
 
+def _com_contexto(decisao: Decisao, *, sinais: list[str] | None = None, **extra: Any) -> Decisao:
+    ctx = dict(decisao.contexto_resposta or {})
+    ctx.update({k: v for k, v in extra.items() if v})
+    if sinais:
+        ctx["sinais"] = [*ctx.get("sinais", []), *sinais]
+    decisao.contexto_resposta = ctx
+    return decisao
+
+
+_KIT_DE_VENDA: dict[str, Any] = {"quando": 0.0, "rag": None}
+_KIT_TTL_SEGUNDOS = 600
+_PERGUNTA_DO_KIT = "conexão fibra ilimitada, instalação, fidelidade, equipamentos, formas de pagamento, suporte"
+
+
+def base_de_venda(estado: dict[str, Any], mensagem: str) -> dict[str, Any]:
+    """Trechos da base para vender: o que responde à mensagem + os fatos gerais da oferta.
+
+    Para "já tenho internet" ou "tá caro" a busca pela própria mensagem costuma voltar
+    vazia; a segunda busca traz o que a empresa tem a dizer sobre a oferta (fibra,
+    instalação, fidelidade, suporte). Ela é guardada por alguns minutos.
+    """
+    agora = time.time()
+    if _KIT_DE_VENDA["rag"] is None or agora - float(_KIT_DE_VENDA["quando"]) > _KIT_TTL_SEGUNDOS:
+        kit = consultar_rag(pergunta=_PERGUNTA_DO_KIT, mensagem=_PERGUNTA_DO_KIT, estado=estado, plano=None)
+        if not kit.get("erro"):
+            _KIT_DE_VENDA.update(quando=agora, rag=kit)
+    else:
+        kit = _KIT_DE_VENDA["rag"]
+    direto = consultar_rag(pergunta=mensagem, mensagem=mensagem, estado=estado, plano=None) if mensagem.strip() else {}
+    junto: dict[str, Any] = {"encontrado": False, "resposta": "", "chunks": [], "fontes": []}
+    vistos: set[str] = set()
+    for r in (direto, kit or {}):
+        if not (r.get("encontrado") or r.get("chunks") or r.get("resposta")):
+            continue
+        junto["encontrado"] = True
+        if r is direto and r.get("resposta"):
+            junto["resposta"] = r["resposta"]
+        for c in r.get("chunks") or []:
+            chave = str(c.get("conteudo") or "")
+            if chave and chave not in vistos:
+                vistos.add(chave)
+                junto["chunks"].append(c)
+    return junto
+
+
+def _consultar_consultor(estado: dict[str, Any], mensagem: str) -> dict[str, Any] | None:
+    from app import consultor
+    from app.rag import formatar_sem_catalogo
+
+    try:
+        id_cliente = str(estado.get("id_cliente") or "")
+        historico = db.historico_recente(id_cliente, limite=10) if id_cliente else []
+        base = formatar_sem_catalogo(base_de_venda(estado, mensagem if not mensagem.startswith("(") else ""))
+        return consultor.recomendar(estado, mensagem, listar_planos(estado), historico=historico, base=base)
+    except Exception:  # noqa: BLE001 — sem consultor, o fluxo de sempre continua valendo
+        logger.exception("Falha no consultor de planos")
+        return None
+
+
+def _recomendar_plano(estado: dict[str, Any], decisao: Decisao) -> Decisao:
+    """Cliente contou o que procura: indica o plano certo, reforça o atual ou pergunta o que falta."""
+    ctx = decisao.contexto_resposta or {}
+    mensagem = str(ctx.get("mensagem") or "")
+    aguardando_antes = str(ctx.get("aguardando_antes") or "confirmacao_plano")
+    estado_antes = {**estado, "aguardando": aguardando_antes}
+    sinais = list(ctx.get("sinais") or [])
+
+    rec = _consultar_consultor(estado_antes, mensagem)
+    if rec is None:
+        # Sem o consultor (modelo fora do ar, resposta inválida): o caminho de sempre
+        resolucao = dict(ctx.get("resolucao") or {})
+        resolucao["_sem_consultor"] = True
+        return _com_contexto(decidir(estado_antes, resolucao), sinais=sinais)
+
+    plano, abertura = rec.get("plano"), str(rec.get("abertura") or "")
+    atual_id = estado.get("plano_em_negociacao_id") or estado.get("plano_apresentado_id")
+    if plano is None:
+        return Decisao(
+            acao="RESPONDER",
+            objetivo_resposta="PERGUNTAR_NECESSIDADE",
+            fase="vendas",
+            aguardando=aguardando_antes,
+            atualizar_dados={},
+            motivo="Consultor precisa saber o que o cliente procura",
+            prioridade="PLANO",
+            contexto_resposta={"texto_do_consultor": abertura, "sinais": [*sinais, "descoberta"]},
+        )
+    try:
+        mesmo = atual_id is not None and int(plano["id"]) == int(atual_id)
+    except (TypeError, ValueError, KeyError):
+        mesmo = False
+    if mesmo:
+        return Decisao(
+            acao="RESPONDER",
+            objetivo_resposta="REFORCAR_PLANO",
+            fase="vendas",
+            aguardando="confirmacao_plano",
+            atualizar_dados={
+                "plano_em_negociacao": plano["nome"], "plano_em_negociacao_id": int(plano["id"]),
+            },
+            motivo="Plano em conversa já atende ao que o cliente contou",
+            prioridade="PLANO",
+            contexto_resposta={"texto_do_consultor": abertura, "plano": plano, "sinais": [*sinais, "plano_reforcado"]},
+        )
+    planos = listar_planos(estado)
+    try:
+        atual = int(atual_id) if atual_id is not None else None
+    except (TypeError, ValueError):
+        atual = None
+    resultado = resolver_plano(str(plano["nome"]), planos, plano_atual_id=atual)
+    resultado["referencia"] = str(plano["nome"])
+    return _com_contexto(
+        decidir_plano_resolvido(resultado, estado_antes),
+        abertura_plano=abertura, sinais=[*sinais, "plano_recomendado"],
+    )
+
+
 def _enriquecer_com_rag(
     decisao: Decisao,
     estado: dict[str, Any],
@@ -281,7 +408,12 @@ def _enriquecer_com_rag(
     ctx_dec = decisao.contexto_resposta or {}
     # Objeção de preço ou "não tenho esse dado": a base pode trazer o argumento ou a alternativa
     situacao = str((ctx_dec.get("conversa") or {}).get("situacao") or "")
-    if situacao in {"OBJECAO_PRECO", "IMPEDIMENTO"}:
+    if situacao in {"OBJECAO_PRECO", "OBJECAO"}:
+        rag = base_de_venda(estado, mensagem)
+        if rag.get("encontrado"):
+            decisao.contexto_resposta = {**ctx_dec, "rag": rag}
+        return decisao
+    if situacao == "IMPEDIMENTO":
         rag = consultar_rag(pergunta=mensagem, mensagem=mensagem, estado=estado, plano=None)
         if rag.get("encontrado") or rag.get("chunks") or rag.get("resposta"):
             decisao.contexto_resposta = {**ctx_dec, "rag": rag}
@@ -744,7 +876,8 @@ def process_message(
                 else "base de conhecimento sem resposta"
             ),
         )
-    elif decisao.pergunta and decisao.acao == "RESPONDER" and rag_hit:
+    elif decisao.pergunta and decisao.acao == "RESPONDER" and rag_hit and not ctx_final.get("conversa"):
+        # Só dúvida respondida vira "já explicado" (objeção contornada não é pergunta)
         _anotar_assunto_explicado(id_cliente, estado, decisao.pergunta)
     if divergencias:
         sinais.append("regra_mudou_leitura")

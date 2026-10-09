@@ -150,13 +150,21 @@ def _linha_plano(plano: dict[str, Any]) -> str:
     return " — ".join(partes) if len(partes) > 1 else partes[0]
 
 
+# Depois de mostrar o plano, a Eva investiga se ele serve — é o gancho para o consultor
+CTA_INVESTIGAR = (
+    "Esse plano te atende? Se quiser, me conta quantos aparelhos usam a internet aí ou o que "
+    "você procura, que eu confirmo se ele é o ideal pra você ou te indico outro."
+)
+
+
 def apresentar_plano_inicial(
     plano: dict[str, Any] | None = None,
     *,
     cidade: str = "",
     bairro: str = "",
+    abertura: str = "",
 ) -> str:
-    """Oferta após cobertura: plano destaque com benefícios."""
+    """Oferta após cobertura: plano destaque (ou o indicado pelo consultor) com benefícios."""
     plano = plano or {}
     if not plano.get("nome"):
         return (
@@ -170,22 +178,29 @@ def apresentar_plano_inicial(
         intro = f"Boa, temos cobertura em {cidade}!"
     else:
         intro = "O plano mais escolhido pelos clientes na sua região é este:"
-    return formatar_oferta_plano(
-        plano,
-        intro=intro,
-        cta="Esse plano te atende? Quer fechar com ele ou tem outra preferência?",
-    )
+    if abertura:
+        # O consultor já indicou este plano pelo que o cliente contou
+        return formatar_oferta_plano(
+            plano,
+            intro=f"{intro}\n\n{abertura}" if (bairro or cidade) else abertura,
+            cta="Faz sentido pra você? Posso seguir com ele?",
+        )
+    return formatar_oferta_plano(plano, intro=intro, cta=CTA_INVESTIGAR)
 
 
 def confirmar_plano_escolhido(
     plano: dict[str, Any] | None = None,
     *,
     troca: bool = False,
+    abertura: str = "",
 ) -> str:
     """Apresenta o plano escolhido com benefícios e pede confirmação."""
     plano = plano or {}
     if not plano.get("nome"):
         return "Esse é o plano que eu te indiquei. Posso confirmar ele pra gente seguir?"
+    if abertura:
+        # Indicação do consultor: a frase dele abre a mensagem, a ficha vem do painel
+        return formatar_oferta_plano(plano, intro=abertura, cta="Faz sentido pra você? Posso seguir com ele?")
 
     if troca:
         intro = "Perfeito, anotei a troca — ficou este:"

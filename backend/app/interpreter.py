@@ -197,10 +197,12 @@ situacao — como o cliente reagiu ao que a Eva pediu por último. Deixe "" quan
 - ADIAMENTO: quer pensar ou deixar para depois ("vou pensar", "depois eu vejo", "vou falar com minha esposa")
 - IMPEDIMENTO: não tem, não sabe ou não conseguiu o que foi pedido ("não tenho e-mail", "não sei meu CEP", "não consegui abrir o PDF", "nenhum desses horários dá pra mim")
 - OBJECAO_PRECO: achou caro ou comparou o preço com outra empresa
+- OBJECAO: resistência que não é preço — não quer fidelidade/contrato, já tem internet de outra empresa, desconfia da qualidade, acha que demora, "preciso ver se vale a pena"
+- NECESSIDADE: contou o que precisa ou o que procura num plano — quantas pessoas ou aparelhos usam, para que usa (trabalho, jogos, streaming), um benefício que quer ("queria com Disney", "tem com chip?"), "só quero internet", "tem um mais em conta?", "preciso de um mais completo". Não é NECESSIDADE quando ele cita um plano pelo nome (isso é PLANO_INFORMADO).
 - NAO_ENTENDEU: não entendeu o que a Eva pediu ou explicou
 - SUPORTE: a pessoa JÁ É CLIENTE da MOV e quer resolver algo do serviço que já tem (internet caiu ou está lenta, boleto ou 2ª via, técnico que não veio, cancelar ou mudar o serviço atual). Dúvida de quem está contratando ("a internet cai muito?", "como vou pagar a fatura?", "tem suporte 24h?") NÃO é SUPORTE.
 
-nota — um fato que o cliente contou NESTA mensagem e que vale lembrar no resto do atendimento, em uma frase curta na terceira pessoa. Ex.: "só pode receber o técnico à tarde", "a instalação é na casa da mãe dele", "trabalha em home office e precisa de internet estável", "achou o plano caro". Não anote dado de cadastro (nome, CPF, e-mail, telefone, endereço), pergunta, cumprimento nem o que já está nas notas. Na maioria das mensagens fica "".
+nota — um fato que o cliente contou NESTA mensagem e que vale lembrar no resto do atendimento, em uma frase curta na terceira pessoa. Ex.: "só pode receber o técnico à tarde", "a instalação é na casa da mãe dele", "trabalha em home office e precisa de internet estável", "achou o plano caro", "são 8 aparelhos na casa", "quer um plano com Disney+", "já tem internet de outra operadora". Sempre anote o que ele disser sobre quantidade de aparelhos ou pessoas, para que usa a internet e que benefício procura — é o que define o plano certo. Não anote dado de cadastro (nome, CPF, e-mail, telefone, endereço), pergunta, cumprimento nem o que já está nas notas. Na maioria das mensagens fica "".
 
 confianca (0 a 1): quão certo você está da interpretação.
 - 0.95+: mensagem clara (dado explícito, confirmação óbvia, pergunta direta).

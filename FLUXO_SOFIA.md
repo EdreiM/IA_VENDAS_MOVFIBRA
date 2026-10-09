@@ -87,6 +87,9 @@ flowchart LR
 
 - Cliente que volta a falar depois de `finalizado`: com venda concluída, volta às dúvidas do pós-venda; encerrado por inatividade, continua do passo em que estava; sem venda, atendimento novo.
 
+- Recusa dos termos: a Eva responde à objeção uma vez (o que a fidelidade garante); a segunda recusa transfere.
+- Na oferta do plano, a Eva indica o plano pelo que o cliente contou e responde a objeções antes de seguir (ver `backend/README.md`, "Venda consultiva").
+
 ### Transferência
 - Estado `transferido` + silêncio da IA.
 - Além de erro técnico e pedido do cliente, a Eva transfere quando: a pessoa já é cliente e quer suporte ou boleto; o cliente não avança no mesmo passo depois de algumas tentativas; ou pede para alterar dados ou plano depois do cadastro concluído (ver `backend/README.md`, "Conversa no meio do funil").
