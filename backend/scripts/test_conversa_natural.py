@@ -343,10 +343,16 @@ def test_notas_nao_repetem_e_guardam_as_mais_recentes() -> None:
     notas = conversa.juntar_nota("", "só pode receber o técnico à tarde")
     notas = conversa.juntar_nota(notas, "Só pode receber o técnico à tarde.")
     _assert(notas == "só pode receber o técnico à tarde", notas)
-    for i in range(12):
+    for i in range(20):
         notas = conversa.juntar_nota(notas, f"fato número {i} da conversa")
     linhas = notas.split("\n")
-    _assert(len(linhas) == 8 and linhas[-1] == "fato número 11 da conversa", linhas)
+    _assert(len(linhas) == 12 and linhas[-1] == "fato número 19 da conversa", linhas)
+    # O que a Eva já explicou também fica nas notas, só os últimos assuntos
+    for i in range(6):
+        notas = conversa.juntar_explicado(notas, f"tem multa de cancelamento número {i}?")
+    explicados = [ln for ln in notas.split("\n") if ln.startswith("Eva já explicou: ")]
+    _assert(len(explicados) == 4 and explicados[-1].endswith("número 5"), explicados)
+    _assert(conversa.juntar_explicado(notas, "Tem multa de cancelamento número 5") == notas, "repetiu")
 
 
 def test_reiniciar_atendimento_limpa_o_funil_e_mantem_a_identificacao() -> None:

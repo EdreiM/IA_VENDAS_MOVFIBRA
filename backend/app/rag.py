@@ -152,7 +152,7 @@ def formatar_contexto_rag(rag: dict[str, Any]) -> str:
 
     partes: list[str] = []
     if rag.get("resposta"):
-        partes.append(f"Resposta sugerida: {rag['resposta']}")
+        partes.append(f"Resposta resumida da base (confira com os trechos): {rag['resposta']}")
 
     for chunk in rag.get("chunks") or []:
         titulo = chunk.get("titulo") or "FAQ"

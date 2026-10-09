@@ -9,6 +9,10 @@ from openai import OpenAI
 from app.config import get_settings
 from app import ia_config
 
+# Sem isto o cliente OpenAI espera até 10 minutos por resposta — e o cliente no WhatsApp também
+TIMEOUT_SEGUNDOS = 30.0
+TENTATIVAS_EXTRAS = 1
+
 
 def modelo_ativo() -> str:
     """Identifica provider+modelo em uso (ex.: 'openai:gpt-4.1-mini')."""
@@ -37,6 +41,8 @@ def chat(
         client = OpenAI(
             base_url=f"{settings.ollama_base_url.rstrip('/')}/v1",
             api_key="ollama",
+            timeout=TIMEOUT_SEGUNDOS,
+            max_retries=TENTATIVAS_EXTRAS,
         )
         model = settings.ollama_model
     else:
@@ -45,7 +51,7 @@ def chat(
             raise RuntimeError(
                 "OPENAI_API_KEY não configurada — salve no painel (Config IA) ou no .env"
             )
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key, timeout=TIMEOUT_SEGUNDOS, max_retries=TENTATIVAS_EXTRAS)
         model = ia_config.resolver_openai_model()
 
     extras: dict[str, Any] = {}

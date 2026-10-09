@@ -167,11 +167,18 @@ ROTULO_SINAL = {
     "voltou_apos_encerrar": "Voltou após o encerramento",
     "retomou_de_onde_parou": "Retomou de onde parou",
     "silencio": "Eva não respondeu",
+    "llm_fora_do_ar": "Modelo de IA fora do ar",
+    "transferido_por_instabilidade": "Transferido por instabilidade do modelo",
+    "rag_fora_do_ar": "Base de conhecimento fora do ar",
+    "resposta_reescrita": "Resposta reescrita (citava dado sem fonte)",
+    "resposta_barrada": "Resposta barrada (insistiu em dado sem fonte)",
+    "regra_mudou_leitura": "Regras mudaram a leitura do modelo",
 }
 
 # Sinais que não são problema — ficam fora do total de turnos com atenção
 _SINAIS_NEUTROS = {
     "espera", "voltou_apos_encerrar", "retomou_de_onde_parou", "reenvio_termos", "audio_transcrito",
+    "regra_mudou_leitura", "resposta_reescrita",
 }
 
 
@@ -230,7 +237,7 @@ def atencao(dias: int = 7, limite: int = 60) -> dict[str, Any]:
             cur.execute(
                 """
                 SELECT id, id_cliente, mensagem_cliente, acao, objetivo, fase, aguardando,
-                       sinais, estado_antes, created_at
+                       sinais, estado_antes, divergencias, created_at
                 FROM turno_log_ia
                 WHERE created_at >= NOW() - (%s || ' days')::interval
                   AND (
@@ -244,6 +251,7 @@ def atencao(dias: int = 7, limite: int = 60) -> dict[str, Any]:
             )
             rows = [dict(r) for r in cur.fetchall()]
 
+    regras_mudaram: list[dict[str, Any]] = []
     por_sinal: Counter[str] = Counter()
     por_etapa: Counter[str] = Counter()
     clientes_com_atencao: set[str] = set()
@@ -253,6 +261,23 @@ def atencao(dias: int = 7, limite: int = 60) -> dict[str, Any]:
         relevantes = [s for s in sinais if s not in _SINAIS_NEUTROS]
         for s in sinais:
             por_sinal[s] += 1
+        if r.get("divergencias") and len(regras_mudaram) < limite:
+            import json
+
+            try:
+                lista = json.loads(r["divergencias"])
+            except (TypeError, ValueError):
+                lista = []
+            criado_div = r.get("created_at")
+            regras_mudaram.append({
+                "id": r.get("id"),
+                "id_cliente": r.get("id_cliente"),
+                "etapa": _etapa_do_turno(r),
+                "mensagem": r.get("mensagem_cliente") or "",
+                "mudancas": [str(x) for x in lista],
+                "created_at": criado_div.isoformat()
+                if criado_div is not None and not isinstance(criado_div, str) else criado_div,
+            })
         if not relevantes:
             continue
         clientes_com_atencao.add(str(r.get("id_cliente") or ""))
@@ -285,5 +310,6 @@ def atencao(dias: int = 7, limite: int = 60) -> dict[str, Any]:
         ],
         "por_etapa": [{"etapa": e, "quantidade": n} for e, n in por_etapa.most_common(12)],
         "turnos_recentes": itens,
+        "regras_mudaram": regras_mudaram,
         "perguntas_sem_resposta": perguntas,
     }

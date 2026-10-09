@@ -32,8 +32,20 @@ REPETICAO = "REPETICAO"  # não avançou e nenhuma das situações acima explica
 # O que o interpretador pode devolver em "situacao" (MIDIA e REPETICAO são só do código)
 SITUACOES_LLM = ("", ESPERA, ADIAMENTO, IMPEDIMENTO, OBJECAO_PRECO, NAO_ENTENDEU, SUPORTE)
 
-# Soma das tentativas sem avanço no mesmo passo que faz a Eva chamar uma pessoa
+# Soma das tentativas sem avanço no mesmo passo que faz a Eva chamar uma pessoa.
+# Padrão; o valor em uso vem de Config IA ("Tentativas antes de transferir").
 LIMITE_TRAVADO = 4
+
+
+def limite_travado(estado: dict[str, Any] | None = None) -> int:
+    try:
+        from app import ia_config
+
+        uid = (estado or {}).get("unidade_id")
+        return ia_config.resolver_limite_travado(unidade_id=int(uid) if uid is not None else None)
+    except Exception:  # noqa: BLE001 — sem banco/config, vale o padrão
+        return LIMITE_TRAVADO
+
 _PESO = {ESPERA: 0, ADIAMENTO: 0, IMPEDIMENTO: 2}
 
 _FASES_TERMINAIS = {"transferido", "finalizado"}
@@ -181,7 +193,9 @@ def classificar(mensagem: str, estado: dict[str, Any], situacao_llm: str = "") -
 
 # ── Notas da conversa ────────────────────────────────────────────────────────
 
-_MAX_NOTAS = 8
+_MAX_NOTAS = 12
+_MAX_EXPLICADOS = 4
+_PREFIXO_EXPLICADO = "Eva já explicou: "
 _MAX_CHARS_NOTA = 160
 
 
@@ -197,6 +211,24 @@ def juntar_nota(notas_atuais: Any, nota: str) -> str:
     if any(chave == normalizar_texto(ln) or chave in normalizar_texto(ln) for ln in linhas):
         return "\n".join(linhas)
     linhas.append(nova)
+    return "\n".join(linhas[-_MAX_NOTAS:])
+
+
+def juntar_explicado(notas_atuais: Any, pergunta: str) -> str:
+    """Registra nas notas um assunto que a Eva já explicou (guarda só os últimos)."""
+    assunto = re.sub(r"\s+", " ", _texto(pergunta)).strip(" ?.")[:110]
+    if len(assunto) < 6:
+        return _texto(notas_atuais)
+    linhas = [ln.strip() for ln in _texto(notas_atuais).split("\n") if ln.strip()]
+    from app.parser import normalizar_texto
+
+    chave = normalizar_texto(assunto)
+    if any(ln.startswith(_PREFIXO_EXPLICADO) and normalizar_texto(ln[len(_PREFIXO_EXPLICADO):]) == chave for ln in linhas):
+        return "\n".join(linhas)
+    linhas.append(f"{_PREFIXO_EXPLICADO}{assunto}")
+    explicados = [ln for ln in linhas if ln.startswith(_PREFIXO_EXPLICADO)]
+    for velho in explicados[:-_MAX_EXPLICADOS]:
+        linhas.remove(velho)
     return "\n".join(linhas[-_MAX_NOTAS:])
 
 
@@ -249,7 +281,7 @@ def antes(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao | None:
         and _RE_NAO_RECEBEU_TERMOS.search(_norm(mensagem))
     ):
         total = int(estado.get("tentativas_travadas") or 0) + _PESO[IMPEDIMENTO]
-        if total >= LIMITE_TRAVADO:
+        if total >= limite_travado(estado):
             return _transferir(
                 estado,
                 situacao="TRANSFERENCIA_TRAVADO",
@@ -399,7 +431,7 @@ def depois(decisao: Decisao, estado: dict[str, Any], resolucao: dict[str, Any]) 
     # Pedir um tempo ou querer pensar não é travar: fica só o registro da situação
     sinais = ["travado", situacao.lower()] if peso else [situacao.lower()]
 
-    if total >= LIMITE_TRAVADO:
+    if total >= limite_travado(estado):
         rotulo = aguardando.replace("_", " ")
         detalhe = _texto(dados.get("preferencia_horario") or estado.get("preferencia_horario"))
         extra = f" (preferência de horário: {detalhe})" if detalhe and fase == "agendamento" else ""

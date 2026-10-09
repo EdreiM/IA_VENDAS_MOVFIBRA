@@ -297,8 +297,8 @@ def _enriquecer_com_rag(
     if decisao.objetivo_resposta == "PEDIR_ACEITE_TERMOS":
         return decisao
     plano = ctx_dec.get("plano") or {}
-    rag = consultar_rag(
-        pergunta=pergunta or mensagem,
+    rag = _consultar_rag_por_pergunta(
+        _perguntas_da_mensagem(pergunta or mensagem, mensagem),
         mensagem=mensagem,
         estado=estado,
         plano=plano if isinstance(plano, dict) else None,
@@ -307,6 +307,10 @@ def _enriquecer_com_rag(
         rag.get("encontrado") or rag.get("chunks") or rag.get("resposta")
     )
     if not tem_conteudo:
+        if rag.get("erro"):
+            # Webhook da base caiu ou demorou: não é falta de conteúdo
+            ctx_dec = {**ctx_dec, "rag_fora": True}
+            decisao.contexto_resposta = ctx_dec
         if pergunta and decisao.objetivo_resposta in objetivos_com_rag | {"CONTINUAR_CONVERSA"}:
             ctx = dict(ctx_dec)
             ctx["rag_vazia"] = True
@@ -321,8 +325,148 @@ def _enriquecer_com_rag(
     return decisao
 
 
+# Falhas seguidas do modelo por cliente (em memória: some se a API reiniciar, e tudo bem)
+_FALHAS_LLM: dict[str, int] = {}
+LIMITE_FALHAS_LLM = 2
+
+_EVENTOS_QUE_MUDAM_O_FUNIL = {
+    "CONFIRMACAO", "NEGACAO", "PLANO_INFORMADO", "PEDIU_TROCAR_PLANO", "PEDIU_HUMANO",
+    "LOCALIZACAO_INFORMADA", "PEDIU_TROCAR_LOCALIZACAO",
+}
+
+
+def divergencias_regra_modelo(raw: str, interpretacao: Any) -> list[str]:
+    """Onde as regras do parser mudaram o que o modelo leu (para auditar depois).
+
+    As regras por palavra-chave corrigem o modelo, mas também erram com frases novas.
+    Guardar a diferença turno a turno mostra, com conversa real, qual regra ajuda e qual atrapalha.
+    """
+    from app.parser import _strip_markdown
+    from app.resolver import normalizar_campo
+
+    try:
+        data = json.loads(_strip_markdown(raw))
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    dados_llm = data.get("dados") if isinstance(data.get("dados"), dict) else {}
+    finais = interpretacao.dados.model_dump()
+    out: list[str] = []
+    for campo, final in finais.items():
+        lido = str(dados_llm.get(campo) or "").strip()
+        final = str(final or "").strip()
+        if not lido or normalizar_campo(campo, lido) == normalizar_campo(campo, final):
+            continue
+        out.append(f"{campo}: modelo leu {lido!r}, " + (f"regras gravaram {final!r}" if final else "regras descartaram"))
+    ev_llm = {str(e).upper() for e in (data.get("eventos") or []) if isinstance(e, str)}
+    ev_final = set(interpretacao.eventos or [])
+    for ev in sorted((ev_llm ^ ev_final) & _EVENTOS_QUE_MUDAM_O_FUNIL):
+        out.append(f"{ev}: " + ("regras tiraram" if ev in ev_llm else "regras acrescentaram"))
+    return out[:12]
+
+
+def _decisao_com_modelo_fora(decisao: Decisao, estado: dict[str, Any], id_cliente: str) -> Decisao:
+    """Modelo indisponível neste turno: o cliente não pode ficar sem resposta.
+
+    As regras ainda leem dados claros (CPF, e-mail, "sim"); se com isso o atendimento
+    avançou, segue normal. Se não, a Eva diz que teve uma instabilidade e pede para
+    mandar de novo. Na segunda falha seguida, chama a equipe.
+    """
+    from app import conversa
+
+    fase = str(estado.get("fase") or "inicio")
+    if fase in {"transferido", "finalizado"} or decisao.acao in {"AGUARDAR", "TRANSFERIR_HUMANO"}:
+        return decisao
+    sinais = ["llm_fora_do_ar"]
+    avancou = decisao.acao != "RESPONDER" or conversa._avancou(decisao, estado) or (
+        decisao.fase != fase or str(decisao.aguardando or "") != str(estado.get("aguardando") or "")
+    )
+    ctx = dict(decisao.contexto_resposta or {})
+    ctx.pop("conversa", None)
+    ctx["llm_fora"] = True
+    if avancou:
+        # As regras leram o dado (CPF, telefone, "sim"): o atendimento segue sem o modelo
+        ctx["sinais"] = [*ctx.get("sinais", []), *sinais]
+        decisao.contexto_resposta = ctx
+        return decisao
+    if _FALHAS_LLM.get(id_cliente, 0) >= LIMITE_FALHAS_LLM:
+        _FALHAS_LLM.pop(id_cliente, None)
+        return conversa._transferir(
+            estado,
+            situacao="TRANSFERENCIA_INSTABILIDADE",
+            motivo="Modelo de IA indisponível em mensagens seguidas — atendimento passado para a equipe",
+            sinais=[*sinais, "transferido_por_instabilidade"],
+        )
+    ctx["sinais"] = sinais  # o turno não é "cliente travado": quem falhou foi o modelo
+    return Decisao(
+        acao="RESPONDER",
+        objetivo_resposta="INSTABILIDADE_PEDIR_REENVIO",
+        fase=fase,
+        aguardando=estado.get("aguardando"),
+        atualizar_dados={},
+        motivo="Modelo de IA indisponível — pedir para o cliente mandar de novo",
+        prioridade="GLOBAL",
+        contexto_resposta=ctx,
+    )
+
+
+def _anotar_assunto_explicado(id_cliente: str, estado: dict[str, Any], pergunta: str) -> None:
+    """Guarda nas notas o que a Eva já explicou, para não repetir quando sair do histórico recente."""
+    from app import conversa
+
+    try:
+        notas = conversa.juntar_explicado(estado.get("notas_conversa"), pergunta)
+        if notas != str(estado.get("notas_conversa") or ""):
+            db.salvar_transicao(
+                id_cliente, str(estado.get("fase") or "inicio"), estado.get("aguardando"),
+                {"notas_conversa": notas},
+            )
+    except Exception:  # noqa: BLE001 — anotação nunca derruba o atendimento
+        logger.exception("Falha ao anotar assunto explicado")
+
+
+def _perguntas_da_mensagem(pergunta: str, mensagem: str) -> list[str]:
+    """Mensagem com mais de uma pergunta ("tem multa? e a instalação demora?") → uma busca por pergunta."""
+    import re
+
+    partes = [p.strip(" ,;.-") for p in re.findall(r"[^?]+\?", mensagem or "")]
+    partes = [p for p in partes if len(p.split()) >= 2]
+    if len(partes) < 2:
+        return [pergunta or mensagem]
+    return partes[:3]
+
+
+def _consultar_rag_por_pergunta(
+    perguntas: list[str], *, mensagem: str, estado: dict[str, Any], plano: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Uma consulta por pergunta, com os trechos reunidos sem repetir."""
+    if len(perguntas) == 1:
+        return consultar_rag(pergunta=perguntas[0], mensagem=mensagem, estado=estado, plano=plano)
+    junto: dict[str, Any] = {"encontrado": False, "resposta": "", "chunks": [], "fontes": []}
+    vistos: set[str] = set()
+    erros = 0
+    for p in perguntas:
+        r = consultar_rag(pergunta=p, mensagem=mensagem, estado=estado, plano=plano)
+        erros += bool(r.get("erro"))
+        if not (r.get("encontrado") or r.get("chunks") or r.get("resposta")):
+            continue
+        junto["encontrado"] = True
+        if r.get("resposta") and r["resposta"] not in junto["resposta"]:
+            junto["resposta"] = f"{junto['resposta']}\n{r['resposta']}".strip()
+        for c in r.get("chunks") or []:
+            chave = str(c.get("conteudo") or "")
+            if chave and chave not in vistos:
+                vistos.add(chave)
+                junto["chunks"].append(c)
+        junto["fontes"] += [f for f in (r.get("fontes") or []) if f not in junto["fontes"]]
+    if erros == len(perguntas):
+        junto["erro"] = True
+    return junto
+
+
 def _registrar_pergunta_sem_resposta(
-    estado: dict[str, Any], decisao: Decisao, mensagem: str
+    estado: dict[str, Any], decisao: Decisao, mensagem: str, *, motivo: str = "base de conhecimento sem resposta"
 ) -> None:
     """A Eva disse que vai confirmar com a equipe: a equipe precisa ficar sabendo.
 
@@ -339,7 +483,7 @@ def _registrar_pergunta_sem_resposta(
             pergunta,
             mensagem=mensagem,
             fase=str(estado.get("fase") or ""),
-            motivo="base de conhecimento sem resposta",
+            motivo=motivo,
         )
     except Exception:  # noqa: BLE001
         logger.exception("Falha ao registrar pergunta sem resposta")
@@ -373,6 +517,15 @@ def process_message(
         raise ValueError("Mensagem vazia")
 
     estado = db.carregar_ou_criar_estado(id_cliente)
+    # Dado ditado por áudio ("maria arroba gmail ponto com", "cinco dois nove...") vira o
+    # texto que o cliente digitaria — é o que as regras de cadastro sabem conferir.
+    from app.fala import normalizar_fala
+
+    mensagem = normalizar_fala(
+        mensagem,
+        aguardando=str(estado.get("aguardando") or ""),
+        audio="audio_transcrito" in (sinais_extra or []),
+    ).strip() or mensagem
     meta: dict[str, Any] = {}
     if conversation_id:
         meta["conversation_id"] = conversation_id
@@ -389,17 +542,27 @@ def process_message(
     db.log_mensagem(id_cliente, "cliente", mensagem)
 
     # +1: a mensagem atual acabou de ser gravada e o interpretador a descarta
-    historico_prev = db.historico_recente(id_cliente, limite=9)
+    historico_prev = db.historico_recente(id_cliente, limite=13)
     estado_antes = snapshot_estado(estado)
 
     from app import conversa
 
+    llm_fora = False
     if conversa.tipo_de_midia(mensagem):
         # Áudio/imagem sem texto: não há o que interpretar (ver conversa.MIDIA)
         raw = json.dumps({"eventos": ["OUTRO"], "dados": {}, "confianca": 0.99})
     else:
-        raw = interpretar(mensagem, estado, historico=historico_prev)
+        try:
+            raw = interpretar(mensagem, estado, historico=historico_prev)
+            _FALHAS_LLM.pop(id_cliente, None)
+        except Exception:  # noqa: BLE001 — modelo fora do ar não pode virar silêncio
+            logger.exception("Interpretador indisponível para %s", id_cliente)
+            llm_fora = True
+            _FALHAS_LLM[id_cliente] = _FALHAS_LLM.get(id_cliente, 0) + 1
+            # Sem o modelo, só as regras leem a mensagem (CPF, e-mail, "sim"...)
+            raw = json.dumps({"eventos": ["OUTRO"], "dados": {}, "confianca": 0})
     interpretacao = parse_interpretacao(raw, mensagem, estado)
+    divergencias = [] if llm_fora else divergencias_regra_modelo(raw, interpretacao)
 
     from app.contexto_conversa import enriquecer_pergunta
 
@@ -451,6 +614,8 @@ def process_message(
     resolucao["confianca"] = float(interpretacao.confianca or 0)
 
     decisao = decidir(estado, resolucao)
+    if llm_fora:
+        decisao = _decisao_com_modelo_fora(decisao, estado, id_cliente)
     if decisao.acao == "RESOLVER_PLANO":
         ctx_rp = dict(decisao.contexto_resposta or {})
         if not str(ctx_rp.get("referencia_plano") or "").strip():
@@ -517,7 +682,7 @@ def process_message(
         resposta = ""
     else:
         decisao = _enriquecer_com_rag(decisao, estado, mensagem)
-        historico = db.historico_recente(id_cliente, limite=10)
+        historico = db.historico_recente(id_cliente, limite=12)
         resposta = gerar_resposta(
             decisao, estado, historico=historico, mensagem_cliente=mensagem
         )
@@ -567,9 +732,22 @@ def process_message(
     if decisao.acao == "AGUARDAR":
         sinais.append("silencio")
     sem_base = bool(ctx_final.get("sem_base") or ctx_final.get("rag_vazia"))
+    if ctx_final.get("rag_fora"):
+        sinais.append("rag_fora_do_ar")
     if sem_base and decisao.acao != "AGUARDAR":
         sinais.append("sem_base")
-        _registrar_pergunta_sem_resposta(estado, decisao, mensagem)
+        _registrar_pergunta_sem_resposta(
+            estado, decisao, mensagem,
+            motivo=(
+                "base de conhecimento fora do ar" if ctx_final.get("rag_fora")
+                else "resposta barrada: citava dado que não estava na base" if ctx_final.get("resposta_barrada")
+                else "base de conhecimento sem resposta"
+            ),
+        )
+    elif decisao.pergunta and decisao.acao == "RESPONDER" and rag_hit:
+        _anotar_assunto_explicado(id_cliente, estado, decisao.pergunta)
+    if divergencias:
+        sinais.append("regra_mudou_leitura")
     sinais = list(dict.fromkeys(sinais))
 
     imagens = _imagens_plano_do_contexto(ctx_final)
@@ -601,6 +779,7 @@ def process_message(
         interpretacao_llm=raw,
         confianca=float(interpretacao.confianca or 0),
         sinais=sinais,
+        divergencias=divergencias,
     )
 
     return TurnoResultado(

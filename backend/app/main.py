@@ -102,6 +102,7 @@ class ConfigIaIn(BaseModel):
     inactivity_followup_enabled: bool = False
     inactivity_followup_delay_minutes: int = 15
     inactivity_followup_max: int = 3
+    limite_travado: int = 4
     unidade_id: int | None = None
 
 
@@ -712,6 +713,30 @@ def metrics_atencao(
     """Onde a conversa não fluiu: travas, objeções, base sem resposta, transferências."""
     _exigir_admin(authorization, x_admin_token)
     return metrics.atencao(dias, limite)
+
+
+@app.get("/admin/avaliacao")
+def admin_avaliacao_status(
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Andamento e último resultado da avaliação do interpretador com o modelo real."""
+    _exigir_admin(authorization, x_admin_token)
+    from app import avaliacao
+
+    return avaliacao.status()
+
+
+@app.post("/admin/avaliacao/rodar")
+def admin_avaliacao_rodar(
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Roda os casos de avaliação contra o modelo configurado (uma chamada ao modelo por caso)."""
+    _exigir_admin(authorization, x_admin_token)
+    from app import avaliacao
+
+    return avaliacao.iniciar()
 
 
 @app.post("/admin/perguntas-sem-resposta/{pergunta_id}/resolver")

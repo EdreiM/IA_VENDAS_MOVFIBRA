@@ -31,6 +31,7 @@ python scripts/test_auditoria_interpretacao.py
 python scripts/test_imports_internos.py
 python scripts/test_conversa_natural.py
 python scripts/test_transcricao.py
+python scripts/test_robustez.py
 ```
 
 `test_conversa_natural.py` cobre a conversa no meio do funil (seção abaixo): pedido de tempo, "não tenho esse dado", objeção de preço, áudio, quem já é cliente, alteração depois do cadastro, reenvio dos termos, transferência quando trava e cliente que volta depois do encerramento.
@@ -66,7 +67,7 @@ O interpretador devolve dois campos a mais: `situacao` e `nota`. As regras de `c
 | `SUPORTE` | "minha internet caiu, já sou cliente", "segunda via do boleto" | Transfere para a equipe na hora. |
 | (nenhuma) | "kkk", comentário solto | Responde em uma frase e retoma. Conta 1. |
 
-- **Transferência por travar:** as tentativas sem avanço no mesmo passo são somadas em `tentativas_travadas`; ao chegar em 4 (`conversa.LIMITE_TRAVADO`) a Eva chama uma pessoa da equipe, com o motivo na nota do Chatwoot. Qualquer avanço zera a soma. Recusar os horários oferecidos conta 2.
+- **Transferência por travar:** as tentativas sem avanço no mesmo passo são somadas em `tentativas_travadas`; ao chegar no limite (padrão 4, configurável em Config IA) a Eva chama uma pessoa da equipe, com o motivo na nota do Chatwoot. Qualquer avanço zera a soma. Recusar os horários oferecidos conta 2.
 - **Depois do cadastro concluído:** pedido de alterar dado ou plano transfere direto (antes a Eva perguntava "posso te encaminhar?" e o "sim" era lido como aceite dos termos).
 - **Termos:** "não recebi" / "não abriu o PDF" reenvia os termos; na segunda vez, transfere.
 - **Cliente que volta depois de `finalizado`:** venda concluída → volta para as dúvidas do pós-venda; encerrado por inatividade → continua do passo em que estava (`retorno_estado`); encerrado sem venda e sem ponto de retomada → atendimento novo, com o histórico mantido. Agradecimento solto continua sendo só a cortesia. `transferido` segue em silêncio.
@@ -82,6 +83,25 @@ As orientações de `_GUIA_SITUACAO` dizem como conversar; não trazem regra com
 Sem chave, com falha na API, áudio mudo ou maior que 20 MB, a mensagem segue como `[audio]` e a Eva pede para o cliente escrever (situação `MIDIA`). Conversa já transferida para a equipe não é transcrita. Os turnos ficam marcados com `audio_transcrito` ou `audio_nao_transcrito` nos Pontos de atenção.
 
 `scripts/test_transcricao.py` cobre esse fluxo sem rede.
+
+## Proteções contra erro de leitura e invenção
+
+O modelo lê a mensagem e escreve parte das respostas; estas camadas conferem o que ele faz. `scripts/test_robustez.py` cobre todas.
+
+- **Dado ditado por áudio** (`app/fala.py`): "maria arroba gmail ponto com", "cinco dois nove nove…", "oitocentos e noventa e um" e "dezesseis de agosto de dois mil" viram o texto que o cliente digitaria, antes da interpretação. E-mail por extenso é remontado em qualquer mensagem; número por extenso só em áudio e só quando é claramente um dado ("um momento" e "tenho dois filhos" ficam como estão).
+- **Confirmação conferida** (`parser._conferir_confirmacao`): nos passos de confirmação, um `CONFIRMACAO` vindo só do modelo cai se a mensagem tem objeção, pedido de tempo, dúvida, recusa ou hesitação, ou se não tem nenhuma palavra afirmativa. Sem isso, um erro do modelo bastava para aceitar os termos ou confirmar o agendamento.
+- **Conferência do que o modelo escreve** (`app/verificacao.py`, `response._chat_conferido`): valor em reais, percentual, prazo e velocidade citados na resposta precisam existir nos fatos do prompt (RAG, plano, horários, conversa). Se não existem, o modelo reescreve uma vez sabendo o que errou; se insistir, a resposta é descartada e sai a resposta segura ("prefiro confirmar com a equipe"), com a pergunta registrada. Aceita equivalências (12 meses = 1 ano, 3 dias = 72 horas) e a diferença entre dois valores dos fatos. Não confere afirmação sem número.
+- **Dúvidas num caminho só**: toda dúvida, em qualquer etapa, é respondida por `response._responder_duvida` (base de conhecimento + plano + o que já está acertado com o cliente). O prompt geral ficou só para turnos que não são dúvida.
+- **Base de conhecimento**: mensagem com mais de uma pergunta faz uma consulta por pergunta (até 3). Webhook da RAG fora do ar é registrado como `rag_fora_do_ar`, não como falta de conteúdo.
+- **Modelo fora do ar** (`pipeline._decisao_com_modelo_fora`): chamadas têm prazo de 30 s e uma nova tentativa. Se o interpretador falhar, as regras ainda leem dados claros (CPF, telefone, "sim") e o atendimento segue; se não leram nada, a Eva diz que teve uma instabilidade e pede para mandar de novo; na segunda falha seguida sem avanço, transfere para a equipe. Nunca fica em silêncio.
+- **Regras × modelo**: cada turno grava em `turno_log_ia.divergencias` o que as regras do parser mudaram na leitura do modelo (dado descartado ou trocado, evento que muda o funil). A aba Pontos de atenção lista esses turnos — é o material para decidir, com conversa real, qual regra ajuda e qual atrapalha.
+- **Memória**: o interpretador vê 12 mensagens; as notas guardam até 12 fatos e os últimos 4 assuntos que a Eva já explicou.
+
+## Avaliação do modelo pelo painel
+
+A aba **Pontos de atenção** tem o botão **Rodar avaliação**: roda `eval/casos_interpretador.jsonl` contra o modelo configurado em Config IA, em segundo plano, e mostra acerto do modelo sozinho, do modelo com as regras e os casos que saíram errado (`GET /admin/avaliacao`, `POST /admin/avaliacao/rodar`). É o mesmo que `python scripts/eval_interpretador.py rodar`, sem precisar do console. Cada caso é uma chamada ao modelo.
+
+O limite de tentativas antes de transferir (padrão 4) fica em **Config IA → Tentativas antes de transferir para a equipe**.
 
 ## Pontos de atenção (medição)
 
