@@ -724,6 +724,9 @@ def _decidir_sem_executar(estado: dict, msg: str, llm: dict):
     res["topico_contexto"] = ctx.get("topico")
     res["pergunta_original"] = msg
     res["confianca"] = float(interp.confianca or 0)
+    # Estes testes conferem a máquina de estados sem o consultor de planos (que depende do
+    # modelo e é testado em test_venda_consultiva.py): é o caminho quando ele não responde.
+    res["_sem_consultor"] = True
     return decidir(estado, res)
 
 

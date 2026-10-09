@@ -288,4 +288,5 @@ def resolver(estado: dict[str, Any], interpretacao: Interpretacao) -> dict[str, 
         "campos_novos": campos_novos,
         "confianca": float(interpretacao.confianca or 0),
         "situacao_llm": interpretacao.situacao,
+        "nota": interpretacao.nota,
     }

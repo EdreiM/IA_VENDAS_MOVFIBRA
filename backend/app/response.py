@@ -59,7 +59,7 @@ from app.vendas_mensagens import (
 from app.llm import chat
 from app.models import Decisao
 from app.parser import normalizar_texto
-from app.rag import formatar_contexto_rag
+from app.rag import formatar_contexto_rag, formatar_sem_catalogo
 
 SYSTEM = """Você é {nome_ia}, atendente comercial da MOV FIBRA no WhatsApp.
 
@@ -122,6 +122,12 @@ _SINAIS_DE_RETOMADA: dict[str, tuple[str, ...]] = {
     "localizacao": ("cidade", "bairro"),
     "confirmar_local": ("cidade", "bairro"),
 }
+
+# Quando a Eva precisa saber o que o cliente procura e o consultor não escreveu a pergunta
+PERGUNTA_DE_DESCOBERTA = (
+    "Claro! Pra eu te indicar o plano certo: quantos aparelhos costumam usar a internet aí, "
+    "e você procura algum benefício em especial?"
+)
 
 # Só aparece se o LLM estiver fora do ar — sem regra comercial nenhuma
 _SEM_LLM = "Sobre isso eu prefiro confirmar com a equipe antes de te responder, pra não te passar nada errado."
@@ -213,6 +219,10 @@ def _garantir_retomada(texto: str, pendente: str, retomada: str) -> str:
     sinais = _SINAIS_DE_RETOMADA.get(pendente) or ()
     if sinais and any(s in fim for s in sinais):
         return texto
+    # Na venda o modelo fecha com as próprias palavras ("fechamos nesse?", "faz sentido pra
+    # você?"): uma pergunta no fim já é a condução — não repetir "quer confirmar o plano?".
+    if pendente in _PASSOS_DE_PLANO and fim.rstrip().endswith("?"):
+        return texto
     return f"{texto.rstrip()}\n\n{retomada}"
 
 
@@ -243,9 +253,7 @@ def _responder_duvida(
     if retomada is None:
         retomada = _retomada_apos_duvida(pendente, estado, plano_nome=plano_nome)
 
-    rag_txt = formatar_contexto_rag(ctx.get("rag") or {})
-    if rag_txt and _rag_parece_catalogo_planos(rag_txt):
-        rag_txt = ""
+    rag_txt = formatar_sem_catalogo(ctx.get("rag") or {})
     plano = _plano_do_estado(estado, ctx)
     plano_txt = ""
     if plano.get("nome"):
@@ -307,6 +315,7 @@ CONVERSA ATÉ AQUI:
 DADOS QUE O CLIENTE INFORMOU NESTA MENSAGEM: {anotou or '(nenhum)'}
 PRÓXIMO PASSO DO ATENDIMENTO: {retomada or '(nenhum)'}
 
+{_CONDUCAO_DA_VENDA if pendente in _PASSOS_DE_PLANO else ''}
 Como escrever:
 - Fale como uma atendente de verdade no WhatsApp: natural, direta, em primeira pessoa. Nada de frase de sistema ("a Eva não calcula", "não tenho essa informação na base").
 - Responda exatamente o que foi perguntado, em 1 a 3 frases. Se for pergunta de sim ou não, comece pelo "sim" ou "não".
@@ -338,6 +347,14 @@ Escreva somente a mensagem.
     return _garantir_retomada(texto, pendente, retomada)
 
 
+_PASSOS_DE_PLANO = {"confirmacao_plano", "escolha_plano", "lista_planos"}
+_CONDUCAO_DA_VENDA = """CONDUÇÃO DA VENDA (o cliente ainda não fechou o plano):
+- Você é vendedora, não balcão de informações: depois de responder, ajude o cliente a decidir.
+- Ligue a resposta ao que ESTE cliente contou que precisa (veja "o que você já sabe") ou a um benefício do plano dele que esteja nos fatos. Um ponto só, o mais relevante para ele.
+- Termine com uma pergunta simples de avanço, com as suas palavras ("posso seguir com ele pra você?", "fechamos nesse?"). Varie; não repita a pergunta que você já fez na conversa.
+- Sem pressão, sem urgência inventada ("só hoje", "últimas vagas"), sem desconto ou condição que não esteja nos fatos. Se ele precisar de tempo, respeite.
+"""
+
 _RE_SEM_BASE = re.compile(r"\[\s*SEM[_ ]BASE\s*\]", re.I)
 
 # Como reagir a cada situação (orientação de conversa — os fatos vêm do catálogo e da RAG)
@@ -363,6 +380,14 @@ _GUIA_SITUACAO: dict[str, str] = {
         "e sem falar mal de concorrente. Use só os fatos abaixo (valor com pontualidade, "
         "benefícios, base de conhecimento). Se houver plano mais em conta na lista, ofereça pelo "
         "nome e preço. Não invente desconto nem condição. Termine perguntando como ele prefere seguir."
+    ),
+    "OBJECAO": (
+        "O cliente levantou uma objeção que não é o preço: fidelidade, já ter internet de outra "
+        "empresa, desconfiança, prazo, precisar consultar alguém. Primeiro reconheça o que ele "
+        "disse, sem rebater. Depois responda com UM fato dos FATOS abaixo que trate exatamente "
+        "dessa preocupação e, se houver, ligue a algo que ele contou que precisa. Não fale mal de "
+        "concorrente, não prometa o que não está nos fatos e não invente condição. Se os fatos não "
+        "responderem à objeção, diga que entende e pergunte o que pesaria para ele decidir."
     ),
     "NAO_ENTENDEU": (
         "O cliente não entendeu o que você pediu. Explique de um jeito mais simples o que você "
@@ -490,8 +515,8 @@ def _fatos_da_etapa(decisao: Decisao, estado: dict[str, Any], conversa: dict[str
     if dica and conversa.get("situacao") in {"IMPEDIMENTO", "NAO_ENTENDEU"}:
         partes.append(dica)
 
-    rag_txt = formatar_contexto_rag(ctx.get("rag") or {})
-    if rag_txt and not _rag_parece_catalogo_planos(rag_txt):
+    rag_txt = formatar_sem_catalogo(ctx.get("rag") or {})
+    if rag_txt:
         partes.append(f"Base de conhecimento da empresa:\n{rag_txt}")
     return "\n".join(f"- {p}" for p in partes)
 
@@ -536,6 +561,13 @@ def _conversar(
             "disponível nessa data e pergunte se algum deles serve. Diga que, se nenhum servir, "
             "você chama a equipe para combinar outro dia."
         )
+    if conversa.get("recusa_termos"):
+        guia = (
+            "O cliente disse que não aceita o termo de fidelidade. Não insista nem pressione. "
+            "Reconheça, explique com os FATOS abaixo o que a fidelidade significa e o que ela "
+            "garante, e pergunte se, sabendo disso, ele quer seguir ou prefere falar com uma "
+            "pessoa da equipe. Não ofereça plano sem fidelidade nem condição que não esteja nos fatos."
+        )
     if conversa.get("repetido") and not transferindo:
         guia += " Você já pediu isso antes nesta conversa: não use a mesma frase de novo."
 
@@ -569,6 +601,7 @@ O QUE VOCÊ JÁ SABE DESTE CLIENTE:
 CONVERSA ATÉ AQUI:
 {hist_txt or '(sem histórico)'}
 
+{_CONDUCAO_DA_VENDA if pendente in _PASSOS_DE_PLANO and not transferindo else ''}
 Como escrever:
 - Fale como uma atendente de verdade no WhatsApp: natural, direta, em primeira pessoa, 1 a 3 frases.
 - Comece respondendo ao que o cliente disse. Nada de frase de sistema ("não entendi sua mensagem", "opção inválida").
@@ -587,6 +620,27 @@ Escreva somente a mensagem.
     if situacao in {"ESPERA", "ADIAMENTO"} or transferindo:
         return texto
     return _garantir_retomada(texto, pendente, retomada)
+
+
+def _reagir_ao_comentario(decisao: Decisao, estado: dict[str, Any], mensagem_cliente: str) -> str:
+    """Uma frase reagindo ao que o cliente comentou junto do dado. O pedido do próximo dado é do código."""
+    user = f"""O cliente mandou o dado de cadastro que você pediu e, na mesma mensagem, comentou outra coisa.
+
+MENSAGEM DO CLIENTE: {mensagem_cliente}
+
+O QUE VOCÊ JÁ SABE DESTE CLIENTE:
+{_notas_txt(estado) or '(nada anotado)'}
+
+Escreva UMA frase curta, como uma atendente de verdade no WhatsApp: reaja com naturalidade ao comentário dele e diga que anotou. Não repita o dado, não peça nada e não faça pergunta — o pedido do próximo dado é acrescentado logo depois da sua frase.
+
+Escreva somente a frase.
+"""
+    try:
+        texto = _chat_conferido(_system_prompt(), user, temperature=0.5, decisao=decisao)
+    except Exception:  # noqa: BLE001 — sem modelo, vale a confirmação padrão
+        return ""
+    texto = " ".join((texto or "").split())
+    return "" if "?" in texto or len(texto) > 220 else texto
 
 
 def _rag_parece_catalogo_planos(texto: str) -> bool:
@@ -1135,15 +1189,30 @@ def _gerar_resposta(
             _plano_do_estado(estado, ctx),
             cidade=str(estado.get("cidade") or ""),
             bairro=str(estado.get("bairro") or ""),
+            abertura=str(ctx.get("abertura_plano") or ""),
         )
 
     if decisao.objetivo_resposta == "APRESENTAR_PLANO_ESCOLHIDO_E_CONFIRMAR":
         ctx = decisao.contexto_resposta or {}
-        return confirmar_plano_escolhido(_plano_do_estado(estado, ctx), troca=False)
+        return confirmar_plano_escolhido(
+            _plano_do_estado(estado, ctx), troca=False, abertura=str(ctx.get("abertura_plano") or "")
+        )
 
     if decisao.objetivo_resposta == "APRESENTAR_TROCA_PLANO_E_CONFIRMAR":
         ctx = decisao.contexto_resposta or {}
-        return confirmar_plano_escolhido(_plano_do_estado(estado, ctx), troca=True)
+        return confirmar_plano_escolhido(
+            _plano_do_estado(estado, ctx), troca=True, abertura=str(ctx.get("abertura_plano") or "")
+        )
+
+    # Consultor: reforça o plano que já está em conversa, ou pergunta o que o cliente procura
+    if decisao.objetivo_resposta in {"REFORCAR_PLANO", "PERGUNTAR_NECESSIDADE"}:
+        ctx = decisao.contexto_resposta or {}
+        texto_consultor = str(ctx.get("texto_do_consultor") or "").strip()
+        if decisao.objetivo_resposta == "PERGUNTAR_NECESSIDADE":
+            return texto_consultor or PERGUNTA_DE_DESCOBERTA
+        plano_ref = str(_plano_do_estado(estado, ctx).get("nome") or estado.get("plano_em_negociacao") or "")
+        fecho = _retomada_apos_duvida("confirmacao_plano", estado, plano_nome=plano_ref)
+        return _garantir_retomada(texto_consultor, "confirmacao_plano", fecho) if texto_consultor else fecho
 
     if decisao.objetivo_resposta == "INFORMAR_PRECO_PLANO_E_RETOMAR":
         ctx = decisao.contexto_resposta or {}
@@ -1331,6 +1400,14 @@ def _gerar_resposta(
     if decisao.objetivo_resposta == "ANOTAR_E_PEDIR_PROXIMO":
         ctx = decisao.contexto_resposta or {}
         dados = {**estado, **(decisao.atualizar_dados or {})}
+        if ctx.get("comentario_do_cliente") and mensagem_cliente:
+            reacao = _reagir_ao_comentario(decisao, dados, mensagem_cliente)
+            pendente_cad = str(ctx.get("pendente") or decisao.aguardando or "")
+            if reacao and pendente_cad and pendente_cad != "confirmacao_dados":
+                from app.cadastro_mensagens import campos_para_pedir, pedir_campos
+
+                faltam = campos_para_pedir(dados, pendente_cad) or [pendente_cad]
+                return f"{reacao} {pedir_campos(faltam)}"
         return anotar_e_pedir_proximo(
             campos_anotados=list(ctx.get("campos_anotados") or []),
             campos_corrigidos=list(ctx.get("campos_corrigidos") or []),

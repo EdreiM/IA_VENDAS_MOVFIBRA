@@ -138,7 +138,7 @@ def test_verificador_aceita_o_que_esta_nos_fatos() -> None:
         "Nos 3 primeiros meses fica R$ 69,50.",
         "Só um minuto que já te explico.",
         "Sem taxa de instalação, pode ficar tranquilo.",
-        "Posso agendar para o dia 15/10 às 14h.",
+        "Posso agendar para o dia 15/10.",
     ):
         _assert(afirmacoes_sem_base(texto, FATOS) == [], (texto, afirmacoes_sem_base(texto, FATOS)))
 
@@ -151,6 +151,9 @@ def test_verificador_barra_o_que_ninguem_disse() -> None:
         "O técnico chega em 2 dias e a internet é de 1 giga.": ["2 dias", "1000 mega"],
         "Temos suporte 24 horas e o plano é de 600 megas.": ["24 horas"],
         "A fidelidade é de vinte e quatro meses.": ["24 meses"],
+        # Horário que não está na agenda nem na conversa também é invenção
+        "Posso agendar para amanhã às 14h.": ["14 horas"],
+        "Esse plano comporta até 20 dispositivos.": ["20 dispositivos"],
     }
     for texto, esperado in casos.items():
         _assert(afirmacoes_sem_base(texto, FATOS) == esperado, (texto, afirmacoes_sem_base(texto, FATOS)))

@@ -26,11 +26,15 @@ IMPEDIMENTO = "IMPEDIMENTO"
 OBJECAO_PRECO = "OBJECAO_PRECO"
 NAO_ENTENDEU = "NAO_ENTENDEU"
 SUPORTE = "SUPORTE"
+OBJECAO = "OBJECAO"  # fidelidade, já tem internet, desconfiança, prazo — tudo que não é preço
+NECESSIDADE = "NECESSIDADE"  # contou o que precisa ou o que procura num plano
 MIDIA = "MIDIA"
 REPETICAO = "REPETICAO"  # não avançou e nenhuma das situações acima explica
 
 # O que o interpretador pode devolver em "situacao" (MIDIA e REPETICAO são só do código)
-SITUACOES_LLM = ("", ESPERA, ADIAMENTO, IMPEDIMENTO, OBJECAO_PRECO, NAO_ENTENDEU, SUPORTE)
+SITUACOES_LLM = (
+    "", ESPERA, ADIAMENTO, IMPEDIMENTO, OBJECAO_PRECO, OBJECAO, NECESSIDADE, NAO_ENTENDEU, SUPORTE,
+)
 
 # Soma das tentativas sem avanço no mesmo passo que faz a Eva chamar uma pessoa.
 # Padrão; o valor em uso vem de Config IA ("Tentativas antes de transferir").
@@ -118,6 +122,29 @@ _RE_OBJECAO_PRECO = re.compile(
     r"sem condic\w+|fora do (meu )?orcamento|concorr\w+|"
     r"outra (operadora|empresa) (faz|cobra|oferece|ta|tem))\b"
 )
+_RE_OBJECAO = re.compile(
+    r"\b(nao quero (fidelidade|contrato|ficar preso)|sem fidelidade|fidelidade e (muito|muita|ruim)|"
+    r"(12|doze) meses e muito|nao gosto de (fidelidade|contrato)|"
+    r"ja tenho (internet|wifi|net)|(to|tou|estou|sou) (na|no|com a|com o|cliente da|cliente do) "
+    r"(claro|vivo|oi|tim|sky|starlink|brisanet|\w+net)\b|minha internet (atual|de hoje)|"
+    r"ouvi (falar|dizer) (mal|que)|tem (muita|muitas) reclamac\w+|nao confio|sera que (funciona|presta|e boa)|"
+    r"demora (muito|demais)|muito tempo (pra|para) instalar)\b"
+)
+_RE_NECESSIDADE = re.compile(
+    r"\b((\d+|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|varios|varias|muitos|muitas|poucos) "
+    r"(aparelhos?|dispositivos?|celulares?|tvs?|televis\w+|pessoas|computadores?|notebooks?)|"
+    r"somos (em )?(\d+|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez)|moro (so|sozinh[oa])|"
+    r"(pra|para) (jogar|jogos|trabalhar|trabalho|home office|estudar|assistir|streaming|filmes?|series?)|"
+    r"(queria|quero|preciso|procuro|tem|com|que tenha|que venha) (um |uma |algum |alguma |o |a )?"
+    r"(plano )?(com |que tenha |que venha com )?(disney|max|hbo|globoplay|prime|amazon|deezer|looke|chip|"
+    r"telemedicina|exitlag|mesh|repetidor|streaming|celular|antivirus|kaspersky)|"
+    r"so (quero|preciso de|queria) (a )?internet|(algo|plano|opcao|um) mais (barato|em conta|simples|basico|completo)|"
+    r"o mais (barato|em conta|simples|basico|completo)|tem (um |algum |outro )?mais (barato|em conta|completo))\b"
+)
+_RE_QUER_OUTRO_PLANO = re.compile(
+    r"\b(tem outr[oa]s?|quero outr[oa]|outr[oa] plano|outr[oa] opcao|esse nao|nao (e|quero) esse|"
+    r"nao gostei|nao me atende|nao serve|tem mais opc\w+|que outr[oa]s? (planos?|opc\w+))\b"
+)
 _RE_NAO_ENTENDEU = re.compile(
     r"\b(nao entendi|nao compreendi|como assim|nao (to|tou|estou) entendendo|"
     r"pode explicar|explica melhor|que isso|confus[oa])\b"
@@ -184,8 +211,12 @@ def classificar(mensagem: str, estado: dict[str, Any], situacao_llm: str = "") -
     # Na agenda, "mais tarde" é preferência de horário, não adiamento
     if _RE_ADIAMENTO.search(t) and not (fase == "agendamento" and "mais tarde" in t):
         return ADIAMENTO
-    if _RE_OBJECAO_PRECO.search(t):
+    if _RE_OBJECAO_PRECO.search(t) and not _RE_NECESSIDADE.search(t):
         return OBJECAO_PRECO
+    if _RE_OBJECAO.search(t):
+        return OBJECAO
+    if _RE_NECESSIDADE.search(t):
+        return NECESSIDADE
     if _RE_IMPEDIMENTO.search(t):
         return IMPEDIMENTO
     return ""
@@ -273,6 +304,74 @@ def antes(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao | None:
             sinais=["suporte"],
         )
 
+    consultor = _decisao_do_consultor(estado, resolucao, situacao, mensagem)
+    if consultor is not None:
+        return consultor
+
+    # Objeção na oferta do plano ("não quero fidelidade", "tá caro", "já tenho internet"):
+    # a Eva responde à objeção. Sem isto, o "não quero..." era lido como recusa do plano e
+    # ela oferecia outro — quando a objeção vale para todos os planos.
+    aguardando_ = _texto(estado.get("aguardando"))
+    plano_ = resolucao.get("plano") or {}
+    flags_ = resolucao.get("flags") or {}
+    if (
+        fase == "vendas"
+        and aguardando_ in _PASSOS_DE_PLANO
+        and situacao in {OBJECAO, OBJECAO_PRECO}
+        and not plano_.get("informado")
+        and not flags_.get("pediu_humano")
+    ):
+        total = int(estado.get("tentativas_travadas") or 0) + 1
+        if total >= limite_travado(estado):
+            return _transferir(
+                estado,
+                situacao="TRANSFERENCIA_TRAVADO",
+                motivo=f"Cliente manteve a objeção na oferta do plano: {mensagem[:160]}",
+                sinais=["travado", situacao.lower(), "transferido_por_travar"],
+            )
+        conversa_ctx: dict[str, Any] = {
+            "situacao": situacao, "pendente": aguardando_, "tentativas": total,
+            "repetido": total > 1, "objetivo_original": "CONTORNAR_OBJECAO",
+        }
+        if situacao == OBJECAO_PRECO:
+            conversa_ctx["planos_mais_em_conta"] = _planos_mais_em_conta(estado)
+        return Decisao(
+            acao="RESPONDER",
+            objetivo_resposta="CONTORNAR_OBJECAO",
+            fase="vendas",
+            aguardando=aguardando_,
+            atualizar_dados={"tentativas_travadas": total},
+            motivo="Objeção na oferta do plano — responder antes de seguir",
+            prioridade="PLANO",
+            contexto_resposta={"conversa": conversa_ctx, "pendente": aguardando_, "sinais": [situacao.lower()]},
+        )
+
+    # Recusa dos termos: antes de desistir da venda, a Eva responde à objeção uma vez
+    # (a base explica o porquê da fidelidade). Recusou de novo, segue para a equipe.
+    if (
+        fase == "termos"
+        and _texto(estado.get("aguardando")) == "aceite_termos"
+        and not int(estado.get("tentativas_travadas") or 0)
+        and not _RE_NAO_RECEBEU_TERMOS.search(_norm(mensagem))
+        and _recusou(resolucao, mensagem)
+    ):
+        return Decisao(
+            acao="RESPONDER",
+            objetivo_resposta="CONTORNAR_RECUSA_TERMOS",
+            fase="termos",
+            aguardando="aceite_termos",
+            atualizar_dados={"tentativas_travadas": _PESO[IMPEDIMENTO]},
+            motivo="Cliente recusou os termos — responder à objeção antes de encaminhar",
+            prioridade="TERMOS",
+            contexto_resposta={
+                "conversa": {
+                    "situacao": OBJECAO, "pendente": "aceite_termos", "tentativas": 1,
+                    "recusa_termos": True,
+                },
+                "sinais": ["objecao", "recusa_termos_contornada"],
+            },
+        )
+
     # Termos: "não recebi" / "não abriu o PDF" — reenvia. Sem isso a Eva repetia o pedido
     # de aceite, e um "não abre" era lido como recusa dos termos.
     if (
@@ -334,6 +433,74 @@ def antes(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao | None:
     return None
 
 
+_PASSOS_DE_PLANO = {"confirmacao_plano", "escolha_plano", "lista_planos"}
+_REFERENCIAS_RELATIVAS = {
+    "mais barato", "mais em conta", "mais caro", "mais completo", "mais simples", "mais basico",
+    "melhor", "o melhor", "mais top",
+}
+
+
+def _recusou(resolucao: dict[str, Any], mensagem: str) -> bool:
+    from app.parser import eh_recusa, normalizar_texto
+
+    from app.pos_venda_mensagens import eh_pedido_encerrar
+
+    flags = resolucao.get("flags") or {}
+    if flags.get("tem_pergunta") or "?" in mensagem or eh_pedido_encerrar(mensagem):
+        return False
+    return bool(flags.get("negacao")) or eh_recusa(normalizar_texto(mensagem))
+
+
+def _decisao_do_consultor(
+    estado: dict[str, Any], resolucao: dict[str, Any], situacao: str, mensagem: str
+) -> Decisao | None:
+    """Na venda, cliente contou o que precisa ou quer outro plano sem dizer qual → consultor.
+
+    Em vez de despejar a lista de planos, a Eva indica um (ver app/consultor.py) ou pergunta
+    o que falta para indicar. Pedido explícito da lista e plano citado pelo nome seguem o
+    caminho de sempre.
+    """
+    if resolucao.get("_sem_consultor"):
+        return None
+    if _texto(estado.get("fase")) != "vendas" or _texto(estado.get("aguardando")) not in _PASSOS_DE_PLANO:
+        return None
+    plano = resolucao.get("plano") or {}
+    flags = resolucao.get("flags") or {}
+    # "o mais barato", "o mais completo" não é um plano citado pelo nome: é um critério, e o
+    # consultor aplica junto com o resto do que o cliente pediu ("o mais em conta com Disney").
+    relativo = _norm(_texto(plano.get("valor"))) in _REFERENCIAS_RELATIVAS
+    if (plano.get("informado") and not relativo) or flags.get("confirmacao") or flags.get("pediu_humano"):
+        return None
+    from app.parser import (
+        eh_pedido_lista_completa_planos,
+        eh_pedido_planos_com_desconto,
+        normalizar_texto,
+    )
+
+    t = normalizar_texto(mensagem)
+    # Pediu para ver a lista (todos, ou os com desconto): mostra a lista
+    if eh_pedido_lista_completa_planos(t) or eh_pedido_planos_com_desconto(t):
+        return None
+    quer_outro = bool(flags.get("pediu_trocar_plano_declarado")) or bool(_RE_QUER_OUTRO_PLANO.search(_norm(mensagem)))
+    if situacao != NECESSIDADE and not quer_outro:
+        return None
+    return Decisao(
+        acao="RECOMENDAR_PLANO",
+        objetivo_resposta=None,
+        fase="vendas",
+        aguardando="resultado_plano",
+        atualizar_dados={},
+        motivo="Cliente contou o que procura — consultor indica o plano",
+        prioridade="PLANO",
+        contexto_resposta={
+            "mensagem": mensagem,
+            "resolucao": resolucao,
+            "aguardando_antes": _texto(estado.get("aguardando")),
+            "sinais": ["necessidade" if situacao == NECESSIDADE else "quer_outro_plano"],
+        },
+    )
+
+
 # ── Depois da máquina de estados ─────────────────────────────────────────────
 
 
@@ -380,6 +547,12 @@ def _planos_mais_em_conta(estado: dict[str, Any]) -> list[dict[str, Any]]:
 
 def depois(decisao: Decisao, estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
     """Marca os turnos em que o cliente não avançou, para a resposta ser uma conversa."""
+    if decisao.acao == "RESPONDER" and decisao.objetivo_resposta == "ANOTAR_E_PEDIR_PROXIMO":
+        flags_ = resolucao.get("flags") or {}
+        # Mandou o dado e comentou algo junto ("... desculpa a demora, tava no hospital"):
+        # a Eva reage ao comentário em vez de responder só "Anotei CPF."
+        if flags_.get("conversa_social") or _texto(resolucao.get("nota")):
+            decisao.contexto_resposta = {**(decisao.contexto_resposta or {}), "comentario_do_cliente": True}
     if decisao.acao != "RESPONDER":
         # Uma ação (checar cobertura, validar CPF, cadastrar...) é avanço: zera a contagem
         if decisao.acao != "AGUARDAR" and int(estado.get("tentativas_travadas") or 0):
@@ -404,7 +577,9 @@ def depois(decisao: Decisao, estado: dict[str, Any], resolucao: dict[str, Any]) 
         and objetivo in _OBJETIVOS_DE_REPETICAO
         and not _avancou(decisao, estado)
     )
-    travado = mesmo_passo and (not tem_pergunta or situacao in {OBJECAO_PRECO, IMPEDIMENTO, MIDIA})
+    travado = mesmo_passo and (
+        not tem_pergunta or situacao in {OBJECAO_PRECO, OBJECAO, IMPEDIMENTO, MIDIA}
+    )
 
     if not travado:
         if situacao == MIDIA:
