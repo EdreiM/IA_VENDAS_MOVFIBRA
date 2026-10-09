@@ -90,7 +90,7 @@ o que o cliente já contou (notas): {'; '.join(ln for ln in str(estado.get('nota
 """
 
 
-LIMITE_HISTORICO = 8
+LIMITE_HISTORICO = 12
 _MAX_CHARS_CLIENTE = 500
 # Mensagem da Eva pode trazer o catálogo inteiro — precisa caber para "o segundo" / "o último"
 _MAX_CHARS_EVA = 4000

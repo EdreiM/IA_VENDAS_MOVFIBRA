@@ -165,6 +165,17 @@ def resolver_rag_provider(*, unidade_id: int | None = None) -> str:
     return (get_settings().rag_provider or "mock").lower().strip() or "mock"
 
 
+def resolver_limite_travado(*, unidade_id: int | None = None) -> int:
+    """Soma de tentativas sem avanço no mesmo passo que faz a Eva chamar a equipe (padrão 4)."""
+    raw = _cfg("limite_travado", "", unidade_id=unidade_id).strip()
+    if raw:
+        try:
+            return max(2, min(10, int(float(raw.replace(",", ".")))))
+        except ValueError:
+            pass
+    return 4
+
+
 def obter_config_ia(*, unidade_id: int | None = None) -> dict[str, Any]:
     settings = get_settings()
     openai_key = resolver_openai_api_key(unidade_id=unidade_id)
@@ -196,6 +207,7 @@ def obter_config_ia(*, unidade_id: int | None = None) -> dict[str, Any]:
             unidade_id=unidade_id
         ),
         "inactivity_followup_max": resolver_inactivity_followup_max(unidade_id=unidade_id),
+        "limite_travado": resolver_limite_travado(unidade_id=unidade_id),
         "env_fallback": {
             "llm_provider": settings.llm_provider,
             "openai_model": settings.openai_model,
@@ -235,6 +247,7 @@ def salvar_config_ia(dados: dict[str, Any], *, unidade_id: int | None = None) ->
         "inactivity_followup_max": str(
             max(1, min(10, int(dados.get("inactivity_followup_max") or 3)))
         ),
+        "limite_travado": str(max(2, min(10, int(dados.get("limite_travado") or 4)))),
     }
     for k, v in plain.items():
         admin_store.set_config(k, v, unidade_id=unidade_id)

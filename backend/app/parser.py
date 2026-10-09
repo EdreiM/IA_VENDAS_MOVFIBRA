@@ -1913,6 +1913,26 @@ def eh_so_saudacao(msg_bruto: str) -> bool:
     return not resto.strip()
 
 
+_RE_AUTORIZACAO_DE_SEGUIR = re.compile(
+    r"(sim |ok |entao |ta bom |beleza |isso |claro )?(pode|podem|podes|bora|vamos) "
+    r"(agendar|marcar|instalar|confirmar|mandar|seguir)( sim| entao| ja| logo)?"
+    r"( (a |o |essa |esse |minha |meu )?(instalacao|agendamento|horario|visita|tecnico))?( sim| entao)?"
+)
+
+
+def eh_autorizacao_de_seguir(msg_bruto: str) -> bool:
+    """ "pode agendar", "pode marcar a instalação", "vamos confirmar": autorização, não dúvida.
+
+    As palavras "agendar" e "instalar" faziam essas frases caírem como pergunta sobre
+    instalação — a Eva explicava a instalação em vez de confirmar o que o cliente autorizou.
+    """
+    bruto = texto(msg_bruto)
+    if not bruto or "?" in bruto:
+        return False
+    limpo = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", normalizar_texto(bruto))).strip()
+    return bool(_RE_AUTORIZACAO_DE_SEGUIR.fullmatch(limpo))
+
+
 def tem_duvida_informativa(
     msg: str,
     msg_bruto: str = "",
@@ -1920,7 +1940,7 @@ def tem_duvida_informativa(
     aguardando: str | None = None,
 ) -> bool:
     bruto = texto(msg_bruto or msg)
-    if eh_so_saudacao(bruto):
+    if eh_so_saudacao(bruto) or eh_autorizacao_de_seguir(bruto):
         return False
     partes_sep = re.split(
         r"(?i)\s+(?:mas|porem|porém|e se|so que|só que)\s+",
@@ -2088,6 +2108,8 @@ def eh_pergunta_instalacao(
     if eh_pergunta_custo_instalacao(msg, msg_bruto):
         return True
     t = normalizar_texto(msg_bruto or msg)
+    if eh_autorizacao_de_seguir(msg_bruto or msg):
+        return False
     if (topico or "").strip().casefold() == "instalacao":
         from app.contexto_conversa import eh_followup_curto
 
@@ -2250,7 +2272,62 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     """Interpretação do turno: eventos e dados conferidos pelas regras + leitura de conversa."""
     interpretacao = _parse_interpretacao(raw, mensagem_cliente, estado)
     interpretacao.situacao, interpretacao.nota = _leitura_de_conversa(raw, mensagem_cliente)
+    _conferir_confirmacao(interpretacao, mensagem_cliente, estado)
     return interpretacao
+
+
+_PASSOS_DE_CONFIRMACAO = {
+    "confirmacao_plano", "confirmacao_dados", "aceite_termos", "confirmacao_horario", "confirmar_local",
+}
+# Passos em que um "sim" errado custa caro: contrato, cadastro e agendamento
+_PASSOS_CRITICOS = {"confirmacao_plano", "confirmacao_dados", "aceite_termos", "confirmacao_horario"}
+_RE_HESITACAO = re.compile(
+    r"\b(hu+m+|hm+|ahn+|sei la|talvez|acho que nao|depende|vamos ver|veremos|quem sabe|sera|"
+    r"deixa (eu )?ver|nao sei|mais ou menos)\b"
+)
+_RE_AFIRMATIVA = re.compile(
+    r"\b(s+i+m+|s|ss|o+k+(ay)?|aceit\w+|concord\w+|de acordo|confirm\w+|fech\w+|ta ?bo[mn]|ta otimo|"
+    r"tudo (certo|ok|correto|bem)|cert\w+|corret\w+|exato|isso|esse( mesmo)?|perfeito|combinado|"
+    r"show|top|bora|vamos|manda ver|com certeza|claro|pode|quero|positivo|uhum|aham|segue|massa|"
+    r"dale|demorou|joia|tranquilo|ciente|por favor|blz|beleza|otimo|bele|vou querer|fico com|"
+    r"serve|gostei|me ve)\b"
+)
+_EMOJIS_DE_SIM = ("👍", "✅", "👌", "🤝", "🙏", "✔")
+
+
+def _conferir_confirmacao(interpretacao: Interpretacao, msg_bruto: str, estado: dict[str, Any]) -> None:
+    """Confirmação lida só pelo modelo precisa combinar com a mensagem.
+
+    As regras reconhecem metade das formas de dizer "sim"; o resto depende do modelo —
+    e se ele errar ("tá caro", "vou pensar", "hum" lidos como confirmação) o funil avançava
+    até no aceite dos termos. Aqui a confirmação cai quando a mensagem traz objeção, pedido
+    de tempo, dúvida, recusa ou hesitação; e, nos passos de contrato, cadastro e agendamento,
+    quando não tem nenhuma palavra afirmativa.
+    """
+    if Evento.CONFIRMACAO.value not in interpretacao.eventos:
+        return
+    aguardando = texto(estado.get("aguardando"))
+    if aguardando not in _PASSOS_DE_CONFIRMACAO:
+        return
+    msg = normalizar_texto(msg_bruto)
+    if eh_confirmacao(msg) or eh_ack_curto(msg_bruto):
+        return  # as regras também leram um "sim"
+
+    from app import conversa
+
+    limpo = re.sub(r"[^\w\s]", " ", msg)
+    afirmativa = bool(_RE_AFIRMATIVA.search(limpo)) or any(e in msg_bruto for e in _EMOJIS_DE_SIM)
+    contra = (
+        bool(conversa.classificar(msg_bruto, estado))
+        or "?" in msg_bruto
+        or eh_recusa(msg)
+        or bool(_RE_HESITACAO.search(limpo))
+    )
+    if not contra and (afirmativa or aguardando not in _PASSOS_CRITICOS):
+        return
+    interpretacao.eventos = [e for e in interpretacao.eventos if e != Evento.CONFIRMACAO.value]
+    if not interpretacao.eventos:
+        interpretacao.eventos = [Evento.OUTRO.value]
 
 
 def _leitura_de_conversa(raw: str, mensagem_cliente: str) -> tuple[str, str]:

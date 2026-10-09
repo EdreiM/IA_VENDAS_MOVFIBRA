@@ -426,6 +426,7 @@ def _migrar_turno_log(cur: Any) -> None:
         ("interpretacao_llm", "TEXT"),
         ("confianca", "REAL"),
         ("sinais", "TEXT"),
+        ("divergencias", "TEXT"),
     ]
     for nome, tipo in extras:
         if nome not in cols:
@@ -1075,6 +1076,7 @@ def log_turno(
     interpretacao_llm: str = "",
     confianca: float | None = None,
     sinais: list[str] | None = None,
+    divergencias: list[str] | None = None,
 ) -> None:
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -1083,8 +1085,8 @@ def log_turno(
                 INSERT INTO turno_log_ia (
                     id_cliente, mensagem_cliente, eventos, acao, objetivo,
                     fase, aguardando, topico, rag_hit, duracao_ms, message_id, created_at,
-                    estado_antes, interpretacao_llm, confianca, sinais
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    estado_antes, interpretacao_llm, confianca, sinais, divergencias
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     id_cliente,
@@ -1103,6 +1105,7 @@ def log_turno(
                     (interpretacao_llm or "")[:4000] or None,
                     confianca,
                     json.dumps(sinais, ensure_ascii=False) if sinais else None,
+                    json.dumps(divergencias, ensure_ascii=False) if divergencias else None,
                 ),
             )
 

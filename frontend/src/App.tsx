@@ -41,6 +41,9 @@ import {
   fetchAtencao,
   resolverPerguntaSemResposta,
   Atencao,
+  fetchAvaliacao,
+  rodarAvaliacao,
+  Avaliacao,
   fetchHealth,
   fetchLabels,
   fetchPlanos,
@@ -242,6 +245,7 @@ export default function App() {
   const [funil, setFunil] = useState<Funil | null>(null);
   const [atencao, setAtencao] = useState<Atencao | null>(null);
   const [atencaoDias, setAtencaoDias] = useState(7);
+  const [avaliacao, setAvaliacao] = useState<Avaliacao | null>(null);
   const [conversas, setConversas] = useState<Conversa[]>([]);
   const [statusFiltro, setStatusFiltro] = useState("");
   const [convBusca, setConvBusca] = useState("");
@@ -302,6 +306,7 @@ export default function App() {
     inactivity_followup_enabled: false,
     inactivity_followup_delay_minutes: 15,
     inactivity_followup_max: 3,
+    limite_travado: 4,
   });
   const [iaMasks, setIaMasks] = useState({
     openai: "",
@@ -401,8 +406,21 @@ export default function App() {
   }, []);
 
   const refreshAtencao = useCallback(async () => {
-    setAtencao(await fetchAtencao(atencaoDias));
+    const [a, av] = await Promise.all([fetchAtencao(atencaoDias), fetchAvaliacao()]);
+    setAtencao(a);
+    setAvaliacao(av);
   }, [atencaoDias]);
+
+  // Enquanto a avaliação roda, acompanha o andamento
+  useEffect(() => {
+    if (!avaliacao?.rodando) return;
+    const t = window.setInterval(() => {
+      void fetchAvaliacao()
+        .then(setAvaliacao)
+        .catch(() => undefined);
+    }, 3000);
+    return () => window.clearInterval(t);
+  }, [avaliacao?.rodando]);
 
   const refreshConversas = useCallback(async () => {
     const c = await fetchConversas(60, {
@@ -484,6 +502,7 @@ export default function App() {
       inactivity_followup_enabled: !!c.inactivity_followup_enabled,
       inactivity_followup_delay_minutes: Number(c.inactivity_followup_delay_minutes ?? 15),
       inactivity_followup_max: Number(c.inactivity_followup_max ?? 3),
+      limite_travado: Number(c.limite_travado ?? 4),
     });
     setIaMasks({
       openai: c.openai_api_key_mask || "",
@@ -973,6 +992,7 @@ export default function App() {
         inactivity_followup_enabled: !!saved.inactivity_followup_enabled,
         inactivity_followup_delay_minutes: Number(saved.inactivity_followup_delay_minutes ?? 15),
         inactivity_followup_max: Number(saved.inactivity_followup_max ?? 3),
+        limite_travado: Number(saved.limite_travado ?? 4),
       }));
       setIaMasks({
         openai: saved.openai_api_key_mask || "",
@@ -1658,6 +1678,124 @@ export default function App() {
                 </div>
               )}
             </div>
+
+            <div className="funil-section">
+              <h2>Avaliação do modelo</h2>
+              <p className="muted">
+                Roda {avaliacao?.ultimo?.resumo.rotulados ?? "os"} casos de teste contra o modelo
+                configurado em Config IA e mostra onde ele lê a mensagem do cliente errado. Cada caso é
+                uma chamada ao modelo.
+              </p>
+              <div style={{ display: "flex", gap: 12, alignItems: "center", margin: "8px 0 12px" }}>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!!avaliacao?.rodando}
+                  onClick={() => {
+                    void rodarAvaliacao()
+                      .then(setAvaliacao)
+                      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+                  }}
+                >
+                  {avaliacao?.rodando ? "Rodando…" : "Rodar avaliação"}
+                </button>
+                {avaliacao?.rodando && (
+                  <span className="muted">
+                    {avaliacao.feitos} de {avaliacao.total || "…"} casos
+                  </span>
+                )}
+                {avaliacao?.erro && <span className="muted">Falhou: {avaliacao.erro}</span>}
+              </div>
+              {avaliacao?.ultimo ? (
+                <>
+                  <div className="metrics-secondary">
+                    <div className="stat-compact">
+                      <span>Modelo sozinho</span>
+                      <strong>
+                        {avaliacao.ultimo.resumo.acerto_llm_sozinho}/{avaliacao.ultimo.resumo.rotulados}
+                      </strong>
+                    </div>
+                    <div className="stat-compact">
+                      <span>Modelo + regras</span>
+                      <strong>
+                        {avaliacao.ultimo.resumo.acerto_llm_mais_parser}/
+                        {avaliacao.ultimo.resumo.rotulados}
+                      </strong>
+                    </div>
+                    <div className="stat-compact">
+                      <span>Regras consertaram</span>
+                      <strong>{avaliacao.ultimo.resumo.parser_corrigiu}</strong>
+                    </div>
+                    <div className="stat-compact">
+                      <span>Regras estragaram</span>
+                      <strong>{avaliacao.ultimo.resumo.parser_estragou}</strong>
+                    </div>
+                  </div>
+                  <p className="muted">
+                    Última execução: {new Date(avaliacao.ultimo.quando).toLocaleString("pt-BR")} ·{" "}
+                    {avaliacao.ultimo.modelo}
+                  </p>
+                  {avaliacao.ultimo.erros.length > 0 && (
+                    <div className="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Caso</th>
+                            <th>Passo</th>
+                            <th>Mensagem</th>
+                            <th>O que saiu errado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {avaliacao.ultimo.erros.map((e) => (
+                            <tr key={e.id}>
+                              <td>{e.id}</td>
+                              <td>{e.etapa.replace(/_/g, " ")}</td>
+                              <td>{e.mensagem}</td>
+                              <td>{e.problemas.join(" · ")}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="muted">Ainda não foi rodada neste ambiente.</p>
+              )}
+            </div>
+
+            {(atencao?.regras_mudaram || []).length > 0 && (
+              <div className="funil-section">
+                <h2>Onde as regras mudaram a leitura do modelo</h2>
+                <p className="muted">
+                  O modelo leu uma coisa e as regras por palavra-chave gravaram outra. Quase sempre é
+                  correção certa; quando não for, é a regra que precisa de ajuste.
+                </p>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Quando</th>
+                        <th>Passo</th>
+                        <th>Mensagem do cliente</th>
+                        <th>O que mudou</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(atencao?.regras_mudaram || []).map((t) => (
+                        <tr key={t.id}>
+                          <td>{t.created_at ? new Date(t.created_at).toLocaleString("pt-BR") : "—"}</td>
+                          <td>{(t.etapa || "—").replace(/_/g, " ")}</td>
+                          <td>{t.mensagem}</td>
+                          <td>{t.mudancas.join(" · ")}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="funil-section">
               <h2>Turnos recentes</h2>
@@ -2600,6 +2738,22 @@ export default function App() {
                   </label>
                 </div>
               </div>
+
+              <label>
+                Tentativas antes de transferir para a equipe
+                <input
+                  type="number"
+                  step="1"
+                  min="2"
+                  max="10"
+                  value={iaForm.limite_travado}
+                  onChange={(e) => setIaForm({ ...iaForm, limite_travado: Number(e.target.value) })}
+                />
+                <small className="field-hint">
+                  Quando o cliente não avança no mesmo passo. Padrão 4: “não tenho esse dado” conta 2,
+                  resposta fora do assunto conta 1, pedir um tempo não conta.
+                </small>
+              </label>
 
               <label>
                 Provedor

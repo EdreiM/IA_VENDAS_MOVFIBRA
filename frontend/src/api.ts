@@ -266,8 +266,38 @@ export type Atencao = {
   por_sinal: { sinal: string; rotulo: string; quantidade: number }[];
   por_etapa: { etapa: string; quantidade: number }[];
   turnos_recentes: AtencaoTurno[];
+  regras_mudaram: {
+    id: number;
+    id_cliente: string;
+    etapa: string;
+    mensagem: string;
+    mudancas: string[];
+    created_at: string | null;
+  }[];
   perguntas_sem_resposta: PerguntaSemResposta[];
 };
+export type AvaliacaoItem = { id: string; etapa: string; mensagem: string; problemas: string[] };
+export type Avaliacao = {
+  rodando: boolean;
+  feitos: number;
+  total: number;
+  erro: string;
+  ultimo: {
+    quando: string;
+    modelo: string;
+    resumo: {
+      rotulados: number;
+      acerto_llm_sozinho: number;
+      acerto_llm_mais_parser: number;
+      parser_corrigiu: number;
+      parser_estragou: number;
+    };
+    erros: AvaliacaoItem[];
+    modelo_errou_regras_consertaram: AvaliacaoItem[];
+  } | null;
+};
+export const fetchAvaliacao = () => api<Avaliacao>("/admin/avaliacao");
+export const rodarAvaliacao = () => api<Avaliacao>("/admin/avaliacao/rodar", { method: "POST" });
 export const fetchAtencao = (dias = 7) => api<Atencao>(`/metrics/atencao?dias=${dias}&limite=80`);
 export const resolverPerguntaSemResposta = (id: number) =>
   api<{ ok: boolean; id: number }>(`/admin/perguntas-sem-resposta/${id}/resolver`, {
@@ -364,6 +394,7 @@ export type ConfigIa = {
   inactivity_followup_enabled: boolean;
   inactivity_followup_delay_minutes: number;
   inactivity_followup_max: number;
+  limite_travado: number;
 };
 
 export const fetchConfigIa = (unidade_id?: number) => {

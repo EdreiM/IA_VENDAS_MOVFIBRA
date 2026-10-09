@@ -163,6 +163,47 @@ _RE_CONFIRMAR_COM_EQUIPE = re.compile(
 )
 
 
+def _marcar(decisao: Decisao, sinal: str, **extra: Any) -> None:
+    """Sinal do turno gerado na hora de escrever a resposta (o pipeline lê depois)."""
+    ctx = dict(decisao.contexto_resposta or {})
+    ctx["sinais"] = [*ctx.get("sinais", []), sinal]
+    ctx.update(extra)
+    decisao.contexto_resposta = ctx
+
+
+def _chat_conferido(
+    system: str, user: str, *, temperature: float, decisao: Decisao, fatos: str | None = None
+) -> str:
+    """Resposta do modelo, conferida contra os fatos do próprio prompt (app/verificacao.py).
+
+    Se o texto cita valor, percentual, prazo ou velocidade que não está nos fatos, o modelo
+    reescreve uma vez sabendo o que errou. Se insistir, devolve "" e quem chamou usa a
+    resposta segura — a Eva nunca envia número que ninguém lhe deu.
+    """
+    from app.verificacao import afirmacoes_sem_base
+
+    # O interpretador já falhou neste turno: não espera outro timeout para escrever a resposta
+    if (decisao.contexto_resposta or {}).get("llm_fora"):
+        raise RuntimeError("modelo indisponível neste turno")
+    fatos = user if fatos is None else fatos
+    texto = (chat(system, user, temperature=temperature) or "").strip()
+    sem_base = afirmacoes_sem_base(texto, fatos) if texto else []
+    if not sem_base:
+        return texto
+    aviso = (
+        f"\n\nATENÇÃO: sua resposta anterior citou {', '.join(sem_base)}, que não aparece em "
+        "nenhum fato acima. Reescreva a mensagem sem citar valor, percentual, prazo ou velocidade "
+        "que não esteja escrito nos fatos. Se o cliente perguntou justamente isso, diga que "
+        "prefere confirmar com a equipe."
+    )
+    texto = (chat(system, user + aviso, temperature=0.2) or "").strip()
+    if texto and not afirmacoes_sem_base(texto, fatos):
+        _marcar(decisao, "resposta_reescrita")
+        return texto
+    _marcar(decisao, "resposta_barrada", resposta_barrada=True)
+    return ""
+
+
 def _garantir_retomada(texto: str, pendente: str, retomada: str) -> str:
     """Se o LLM esqueceu de retomar o atendimento, acrescenta o próximo passo."""
     if not retomada:
@@ -208,10 +249,31 @@ def _responder_duvida(
     plano = _plano_do_estado(estado, ctx)
     plano_txt = ""
     if plano.get("nome"):
-        plano_txt = (
-            f"{plano.get('nome')} — {_fmt_money(plano.get('valor'))}/mês. "
-            f"{plano.get('beneficios') or plano.get('descricao') or ''}"
-        ).strip()
+        plano_txt = f"{plano.get('nome')} — {_fmt_money(plano.get('valor'))}/mês"
+        if plano.get("valor_pontualidade"):
+            plano_txt += f" (pagando até o vencimento: {_fmt_money(plano.get('valor_pontualidade'))})"
+        plano_txt = f"{plano_txt}. {plano.get('beneficios') or plano.get('descricao') or ''}".strip()
+    outros_txt = ""
+    for p in ctx.get("planos") or []:
+        if p.get("nome") and p.get("nome") != plano.get("nome"):
+            outros_txt += (
+                f"- {p.get('nome')} — {_fmt_money(p.get('valor'))}/mês. "
+                f"{p.get('beneficios') or p.get('descricao') or ''}\n"
+            )
+
+    # O que já está acertado com este cliente (para dúvidas como "que horas o técnico vem?")
+    dados = {**estado, **(decisao.atualizar_dados or {})}
+    situacao: list[str] = []
+    if dados.get("cidade") or dados.get("bairro"):
+        local = ", ".join(str(x) for x in (dados.get("bairro"), dados.get("cidade")) if x)
+        cobertura = {True: "com cobertura confirmada", False: "sem cobertura"}.get(dados.get("tem_cobertura"), "")
+        situacao.append(f"Endereço de instalação: {local} {cobertura}".strip())
+    if dados.get("horario_escolhido") and dados.get("data_agendamento"):
+        estado_agenda = "confirmada" if dados.get("agendamento_confirmado") else "escolhida, ainda não confirmada"
+        situacao.append(
+            f"Instalação {estado_agenda}: {dados.get('data_agendamento')}, {dados.get('horario_escolhido')}"
+        )
+    situacao_txt = "\n".join(f"- {s}" for s in situacao)
 
     hist_txt = ""
     for h in historico or []:
@@ -231,6 +293,10 @@ BASE DE CONHECIMENTO DA EMPRESA (sua fonte):
 {rag_txt or '(nenhum trecho encontrado para esta pergunta)'}
 
 PLANO DO CLIENTE: {plano_txt or '(ainda não escolhido)'}
+OUTROS PLANOS DO CATÁLOGO:
+{outros_txt or '(não listados para esta pergunta)'}
+O QUE JÁ ESTÁ ACERTADO COM O CLIENTE:
+{situacao_txt or '(nada ainda)'}
 
 O QUE VOCÊ JÁ SABE DESTE CLIENTE:
 {_notas_txt(estado) or '(nada anotado)'}
@@ -244,7 +310,8 @@ PRÓXIMO PASSO DO ATENDIMENTO: {retomada or '(nenhum)'}
 Como escrever:
 - Fale como uma atendente de verdade no WhatsApp: natural, direta, em primeira pessoa. Nada de frase de sistema ("a Eva não calcula", "não tenho essa informação na base").
 - Responda exatamente o que foi perguntado, em 1 a 3 frases. Se for pergunta de sim ou não, comece pelo "sim" ou "não".
-- Use somente a base de conhecimento e os dados do plano acima. A base pode trazer mais do que foi perguntado: use só o trecho que responde a esta dúvida.
+- Use somente a base de conhecimento e os dados acima. A base pode trazer mais do que foi perguntado: use só o trecho que responde a esta dúvida. Se nenhum trecho tratar do assunto perguntado, a resposta não está ali — não adapte um trecho de outro assunto.
+- Se a mensagem trouxer mais de uma pergunta, responda cada uma; a que não tiver resposta na base, diga que confirma com a equipe.
 - Se a resposta não estiver ali, comece a mensagem com a marca [SEM_BASE] (ela é apagada antes do envio e avisa a equipe) e diga com naturalidade que esse detalhe você prefere confirmar com a equipe, sem inventar. Nunca informe valor de multa, taxa, prazo ou data que não esteja escrito acima.
 - Olhe a conversa: não repita o que você já explicou. Se o cliente voltou ao mesmo assunto, responda só o ponto que ele perguntou agora, com outras palavras; se ele pareceu não entender, explique de um jeito mais simples.
 - Se o cliente informou dados nesta mensagem, diga em poucas palavras que anotou.
@@ -253,10 +320,16 @@ Como escrever:
 Escreva somente a mensagem.
 """
     try:
-        texto = (chat(_system_prompt(), user, temperature=0.4) or "").strip() if pergunta else ""
+        texto = (
+            _chat_conferido(_system_prompt(), user, temperature=0.4, decisao=decisao)
+            if pergunta else ""
+        )
     except Exception:  # noqa: BLE001 — LLM fora do ar
         texto = ""
     if not texto:
+        if (decisao.contexto_resposta or {}).get("resposta_barrada"):
+            # A Eva vai dizer que confirma com a equipe: a pergunta fica registrada
+            decisao.contexto_resposta = {**(decisao.contexto_resposta or {}), "sem_base": True}
         return f"{_SEM_LLM}\n\n{retomada}".strip() if pergunta else retomada
     if _RE_SEM_BASE.search(texto):
         # A base não respondeu: a pergunta fica registrada para a equipe completar a RAG
@@ -343,7 +416,17 @@ _SEM_LLM_CONVERSA: dict[str, str] = {
         "Para facilitar, vou chamar um atendente da nossa equipe para te ajudar com isso. "
         "Em instantes alguém continua com você por aqui."
     ),
+    "TRANSFERENCIA_INSTABILIDADE": (
+        "Estou com uma instabilidade aqui no sistema. Para você não ficar esperando, vou chamar "
+        "um atendente da nossa equipe para continuar com você por aqui."
+    ),
 }
+
+# Modelo fora do ar e as regras não entenderam a mensagem: melhor pedir de novo do que chutar
+_INSTABILIDADE_REENVIO = (
+    "Tive uma instabilidade aqui do meu lado e não consegui ler sua mensagem. "
+    "Pode me mandar de novo, por favor?"
+)
 
 
 def _notas_txt(estado: dict[str, Any]) -> str:
@@ -496,7 +579,7 @@ Como escrever:
 Escreva somente a mensagem.
 """
     try:
-        texto = (chat(_system_prompt(), user, temperature=0.5) or "").strip()
+        texto = _chat_conferido(_system_prompt(), user, temperature=0.5, decisao=decisao)
     except Exception:  # noqa: BLE001 — LLM fora do ar
         texto = ""
     if not texto:
@@ -677,6 +760,8 @@ def _resposta_de_conversa(
     if situacao == "MIDIA" and not int(conversa.get("tentativas") or 0):
         return _com_aviso_de_midia()
 
+    if situacao == "TRANSFERENCIA_INSTABILIDADE":
+        return _SEM_LLM_CONVERSA[situacao]  # o modelo é justamente o que está fora do ar
     texto = _conversar(decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente)
     if texto:
         return texto
@@ -702,6 +787,9 @@ def _gerar_resposta(
     mensagem_cliente: str = "",
 ) -> str:
     _ = origem
+
+    if decisao.objetivo_resposta == "INSTABILIDADE_PEDIR_REENVIO":
+        return _INSTABILIDADE_REENVIO
 
     if decisao.objetivo_resposta == "INFORMAR_TRANSFERENCIA_AJUDA":
         situacao = str(((decisao.contexto_resposta or {}).get("conversa") or {}).get("situacao") or "")
@@ -864,14 +952,10 @@ def _gerar_resposta(
         )
 
     if decisao.objetivo_resposta == "CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA":
-        ctx = decisao.contexto_resposta or {}
-        topico = str(ctx.get("topico_contexto") or "")
-        if topico == "cancelamento":
-            return _responder_duvida(
-                decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
-                pendente="confirmacao_dados",
-            )
-        # Demais dúvidas: LLM + RAG (não inventar resposta genérica)
+        return _responder_duvida(
+            decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
+            pendente="confirmacao_dados",
+        )
 
     if decisao.objetivo_resposta == "INFORMAR_RECUSA_TERMOS":
         return recusou_termos()
@@ -1209,13 +1293,19 @@ def _gerar_resposta(
             return prefixo + informar_planos_por_beneficio(
                 beneficio or "benefício", com, plano_atual=plano
             ) + f"\n\n{retomada}"
-        if topico == "instalacao" or eh_pergunta_instalacao(pergunta_txt, pergunta_bruta):
-            return prefixo + _responder_duvida(
-                decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
-                pendente=prox_cad[0] if prox_cad else "nome", plano_nome=nome, retomada=retomada,
-            )
-        detalhe = informar_detalhes_plano(plano if isinstance(plano, dict) else {})
-        return prefixo + detalhe + f"\n\n{retomada}"
+        from app.parser import eh_pergunta_detalhe_plano
+
+        # "O que vem nele?" → ficha do plano. Qualquer outra dúvida → base de conhecimento.
+        if topico == "detalhe_plano" or (
+            eh_pergunta_detalhe_plano(pergunta_txt, pergunta_bruta)
+            and not eh_pergunta_instalacao(pergunta_txt, pergunta_bruta)
+        ):
+            detalhe = informar_detalhes_plano(plano if isinstance(plano, dict) else {})
+            return prefixo + detalhe + f"\n\n{retomada}"
+        return prefixo + _responder_duvida(
+            decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
+            pendente=prox_cad[0] if prox_cad else "nome", plano_nome=nome, retomada=retomada,
+        )
 
     if decisao.objetivo_resposta == "CONFIRMAR_HORARIO_E_RESPONDER_PERGUNTA":
         ctx = decisao.contexto_resposta or {}
@@ -1229,15 +1319,14 @@ def _gerar_resposta(
         pergunta = normalizar_texto(
             str(ctx.get("pergunta_original") or decisao.pergunta or "")
         )
+        _ = pergunta
+        # Antes saía "Sobre sua dúvida: vou te explicar" sem explicar nada: agora a dúvida
+        # é respondida pela base, como em qualquer outra etapa.
         base = f"Perfeito! Anotei *{horario}* no dia *{data}*."
-        if any(x in pergunta for x in ("remarc", "reagend", "mudar horario", "trocar horario")):
-            extra = (
-                " Sim, você pode remarcar depois — é só falar com a nossa equipe. "
-                "Posso confirmar esse agendamento?"
-            )
-        else:
-            extra = " Sobre sua dúvida: vou te explicar. Posso confirmar esse agendamento?"
-        return base + extra
+        return base + "\n\n" + _responder_duvida(
+            decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
+            pendente="confirmacao_horario",
+        )
 
     if decisao.objetivo_resposta == "ANOTAR_E_PEDIR_PROXIMO":
         ctx = decisao.contexto_resposta or {}
@@ -1342,15 +1431,22 @@ def _gerar_resposta(
 
     ctx = decisao.contexto_resposta or {}
     topico = str(ctx.get("topico_contexto") or "")
-    if topico == "cancelamento" and decisao.objetivo_resposta in {
+    _ = topico
+    # Toda dúvida passa pelo mesmo redator (base de conhecimento + conferência dos fatos).
+    # Antes só cancelamento e instalação passavam; o resto ia pelo prompt geral abaixo.
+    if decisao.objetivo_resposta in {
         "RESPONDER_PERGUNTA_E_RETOMAR",
+        "RESPONDER_DUVIDA_E_RETOMAR",
         "CONFIRMAR_PLANO_E_RESPONDER_PERGUNTA",
         "CONFIRMAR_DADOS_E_RESPONDER_PERGUNTA",
         "CONFIRMAR_HORARIO_E_RESPONDER_PERGUNTA",
-    }:
+    } and str(decisao.pergunta or ctx.get("pergunta_original") or "").strip():
+        pendente_duvida = str(ctx.get("pendente") or decisao.aguardando or "")
+        if decisao.objetivo_resposta == "RESPONDER_DUVIDA_E_RETOMAR":
+            pendente_duvida = "duvidas"
         return _responder_duvida(
             decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
-            pendente=str(ctx.get("pendente") or decisao.aguardando or ""),
+            pendente=pendente_duvida,
             plano_nome=str(estado.get("plano_em_negociacao") or estado.get("plano_confirmado") or ""),
             anotados=list(ctx.get("campos_anotados") or []),
         )
@@ -1452,7 +1548,18 @@ Como cumprir o objetivo:
 
 Escreva somente a mensagem final.
 """
-    texto = chat(_system_prompt(), user, temperature=0.55)
+    try:
+        texto = _chat_conferido(_system_prompt(), user, temperature=0.55, decisao=decisao)
+    except Exception:  # noqa: BLE001 — modelo fora do ar não pode virar silêncio
+        texto = ""
+        _marcar(decisao, "llm_fora_do_ar")
+    if not texto:
+        # Sem texto do modelo (fora do ar ou resposta barrada): retoma o passo, sem inventar nada
+        retomada = _retomada_apos_duvida(
+            str(pendente or ""), estado,
+            plano_nome=str(estado.get("plano_em_negociacao") or estado.get("plano_confirmado") or ""),
+        )
+        return retomada or _INSTABILIDADE_REENVIO
     if decisao.objetivo_resposta == "RESPONDER_DUVIDA_E_RETOMAR":
         low = texto.casefold()
         if "dúvida" not in low and "duvida" not in low:
