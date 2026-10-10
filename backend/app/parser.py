@@ -863,6 +863,16 @@ def eh_confirmacao(msg: str) -> bool:
         return False
     if t.startswith("nao ") or " nao " in f" {t} ":
         return False
+    # Pergunta que começa com palavra de confirmação não é um sim: "pode ser no nome da minha
+    # esposa?", "pode ser sábado?". Só vale quando o sim vem numa oração própria antes da
+    # pergunta ("sim, mas tem multa?"). Sem isto, o cadastro era enviado por causa do "pode ser".
+    if "?" in bruto:
+        oracoes = [o for o in re.split(r"[,.;!\n]+", bruto) if o.strip()]
+        primeira = re.sub(r"[^\w\s]", " ", normalizar_texto(oracoes[0])).strip() if oracoes else ""
+        if len(oracoes) < 2 or "?" in oracoes[0] or not (
+            _confirmacao_exata(primeira) or primeira in {"sim", "ok", "ta", "ta bom", "pode ser", "beleza", "blz"}
+        ):
+            return False
     if any(
         p in t
         for p in (
@@ -935,6 +945,29 @@ def _confirmacao_por_prefixo(bruto: str, t: str) -> bool:
     if any(p in _MARCAS_NAO_CONFIRMA for p in antes):
         return False
     return not any(p in _MARCAS_OBJECAO_APOS_MAS for p in depois)
+
+
+# Sim que não se confunde com "entendi" ("tá", "ok", "beleza" antes de uma pergunta são só escuta)
+_SIM_CLARO = frozenset({
+    "sim", "sim sim", "ss", "isso", "isso mesmo", "pode ser", "pode ser sim", "pode ser esse",
+    "confirmo", "fechado", "fechou", "quero", "quero sim", "quero esse", "esse mesmo",
+    "pode confirmar", "pode fechar", "claro", "com certeza", "positivo",
+})
+
+
+def eh_sim_antes_de_pergunta(msg: str) -> bool:
+    """'sim, mas tem multa?' confirma e pergunta; 'pode ser sábado?' e 'tá, mas e a multa?' só perguntam."""
+    bruto = texto(msg)
+    if "?" not in bruto:
+        return False
+    oracoes = [o for o in re.split(r"[,.;!\n]+", bruto) if o.strip()]
+    if len(oracoes) < 2 or "?" in oracoes[0]:
+        return False
+    primeira = re.sub(r"[^\w\s]", " ", normalizar_texto(oracoes[0])).strip()
+    if primeira not in _SIM_CLARO:
+        return False
+    resto = re.sub(r"[^\w\s]", " ", normalizar_texto(" ".join(oracoes[1:]))).split()
+    return not any(p in _MARCAS_OBJECAO_APOS_MAS for p in resto)
 
 
 def _confirmacao_exata(t: str) -> bool:
@@ -2272,7 +2305,7 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     """Interpretação do turno: eventos e dados conferidos pelas regras + leitura de conversa."""
     interpretacao = _parse_interpretacao(raw, mensagem_cliente, estado)
     interpretacao.situacao, interpretacao.nota = _leitura_de_conversa(raw, mensagem_cliente)
-    _conferir_confirmacao(interpretacao, mensagem_cliente, estado)
+    _conferir_confirmacao(interpretacao, mensagem_cliente, estado, raw)
     _aplicar_endereco_rotulado(interpretacao, mensagem_cliente, estado)
     _limpar_numero_do_endereco(interpretacao)
     return interpretacao
@@ -2355,7 +2388,19 @@ _RE_AFIRMATIVA = re.compile(
 _EMOJIS_DE_SIM = ("👍", "✅", "👌", "🤝", "🙏", "✔")
 
 
-def _conferir_confirmacao(interpretacao: Interpretacao, msg_bruto: str, estado: dict[str, Any]) -> None:
+def _eventos_do_llm(raw: str) -> set[str]:
+    try:
+        data = json.loads(_strip_markdown(raw))
+    except (TypeError, ValueError):
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    return {str(e).upper() for e in (data.get("eventos") or []) if isinstance(e, str)}
+
+
+def _conferir_confirmacao(
+    interpretacao: Interpretacao, msg_bruto: str, estado: dict[str, Any], raw: str = ""
+) -> None:
     """Confirmação lida só pelo modelo precisa combinar com a mensagem.
 
     As regras reconhecem metade das formas de dizer "sim"; o resto depende do modelo —
@@ -2370,6 +2415,17 @@ def _conferir_confirmacao(interpretacao: Interpretacao, msg_bruto: str, estado: 
     if aguardando not in _PASSOS_DE_CONFIRMACAO:
         return
     msg = normalizar_texto(msg_bruto)
+    # Pergunta que começa com palavra de confirmação ("pode ser no nome da minha esposa?",
+    # "pode ser sábado?") não é um sim: as regras confirmavam pelo prefixo e o cadastro era
+    # enviado. Com ponto de interrogação, só vale se o modelo também leu confirmação.
+    eventos_llm = _eventos_do_llm(raw)
+    if "?" in msg_bruto and eventos_llm and Evento.CONFIRMACAO.value not in eventos_llm:
+        interpretacao.eventos = [e for e in interpretacao.eventos if e != Evento.CONFIRMACAO.value]
+        if Evento.PERGUNTA.value not in interpretacao.eventos:
+            interpretacao.eventos.append(Evento.PERGUNTA.value)
+        if not interpretacao.pergunta:
+            interpretacao.pergunta = msg_bruto.strip()[:300]
+        return
     if eh_confirmacao(msg) or eh_ack_curto(msg_bruto):
         return  # as regras também leram um "sim"
 
@@ -2513,6 +2569,16 @@ def _parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any]
         and Evento.PERGUNTA.value in eventos_llm
         and not (eventos_llm & {Evento.PLANO_INFORMADO.value, Evento.PEDIU_TROCAR_PLANO.value})
     )
+    # Na oferta do plano vale o mesmo quando nenhum plano foi citado: "o roteador é bom?"
+    # é pergunta, não escolha do plano que tem roteador.
+    duvida_na_oferta = (
+        fase == "vendas"
+        and "?" in msg_bruto
+        and Evento.PERGUNTA.value in eventos_llm
+        and not (eventos_llm & {Evento.PLANO_INFORMADO.value, Evento.PEDIU_TROCAR_PLANO.value})
+        and not _detectar_plano_na_mensagem(msg)
+    )
+    duvida_no_cadastro = duvida_no_cadastro or duvida_na_oferta
     # "pode ser o segundo" — escolha de um plano da lista (o LLM resolve o nome pelo
     # histórico), não confirmação do plano que estava em negociação
     escolha_por_posicao = (

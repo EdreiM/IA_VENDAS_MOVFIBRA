@@ -58,6 +58,9 @@ def catalogo_em_texto(planos: list[dict[str, Any]]) -> str:
         partes = [f"{nome} — {_fmt(p.get('valor'))}/mês"]
         if p.get("valor_pontualidade"):
             partes.append(f"pagando até o vencimento: {_fmt(p.get('valor_pontualidade'))}")
+        velocidade = str(p.get("velocidade") or "").strip()
+        if velocidade:
+            partes.append(f"velocidade: {velocidade}")
         if p.get("dispositivos_max"):
             partes.append(f"até {int(p['dispositivos_max'])} dispositivos")
         beneficios = str(p.get("beneficios") or "").strip() or str(p.get("descricao") or "").strip()

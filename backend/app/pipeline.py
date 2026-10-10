@@ -334,6 +334,7 @@ def _recomendar_plano(estado: dict[str, Any], decisao: Decisao) -> Decisao:
         # Sem o consultor (modelo fora do ar, resposta inválida): o caminho de sempre
         resolucao = dict(ctx.get("resolucao") or {})
         resolucao["_sem_consultor"] = True
+        resolucao["_era_do_consultor"] = True
         return _com_contexto(decidir(estado_antes, resolucao), sinais=sinais)
 
     plano, abertura = rec.get("plano"), str(rec.get("abertura") or "")
@@ -404,12 +405,13 @@ def _enriquecer_com_rag(
     objetivos_com_texto_reserva = {
         "INFORMAR_CANCELAMENTO_E_RETOMAR",
         "INFORMAR_INSTALACAO_E_RETOMAR",
+        "RESPONDER_DUVIDA_DO_CLIENTE",  # tem o catálogo do painel mesmo quando a base vem vazia
     }
     ctx_dec = decisao.contexto_resposta or {}
     # Objeção de preço ou "não tenho esse dado": a base pode trazer o argumento ou a alternativa
     situacao = str((ctx_dec.get("conversa") or {}).get("situacao") or "")
-    if situacao in {"OBJECAO_PRECO", "OBJECAO"}:
-        rag = base_de_venda(estado, mensagem)
+    if situacao in {"OBJECAO_PRECO", "OBJECAO"} or decisao.objetivo_resposta == "RESPONDER_DUVIDA_NA_VENDA":
+        rag = base_de_venda(estado, pergunta or mensagem)
         if rag.get("encontrado"):
             decisao.contexto_resposta = {**ctx_dec, "rag": rag}
         return decisao

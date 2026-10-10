@@ -51,9 +51,14 @@ def _texto(v: Any) -> str:
 
 
 def _eh_confirmacao(msg: str, flags: dict[str, Any]) -> bool:
-    from app.parser import eh_confirmacao
+    from app.parser import eh_confirmacao, eh_sim_antes_de_pergunta, normalizar_texto
 
-    return bool(flags.get("confirmacao")) or eh_confirmacao(msg)
+    if flags.get("confirmacao"):
+        return True
+    # Com "?", só o sim dito antes da pergunta confirma: "pode ser sábado?" é pergunta
+    if "?" in msg:
+        return eh_sim_antes_de_pergunta(msg)
+    return eh_confirmacao(normalizar_texto(msg))
 
 
 def _tem_plano_em_foco(estado: dict[str, Any]) -> bool:
@@ -83,7 +88,7 @@ def resolver_intencao_plano_vendas(
 
     msg = normalizar_texto(str(resolucao.get("mensagem") or ""))
     ctx = _texto(estado.get("contexto_plano"))
-    conf = _eh_confirmacao(msg, flags)
+    conf =_eh_confirmacao(str(resolucao.get("mensagem") or ""), flags)
     neg = bool(flags.get("negacao"))
     plano_informado = bool((flags.get("plano") or {}).get("informado"))
 
