@@ -191,6 +191,9 @@ def _chat_conferido(
     # O interpretador já falhou neste turno: não espera outro timeout para escrever a resposta
     if (decisao.contexto_resposta or {}).get("llm_fora"):
         raise RuntimeError("modelo indisponível neste turno")
+    from app import custos
+
+    custos.marcar("resposta")
     fatos = user if fatos is None else fatos
     texto = (chat(system, user, temperature=temperature) or "").strip()
     sem_base = afirmacoes_sem_base(texto, fatos) if texto else []

@@ -67,4 +67,10 @@ def chat(
         ],
         **extras,
     )
+    try:
+        from app import custos
+
+        custos.registrar_chat(provider, model, getattr(response, "usage", None))
+    except Exception:  # noqa: BLE001 — registrar custo nunca derruba a chamada
+        pass
     return (response.choices[0].message.content or "").strip()

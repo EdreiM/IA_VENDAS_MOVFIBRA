@@ -648,6 +648,9 @@ def process_message(
     if not mensagem:
         raise ValueError("Mensagem vazia")
 
+    from app import custos
+
+    custos.definir_cliente(id_cliente)  # o custo das chamadas deste turno é deste cliente
     estado = db.carregar_ou_criar_estado(id_cliente)
     # Dado ditado por áudio ("maria arroba gmail ponto com", "cinco dois nove...") vira o
     # texto que o cliente digitaria — é o que as regras de cadastro sabem conferir.

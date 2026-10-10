@@ -65,12 +65,15 @@ def _rodar() -> None:
     from app import admin_store
 
     try:
+        from app import custos
+
         mod = _avaliador()
         casos = mod.carregar_casos(mod.CASOS_PADRAO)
         with _lock:
             _andamento.update(feitos=0, total=len(casos), erro="")
         resultados: list[dict[str, Any]] = []
         for caso in casos:
+            custos.definir_cliente("")  # avaliação não é atendimento de cliente
             resultados.append(mod.avaliar_caso(caso))
             with _lock:
                 _andamento["feitos"] = len(resultados)
