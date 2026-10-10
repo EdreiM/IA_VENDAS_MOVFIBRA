@@ -248,9 +248,11 @@ SCHEMA_STATEMENTS = [
         tokens_saida INTEGER DEFAULT 0,
         segundos_audio REAL,
         custo_usd DOUBLE PRECISION,
+        cotacao_brl DOUBLE PRECISION,
         created_at TIMESTAMPTZ
     )
     """,
+    "ALTER TABLE uso_ia ADD COLUMN IF NOT EXISTS cotacao_brl DOUBLE PRECISION",
     "CREATE INDEX IF NOT EXISTS idx_uso_ia_criado ON uso_ia(created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_uso_ia_cliente ON uso_ia(id_cliente)",
     "CREATE INDEX IF NOT EXISTS idx_perguntas_sem_resposta ON perguntas_sem_resposta_ia(resolvida, created_at DESC)",
@@ -1138,6 +1140,7 @@ def registrar_uso_ia(
     tokens_saida: int = 0,
     segundos_audio: float | None = None,
     custo_usd: float | None = None,
+    cotacao_brl: float | None = None,
 ) -> None:
     """Uma chamada ao modelo (ou transcrição) e o que ela custou — ver app/custos.py."""
     with get_connection() as conn:
@@ -1146,12 +1149,13 @@ def registrar_uso_ia(
                 """
                 INSERT INTO uso_ia (
                     id_cliente, finalidade, provedor, modelo, tokens_entrada, tokens_cache,
-                    tokens_saida, segundos_audio, custo_usd, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    tokens_saida, segundos_audio, custo_usd, cotacao_brl, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     id_cliente or None, finalidade, provedor, modelo, int(tokens_entrada or 0),
-                    int(tokens_cache or 0), int(tokens_saida or 0), segundos_audio, custo_usd, _now(),
+                    int(tokens_cache or 0), int(tokens_saida or 0), segundos_audio, custo_usd,
+                    cotacao_brl, _now(),
                 ),
             )
 

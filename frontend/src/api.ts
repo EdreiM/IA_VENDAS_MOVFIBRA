@@ -328,19 +328,29 @@ export type Custos = {
     usd: number;
     brl: number;
     usd_mes: number;
+    brl_mes: number;
   }[];
   modelos_sem_preco: string[];
 };
 export type PrecoModelo = { entrada: number; cache: number; saida: number };
+export type ReferenciasCustos = {
+  cotacao?: { valor: number; data: string; fonte: string } | null;
+  modelos?: Record<string, PrecoModelo>;
+  fonte_precos?: string;
+  falhas?: string[];
+  atualizado_em?: string | null;
+};
 export type ConfigCustos = {
   cotacao_dolar: number;
   modelos: Record<string, PrecoModelo>;
   transcricao_usd_hora: Record<string, number>;
   modelo_em_uso: string;
+  referencias?: ReferenciasCustos;
 };
+export const atualizarCustos = () => api<ConfigCustos>("/admin/custos/atualizar", { method: "POST" });
 export const fetchCustos = (meses = 6) => api<Custos>(`/metrics/custos?meses=${meses}`);
 export const fetchConfigCustos = () => api<ConfigCustos>("/admin/config/custos");
-export const saveConfigCustos = (body: Omit<ConfigCustos, "modelo_em_uso">) =>
+export const saveConfigCustos = (body: Omit<ConfigCustos, "modelo_em_uso" | "referencias">) =>
   api<ConfigCustos>("/admin/config/custos", { method: "PUT", body: JSON.stringify(body) });
 
 export const fetchTurnos = (idCliente: string) =>

@@ -46,7 +46,7 @@ import {
   Avaliacao,
   fetchCustos,
   fetchConfigCustos,
-  saveConfigCustos,
+  atualizarCustos,
   Custos,
   ConfigCustos,
   fetchHealth,
@@ -1675,7 +1675,7 @@ export default function App() {
                           </td>
                           <td>{c.vendeu ? "venda fechada" : c.fase || "—"}</td>
                           <td>{c.chamadas}</td>
-                          <td>{fmtBRL(c.usd_mes * (custos?.cotacao_dolar || 0))}</td>
+                          <td>{fmtBRL(c.brl_mes)}</td>
                           <td>
                             {fmtBRL(c.brl)} <span className="muted-inline">({fmtUSD(c.usd)})</span>
                           </td>
@@ -1688,90 +1688,68 @@ export default function App() {
             </div>
 
             {custosCfg && (
-              <form
-                className="funil-section"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void saveConfigCustos({
-                    cotacao_dolar: custosCfg.cotacao_dolar,
-                    modelos: custosCfg.modelos,
-                    transcricao_usd_hora: custosCfg.transcricao_usd_hora,
-                  })
-                    .then(async (salvo) => {
-                      setCustosCfg(salvo);
-                      setCustos(await fetchCustos());
-                      setOkMsg("Preços salvos.");
-                    })
-                    .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-                }}
-              >
-                <h2>Preços usados na conta</h2>
+              <div className="funil-section">
+                <h2>Cotação e preços usados na conta</h2>
                 <p className="muted">
-                  Em dólar, por 1 milhão de tokens, como na página de preços da OpenAI. Modelo em uso:{" "}
-                  <strong>{custosCfg.modelo_em_uso}</strong>. Se a OpenAI mudar o preço, atualize aqui; o
-                  que já foi registrado fica com o preço da época.
+                  Atualizados sozinhos, uma vez por dia: o dólar vem do Banco Central e o preço do modelo
+                  vem da tabela da OpenAI. Cada chamada fica gravada com a cotação do dia.
                 </p>
-                <div className="form-grid" style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-                  <label>
-                    Cotação do dólar (R$)
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={custosCfg.cotacao_dolar}
-                      onChange={(e) => setCustosCfg({ ...custosCfg, cotacao_dolar: Number(e.target.value) })}
-                    />
-                  </label>
+                <div className="metrics-secondary">
+                  <div className="stat-compact">
+                    <span>
+                      Dólar
+                      {custosCfg.referencias?.cotacao?.data
+                        ? ` · ${custosCfg.referencias.cotacao.data.split("-").reverse().join("/")}`
+                        : ""}
+                    </span>
+                    <strong>{fmtBRL(custosCfg.cotacao_dolar)}</strong>
+                  </div>
                   {(["entrada", "cache", "saida"] as const).map((campo) => {
-                    const modelo = custosCfg.modelo_em_uso;
-                    const preco = custosCfg.modelos[modelo] || { entrada: 0, cache: 0, saida: 0 };
+                    const base = custosCfg.modelo_em_uso.replace(/-\d{4}-\d{2}-\d{2}$/, "");
+                    const preco = custosCfg.modelos[custosCfg.modelo_em_uso] || custosCfg.modelos[base];
                     const rotulo = { entrada: "Entrada", cache: "Entrada em cache", saida: "Saída" }[campo];
                     return (
-                      <label key={campo}>
-                        {rotulo} (US$ / 1M)
-                        <input
-                          type="number"
-                          step="0.001"
-                          min="0"
-                          value={preco[campo]}
-                          onChange={(e) =>
-                            setCustosCfg({
-                              ...custosCfg,
-                              modelos: {
-                                ...custosCfg.modelos,
-                                [modelo]: { ...preco, [campo]: Number(e.target.value) },
-                              },
-                            })
-                          }
-                        />
-                      </label>
+                      <div className="stat-compact" key={campo}>
+                        <span>{rotulo} · 1M tokens</span>
+                        <strong>{preco ? fmtUSD(preco[campo]) : "—"}</strong>
+                      </div>
                     );
                   })}
-                  <label>
-                    Transcrição Groq (US$ / hora)
-                    <input
-                      type="number"
-                      step="0.001"
-                      min="0"
-                      value={custosCfg.transcricao_usd_hora.groq ?? 0}
-                      onChange={(e) =>
-                        setCustosCfg({
-                          ...custosCfg,
-                          transcricao_usd_hora: {
-                            ...custosCfg.transcricao_usd_hora,
-                            groq: Number(e.target.value),
-                          },
-                        })
-                      }
-                    />
-                  </label>
+                  <div className="stat-compact">
+                    <span>Transcrição · hora de áudio</span>
+                    <strong>{fmtUSD(custosCfg.transcricao_usd_hora.groq ?? 0)}</strong>
+                  </div>
                 </div>
-                <div style={{ marginTop: 12 }}>
-                  <button type="submit" className="btn">
-                    Salvar preços
-                  </button>
-                </div>
-              </form>
+                <p className="muted">
+                  Modelo em uso: <strong>{custosCfg.modelo_em_uso}</strong>
+                  {custosCfg.referencias?.cotacao?.fonte ? ` · dólar: ${custosCfg.referencias.cotacao.fonte}` : ""}
+                  {custosCfg.referencias?.fonte_precos ? ` · preços: ${custosCfg.referencias.fonte_precos}` : ""}
+                  {custosCfg.referencias?.atualizado_em
+                    ? ` · atualizado em ${new Date(custosCfg.referencias.atualizado_em).toLocaleString("pt-BR")}`
+                    : " · ainda não atualizado automaticamente"}
+                </p>
+                {(custosCfg.referencias?.falhas || []).length > 0 && (
+                  <p className="muted">
+                    Não foi possível buscar agora: {(custosCfg.referencias?.falhas || []).join(", ")}. Vale o
+                    último valor guardado.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    void atualizarCustos()
+                      .then(async (cfg) => {
+                        setCustosCfg(cfg);
+                        setCustos(await fetchCustos());
+                        setOkMsg("Cotação e preços atualizados.");
+                      })
+                      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+                  }}
+                >
+                  Atualizar agora
+                </button>
+              </div>
             )}
           </section>
         )}

@@ -278,6 +278,9 @@ def startup() -> None:
     from app.inactivity_followup import iniciar_worker_inatividade
 
     iniciar_worker_inatividade()
+    from app import custos
+
+    custos.iniciar_atualizador()  # cotação do dólar e preços dos modelos, sem ninguém digitar
 
 
 @app.post("/admin/followup/processar")
@@ -728,7 +731,28 @@ def admin_get_config_custos(
     _exigir_admin(authorization, x_admin_token)
     from app import custos, ia_config
 
-    return {**custos.configuracao(usar_cache=False), "modelo_em_uso": ia_config.resolver_openai_model()}
+    return {
+        **custos.configuracao(usar_cache=False),
+        "modelo_em_uso": ia_config.resolver_openai_model(),
+        "referencias": custos.referencias(),
+    }
+
+
+@app.post("/admin/custos/atualizar")
+def admin_atualizar_custos(
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Busca agora a cotação do dólar e os preços dos modelos (normalmente é automático)."""
+    _exigir_admin(authorization, x_admin_token)
+    from app import custos, ia_config
+
+    referencias = custos.atualizar_referencias()
+    return {
+        **custos.configuracao(usar_cache=False),
+        "modelo_em_uso": ia_config.resolver_openai_model(),
+        "referencias": referencias,
+    }
 
 
 @app.put("/admin/config/custos")

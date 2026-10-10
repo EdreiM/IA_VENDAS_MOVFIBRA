@@ -149,7 +149,10 @@ def test_transcricao_custa_pelo_tempo_de_audio() -> None:
 
 
 def test_precos_e_cotacao_vem_do_painel() -> None:
+    """Sem busca automática (primeira subida, sem rede), vale o que estiver salvo."""
     antes = admin_store.get_config(custos.CHAVE_CONFIG, "")
+    auto_antes = admin_store.get_config(custos.CHAVE_AUTO, "")
+    admin_store.set_config(custos.CHAVE_AUTO, "")
     _limpar()
     try:
         cfg = custos.salvar_configuracao({
@@ -173,6 +176,7 @@ def test_precos_e_cotacao_vem_do_painel() -> None:
         _assert(abs(b["usd"] - 3.0) < 1e-6 and abs(b["brl"] - 18.0) < 0.011, b)
     finally:
         admin_store.set_config(custos.CHAVE_CONFIG, antes)
+        admin_store.set_config(custos.CHAVE_AUTO, auto_antes)
         custos._cache_config.update(quando=0.0, valor=None)
         custos.definir_cliente("")
         _limpar()
@@ -188,6 +192,111 @@ def test_registro_que_falha_nao_derruba_a_chamada() -> None:
         db.registrar_uso_ia = original
 
 
+# ── Cotação e preços automáticos ─────────────────────────────────────────────
+
+PTAX = {"value": [{"cotacaoCompra": 4.9886, "cotacaoVenda": 4.9892, "dataHoraCotacao": "2026-10-09 13:07:30.746"}]}
+AWESOME = {"USDBRL": {"bid": "4.9918", "ask": "4.9924", "create_date": "2026-10-09 19:30:05"}}
+OPENROUTER = {"data": {"endpoints": [
+    {"provider_name": "Azure", "pricing": {"prompt": "0.00000044", "completion": "0.00000176", "input_cache_read": "0.00000011"}},
+    {"provider_name": "OpenAI", "pricing": {"prompt": "0.0000004", "completion": "0.0000016", "input_cache_read": "0.0000001"}},
+]}}
+
+
+class _Fontes:
+    """Simula as fontes externas (Banco Central, AwesomeAPI, OpenRouter) e isola a config local."""
+
+    def __init__(self, *, ptax=PTAX, awesome=AWESOME, openrouter=OPENROUTER):
+        self.ptax, self.awesome, self.openrouter = ptax, awesome, openrouter
+        self.urls: list[str] = []
+
+    def _http(self, url, params=None):
+        self.urls.append(url)
+        if "bcb.gov.br" in url:
+            resposta = self.ptax
+        elif "awesomeapi" in url:
+            resposta = self.awesome
+        else:
+            resposta = self.openrouter
+        if isinstance(resposta, Exception):
+            raise resposta
+        return resposta
+
+    def __enter__(self):
+        self._antes = (custos._http_json, admin_store.get_config(custos.CHAVE_AUTO, ""),
+                       admin_store.get_config(custos.CHAVE_CONFIG, ""), custos._modelos_a_atualizar)
+        custos._http_json = self._http
+        custos._modelos_a_atualizar = lambda: ["gpt-4.1-mini"]
+        admin_store.set_config(custos.CHAVE_AUTO, "")
+        admin_store.set_config(custos.CHAVE_CONFIG, "")
+        custos._cache_config.update(quando=0.0, valor=None)
+        return self
+
+    def __exit__(self, *exc):
+        custos._http_json, auto, manual, custos._modelos_a_atualizar = self._antes
+        admin_store.set_config(custos.CHAVE_AUTO, auto)
+        admin_store.set_config(custos.CHAVE_CONFIG, manual)
+        custos._cache_config.update(quando=0.0, valor=None)
+
+
+def test_cotacao_e_precos_sao_buscados_sem_ninguem_digitar() -> None:
+    with _Fontes() as fontes:
+        _assert(custos.configuracao(usar_cache=False)["cotacao_dolar"] == custos.COTACAO_PADRAO, "antes da busca")
+        ref = custos.atualizar_referencias()
+        cfg = custos.configuracao(usar_cache=False)
+        _assert(cfg["cotacao_dolar"] == 4.9892, cfg["cotacao_dolar"])
+        _assert(ref["cotacao"] == {"valor": 4.9892, "data": "2026-10-09", "fonte": "Banco Central (PTAX venda)"}, ref["cotacao"])
+        # O preço é o da OpenAI (não o de outro provedor) e vem por milhão de tokens
+        _assert(cfg["modelos"]["gpt-4.1-mini"] == {"entrada": 0.4, "cache": 0.1, "saida": 1.6}, cfg["modelos"]["gpt-4.1-mini"])
+        _assert(not ref["falhas"] and ref["atualizado_em"], ref)
+        _assert(any("openai/gpt-4.1-mini" in u for u in fontes.urls), fontes.urls)
+        # O que foi buscado vale mais do que um valor digitado antes
+        custos.salvar_configuracao({"cotacao_dolar": 9.0, "modelos": {"gpt-4.1-mini": {"entrada": 9, "cache": 9, "saida": 9}}})
+        cfg = custos.configuracao(usar_cache=False)
+        _assert(cfg["cotacao_dolar"] == 4.9892 and cfg["modelos"]["gpt-4.1-mini"]["saida"] == 1.6, cfg)
+
+
+def test_banco_central_fora_usa_a_reserva() -> None:
+    with _Fontes(ptax=RuntimeError("503")):
+        ref = custos.atualizar_referencias()
+        _assert(ref["cotacao"]["valor"] == 4.9924 and ref["cotacao"]["fonte"] == "AwesomeAPI", ref["cotacao"])
+
+
+def test_falha_na_busca_mantem_o_ultimo_valor() -> None:
+    with _Fontes() as fontes:
+        custos.atualizar_referencias()
+        primeira = custos.referencias()
+        # Tudo fora do ar: nada é perdido e a tentativa não conta como atualização
+        fontes.ptax = fontes.awesome = fontes.openrouter = RuntimeError("sem rede")
+        ref = custos.atualizar_referencias()
+        cfg = custos.configuracao(usar_cache=False)
+        _assert(cfg["cotacao_dolar"] == 4.9892 and cfg["modelos"]["gpt-4.1-mini"]["saida"] == 1.6, cfg)
+        _assert(len(ref["falhas"]) == 2 and ref["atualizado_em"] == primeira["atualizado_em"], ref)
+        # Valor absurdo da fonte é recusado
+        fontes.ptax = {"value": [{"cotacaoVenda": 0.01, "dataHoraCotacao": "2026-10-09"}]}
+        fontes.awesome = {"USDBRL": {"ask": "999", "create_date": "2026-10-09"}}
+        fontes.openrouter = {"data": {"endpoints": [{"provider_name": "OpenAI", "pricing": {"prompt": "0.9", "completion": "0.9"}}]}}
+        _assert(custos.buscar_cotacao() is None and custos.buscar_preco_do_modelo("gpt-4.1-mini") is None, "sanidade")
+
+
+def test_custo_em_reais_usa_a_cotacao_do_dia_da_chamada() -> None:
+    _limpar()
+    with _Fontes() as fontes:
+        try:
+            custos.atualizar_referencias()  # dólar a 4,9892
+            custos.definir_cliente(CLIENTE_A)
+            custos.registrar_chat("openai", "gpt-4.1-mini", _usage(1_000_000, 0))  # US$ 0,40
+            # O dólar muda depois: o que já foi gasto continua valendo a cotação daquele dia
+            fontes.ptax = {"value": [{"cotacaoVenda": 6.0, "dataHoraCotacao": "2026-11-09"}]}
+            custos.atualizar_referencias()
+            custos.registrar_chat("openai", "gpt-4.1-mini", _usage(1_000_000, 0))
+            a = _do_cliente(metrics.custos(6), CLIENTE_A)
+            _assert(abs(a["usd"] - 0.80) < 1e-6, a)
+            _assert(abs(a["brl"] - round(0.40 * 4.9892 + 0.40 * 6.0, 2)) < 0.011, a)
+        finally:
+            custos.definir_cliente("")
+            _limpar()
+
+
 def main() -> None:
     db.init_schema()
     tests = [
@@ -197,6 +306,10 @@ def main() -> None:
         test_transcricao_custa_pelo_tempo_de_audio,
         test_precos_e_cotacao_vem_do_painel,
         test_registro_que_falha_nao_derruba_a_chamada,
+        test_cotacao_e_precos_sao_buscados_sem_ninguem_digitar,
+        test_banco_central_fora_usa_a_reserva,
+        test_falha_na_busca_mantem_o_ultimo_valor,
+        test_custo_em_reais_usa_a_cotacao_do_dia_da_chamada,
     ]
     falhas = 0
     for fn in tests:
