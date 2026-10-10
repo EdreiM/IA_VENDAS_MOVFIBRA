@@ -239,6 +239,7 @@ def _responder_duvida(
     plano_nome: str = "",
     anotados: list[str] | None = None,
     retomada: str | None = None,
+    sem_reserva: bool = False,
 ) -> str:
     """Resposta a uma dúvida do cliente + retomada do atendimento, numa mensagem só.
 
@@ -271,6 +272,19 @@ def _responder_duvida(
                 f"- {p.get('nome')} — {_fmt_money(p.get('valor'))}/mês. "
                 f"{p.get('beneficios') or p.get('descricao') or ''}\n"
             )
+    if pendente in _PASSOS_DE_PLANO:
+        # Na oferta do plano a pergunta pode ser sobre qualquer plano: o catálogo inteiro é fato
+        try:
+            from app.consultor import catalogo_em_texto
+            from app.plans_catalog import listar_planos
+
+            catalogo = listar_planos(estado)
+            foco = next((p for p in catalogo if p.get("nome") == plano.get("nome")), None)
+            if foco:
+                plano_txt = catalogo_em_texto([foco]).lstrip("- ")
+            outros_txt = catalogo_em_texto([p for p in catalogo if p.get("nome") != plano.get("nome")])
+        except Exception:  # noqa: BLE001 — sem catálogo, segue com o que já havia
+            pass
 
     # O que já está acertado com este cliente (para dúvidas como "que horas o técnico vem?")
     dados = {**estado, **(decisao.atualizar_dados or {})}
@@ -338,6 +352,8 @@ Escreva somente a mensagem.
         )
     except Exception:  # noqa: BLE001 — LLM fora do ar
         texto = ""
+    if not texto and sem_reserva:
+        return ""  # quem chamou tem uma resposta de reserva melhor que a frase neutra
     if not texto:
         if (decisao.contexto_resposta or {}).get("resposta_barrada"):
             # A Eva vai dizer que confirma com a equipe: a pergunta fica registrada
@@ -829,6 +845,12 @@ def _resposta_de_conversa(
     return ""
 
 
+def _pediu_planos(mensagem: str) -> bool:
+    """O cliente abriu a conversa pedindo plano ou internet ("queria ver os planos que tem")."""
+    t = normalizar_texto(mensagem or "")
+    return bool(re.search(r"\b(planos?|internet|wifi|wi fi|precos?|valores?|contratar|assinar)\b", t))
+
+
 def _aviso_midia(midia: str) -> str:
     if midia == "audio":
         return "Não consegui ouvir esse áudio por aqui. Pode me escrever, por favor?"
@@ -847,6 +869,27 @@ def _gerar_resposta(
 
     if decisao.objetivo_resposta == "INSTABILIDADE_PEDIR_REENVIO":
         return _INSTABILIDADE_REENVIO
+
+    if decisao.objetivo_resposta == "RESPONDER_DUVIDA_NA_VENDA":
+        ctx = decisao.contexto_resposta or {}
+        pendente_venda = str(ctx.get("pendente") or decisao.aguardando or "confirmacao_plano")
+        plano_ref = str(estado.get("plano_em_negociacao") or estado.get("plano_apresentado") or "")
+        reserva = ctx.get("reserva") if isinstance(ctx.get("reserva"), dict) else None
+        com_template = bool(reserva) and str(reserva.get("objetivo_resposta") or "") not in {
+            "RESPONDER_PERGUNTA_E_RETOMAR", "RESPONDER_SEM_BASE_RAG",
+            "INFORMAR_INSTALACAO_E_RETOMAR", "INFORMAR_CANCELAMENTO_E_RETOMAR", "RETOMAR_ESCOLHA_PLANO",
+        }
+        texto = _responder_duvida(
+            decisao, estado, historico=historico, mensagem_cliente=mensagem_cliente,
+            pendente=pendente_venda, plano_nome=plano_ref, sem_reserva=com_template,
+        )
+        if texto:
+            return texto
+        # O modelo não respondeu: vale a resposta pronta que a máquina de estados tinha escolhido
+        return _gerar_resposta(
+            Decisao(**reserva), estado, origem=origem, historico=historico,
+            mensagem_cliente=mensagem_cliente,
+        )
 
     if decisao.objetivo_resposta == "INFORMAR_TRANSFERENCIA_AJUDA":
         situacao = str(((decisao.contexto_resposta or {}).get("conversa") or {}).get("situacao") or "")
@@ -870,7 +913,9 @@ def _gerar_resposta(
         "APRESENTAR_E_PEDIR_LOCALIZACAO",
         "CONVERSAR_E_PEDIR_LOCALIZACAO",
     }:
-        quer_planos = bool((decisao.contexto_resposta or {}).get("quer_ver_planos"))
+        quer_planos = bool((decisao.contexto_resposta or {}).get("quer_ver_planos")) or _pediu_planos(
+            mensagem_cliente
+        )
         return mensagem_abertura(mensagem_cliente, quer_planos=quer_planos)
 
     if decisao.objetivo_resposta == "PEDIR_LOCALIZACAO_PARA_VER_PLANOS":

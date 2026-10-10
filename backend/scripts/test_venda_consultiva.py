@@ -312,6 +312,104 @@ def test_comentario_junto_do_dado_recebe_reacao_e_o_pedido_certo() -> None:
     _assert(not modelo.prompts_texto and "e-mail" in texto, (modelo.prompts_texto, texto))
 
 
+# ── Dúvida na oferta do plano (atendimento real de 10/10/2026) ────────────────
+
+RAG_PLANOS = """A MOV FIBRA vende conexão 100% fibra e ILIMITADA — não vendemos por megas.
+O plano é dimensionado pela quantidade de dispositivos que usam a internet na casa.
+Se o cliente perguntar sobre velocidade/megas: explicar que a conexão é 100% fibra e ilimitada e perguntar quantos aparelhos usam a internet para indicar o plano ideal.
+Formas de pagamento para todos os planos: cartão de crédito, boleto e Pix.
+- MOV SUPER+ — R$ 139/mês — até 6 dispositivos — Imagina Só, Ubook e repetidor Mesh"""
+
+
+def test_pergunta_na_oferta_e_respondida_pelo_modelo_e_nao_por_tabela_pronta() -> None:
+    """ "Qual a velocidade? quantos megas?" saía com a tabela de preços."""
+    perguntas = [
+        "Tá, mas qual a velocidade? quantos megas?", "quantos megas?", "é fibra mesmo?", "o roteador é bom?",
+        "quanto fica no cartão?", "tem taxa de instalação?", "o que vem nesse plano?",
+        "quanto é?", "e depois dos 3 meses fica quanto?", "posso pagar no pix?",
+    ]
+    for msg in perguntas:
+        antes = E(VENDA)
+        estado, dec, _ = turno(antes, msg, L(["PERGUNTA"], {}, pergunta=msg))
+        _assert(dec.objetivo_resposta == "RESPONDER_DUVIDA_NA_VENDA", (msg, dec.objetivo_resposta))
+        # Pergunta não muda nada no atendimento: mesmo passo, mesmo plano
+        _assert(estado.get("aguardando") == "confirmacao_plano" and not estado.get("plano_confirmado"), (msg, estado.get("aguardando")))
+        _assert(estado.get("plano_em_negociacao") == antes.get("plano_em_negociacao"), (msg, estado.get("plano_em_negociacao")))
+
+
+def test_pergunta_dos_megas_recebe_a_base_e_o_catalogo() -> None:
+    msg = "Tá, mas qual a velocidade? quantos megas?"
+    resposta = "A nossa conexão é 100% fibra e ilimitada, a gente não vende por megas. Quantos aparelhos usam a internet aí?"
+    with _Modelo(texto=resposta) as modelo:
+        pipeline.consultar_rag = lambda **k: {"encontrado": True, "chunks": [{"titulo": "Planos", "conteudo": RAG_PLANOS}]}
+        estado, dec, _ = turno(E(VENDA), msg, L(["PERGUNTA"], {}, pergunta=msg))
+        dec = pipeline._enriquecer_com_rag(dec, estado, msg)
+        texto = _texto(dec, estado, msg)
+    prompt = modelo.prompts_texto[0]
+    _assert("não vendemos por megas" in prompt and "perguntar quantos aparelhos" in prompt, prompt[:700])
+    # O preço de plano que a base traz sai; o do painel entra, com todos os planos
+    _assert("R$ 139/mês — até 6" not in prompt and "MOV SUPER+ — R$ 139,00/mês" in prompt, prompt)
+    _assert("velocidade: Ilimitada" in prompt and "MOV INFINITY" in prompt and "CONDUÇÃO DA VENDA" in prompt, prompt)
+    # A resposta do modelo já termina puxando o próximo passo: nada é acrescentado
+    _assert(texto == resposta, texto)
+
+
+def test_sem_modelo_a_pergunta_na_oferta_usa_a_resposta_pronta() -> None:
+    with _Modelo(texto=""):
+        estado, dec, _ = turno(E(VENDA), "o que vem nesse plano?", L(["PERGUNTA"], {}, pergunta="o que vem nesse plano?"))
+        texto = _texto(dec, estado, "o que vem nesse plano?")
+        _assert("MOV SUPER+" in texto and "✅" in texto, texto[:200])
+        estado, dec, _ = turno(E(VENDA), "é fibra mesmo?", L(["PERGUNTA"], {}, pergunta="é fibra mesmo?"))
+        texto = _texto(dec, estado, "é fibra mesmo?")
+        _assert(texto.strip() and "MOV SUPER+" in texto, texto)
+
+
+def test_escolha_com_duvida_e_pedido_de_lista_seguem_o_caminho_de_sempre() -> None:
+    for msg, llm_ in (
+        ("quero o infinity, tem disney?", L(["PLANO_INFORMADO", "PERGUNTA"], {"plano": "infinity"}, pergunta="tem disney?")),
+        ("me mostra todos os planos?", L(["PERGUNTA"], {}, pergunta="me mostra todos os planos?")),
+        ("sim, pode ser", L(["CONFIRMACAO"], {})),
+    ):
+        _, dec, _ = turno(E(VENDA), msg, llm_)
+        _assert(dec.objetivo_resposta != "RESPONDER_DUVIDA_NA_VENDA", (msg, dec.objetivo_resposta))
+    # Fora da oferta (cadastro), a dúvida continua no redator de dúvidas de sempre
+    _, dec, _ = turno(E("cad/telefone"), "quantos megas?", L(["PERGUNTA"], {}, pergunta="quantos megas?"))
+    _assert(dec.objetivo_resposta != "RESPONDER_DUVIDA_NA_VENDA", dec.objetivo_resposta)
+
+
+def test_resposta_so_com_o_numero_de_aparelhos_vai_para_o_consultor() -> None:
+    venda = dict(E(VENDA), ultima_mensagem_sofia="A conexão é ilimitada. Quantos aparelhos usam a internet aí?")
+    for msg in ("uns 5", "são oito", "8", "3 ou 4"):
+        _assert(conversa.classificar(msg, venda) == conversa.NECESSIDADE, (msg, conversa.classificar(msg, venda)))
+    # Sem a pergunta dos aparelhos antes, um número solto não é necessidade
+    _assert(conversa.classificar("8", E(VENDA)) == "", conversa.classificar("8", E(VENDA)))
+    with _Modelo({"plano": "MOV INFINITY", "abertura": "Pra 8 aparelhos o INFINITY é o que comporta: até 12 dispositivos."}):
+        estado, _, _ = turno(venda, "são oito", L(["OUTRO"], {}))
+    _assert(estado.get("plano_em_negociacao") == "MOV INFINITY", estado.get("plano_em_negociacao"))
+
+
+def test_bairro_que_o_cliente_disse_vale_mais_que_o_do_mapa() -> None:
+    from app.state_machine import decidir_resultado_cobertura
+
+    mapa = {"resultado": "cobertura_confirmada", "tem_cobertura": True,
+            "cidade_normalizada": "Santarém", "bairro_normalizado": "Aparecida"}
+    # Cliente disse Diamantino e depois mandou a localização: o bairro continua Diamantino
+    dec = decidir_resultado_cobertura(mapa, dict(E("viab"), bairro="Diamantino"))
+    _assert(dec.atualizar_dados.get("bairro") == "Diamantino", dec.atualizar_dados.get("bairro"))
+    # Sem bairro informado, vale o do mapa
+    dec = decidir_resultado_cobertura(mapa, E("viab"))
+    _assert(dec.atualizar_dados.get("bairro") == "Aparecida", dec.atualizar_dados.get("bairro"))
+
+
+def test_abertura_reconhece_quem_ja_chegou_pedindo_plano() -> None:
+    msg = "Opa bom dia\nQueria ver os planos que tem"
+    estado, dec, _ = turno(E("inicio"), msg, L(["SAUDACAO", "PERGUNTA"], {}))
+    texto = _texto(dec, estado, msg)
+    _assert("Bom dia" in texto and "te mostrar os planos" in texto, texto[:200])
+    estado, dec, _ = turno(E("inicio"), "oi", L(["SAUDACAO"], {}))
+    _assert("te mostrar os planos" not in _texto(dec, estado, "oi"), "abertura comum")
+
+
 def main() -> None:
     tests = [
         test_necessidade_e_objecao_sao_reconhecidas,
@@ -330,6 +428,13 @@ def main() -> None:
         test_base_de_venda_junta_a_mensagem_com_os_fatos_da_oferta,
         test_confirmacao_do_dado_varia_ao_longo_do_cadastro,
         test_comentario_junto_do_dado_recebe_reacao_e_o_pedido_certo,
+        test_pergunta_na_oferta_e_respondida_pelo_modelo_e_nao_por_tabela_pronta,
+        test_pergunta_dos_megas_recebe_a_base_e_o_catalogo,
+        test_sem_modelo_a_pergunta_na_oferta_usa_a_resposta_pronta,
+        test_escolha_com_duvida_e_pedido_de_lista_seguem_o_caminho_de_sempre,
+        test_resposta_so_com_o_numero_de_aparelhos_vai_para_o_consultor,
+        test_bairro_que_o_cliente_disse_vale_mais_que_o_do_mapa,
+        test_abertura_reconhece_quem_ja_chegou_pedindo_plano,
     ]
     falhas = 0
     for fn in tests:

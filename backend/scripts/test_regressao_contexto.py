@@ -14,7 +14,7 @@ from app.config import get_settings
 get_settings.cache_clear()
 
 from app.contexto_conversa import enriquecer_pergunta
-from app.models import Evento
+from app.models import Decisao, Evento
 from app.parser import (
     eh_aceite_termos_explicito,
     eh_confirmacao,
@@ -297,7 +297,17 @@ def test_vendas_instalacao_hoje() -> None:
         msg,
         {"eventos": ["PERGUNTA"], "pergunta": msg, "confianca": 0.9},
     )
-    _assert(dec.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR", dec.objetivo_resposta)
+    # Na oferta do plano a dúvida é respondida pelo modelo; a resposta pronta de instalação
+    # fica de reserva. O que importa aqui: foi lida como dúvida de instalação e não saiu do passo.
+    def _de_instalacao(d) -> bool:
+        ctx = d.contexto_resposta or {}
+        reserva = ctx.get("reserva") or {}
+        return d.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR" or (
+            d.objetivo_resposta == "RESPONDER_DUVIDA_NA_VENDA"
+            and reserva.get("objetivo_resposta") == "INFORMAR_INSTALACAO_E_RETOMAR"
+        )
+
+    _assert(_de_instalacao(dec), dec.objetivo_resposta)
     _assert(dec.aguardando == "confirmacao_plano", f"aguardando={dec.aguardando}")
 
     msg2 = "Vocês conseguem instalar h?"
@@ -306,7 +316,7 @@ def test_vendas_instalacao_hoje() -> None:
         msg2,
         {"eventos": ["PERGUNTA"], "pergunta": msg2, "confianca": 0.9},
     )
-    _assert(dec2.objetivo_resposta == "INFORMAR_INSTALACAO_E_RETOMAR", dec2.objetivo_resposta)
+    _assert(_de_instalacao(dec2), dec2.objetivo_resposta)
 
 
 def test_cadastro_cep_mais_pergunta() -> None:
@@ -727,7 +737,13 @@ def _decidir_sem_executar(estado: dict, msg: str, llm: dict):
     # Estes testes conferem a máquina de estados sem o consultor de planos (que depende do
     # modelo e é testado em test_venda_consultiva.py): é o caminho quando ele não responde.
     res["_sem_consultor"] = True
-    return decidir(estado, res)
+    dec = decidir(estado, res)
+    # Pergunta na oferta do plano é respondida pelo modelo (test_venda_consultiva.py); aqui
+    # o que se confere é a resposta pronta que fica de reserva quando o modelo não responde.
+    reserva = (dec.contexto_resposta or {}).get("reserva")
+    if dec.objetivo_resposta == "RESPONDER_DUVIDA_NA_VENDA" and reserva:
+        return Decisao(**reserva)
+    return dec
 
 
 def test_ta_com_pergunta_fantasma_llm_cadastra() -> None:

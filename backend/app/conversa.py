@@ -217,6 +217,19 @@ def classificar(mensagem: str, estado: dict[str, Any], situacao_llm: str = "") -
         return OBJECAO
     if _RE_NECESSIDADE.search(t):
         return NECESSIDADE
+    # A Eva perguntou quantos aparelhos e o cliente respondeu só o número ("uns 5", "são oito")
+    ultima = _norm(_texto(estado.get("ultima_mensagem_sofia")))
+    if (
+        fase == "vendas"
+        and re.search(r"\b(aparelhos|dispositivos)\b", ultima[-260:])
+        and re.fullmatch(
+            r"(uns |umas |sao |so |tem |temos |cerca de |mais ou menos |acho que )*"
+            r"(\d{1,2}|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|doze|quinze)"
+            r"( ou (\d{1,2}|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez))?( mais ou menos| so)?",
+            t,
+        )
+    ):
+        return NECESSIDADE
     if _RE_IMPEDIMENTO.search(t):
         return IMPEDIMENTO
     return ""
@@ -497,6 +510,80 @@ def _decisao_do_consultor(
             "resolucao": resolucao,
             "aguardando_antes": _texto(estado.get("aguardando")),
             "sinais": ["necessidade" if situacao == NECESSIDADE else "quer_outro_plano"],
+        },
+    )
+
+
+# Respostas prontas que a máquina de estados escolhe por palavra-chave para perguntas sobre plano
+_RESPOSTAS_PRONTAS_DE_PLANO = {
+    "INFORMAR_PRECO_PLANO_E_RETOMAR", "INFORMAR_DETALHES_PLANO", "INFORMAR_PLANOS_POR_BENEFICIO",
+    "ESCLARECER_PROMO_PLANO", "ESCLARECER_PLANO_AMBIGUO", "RESPONDER_PERGUNTA_E_RETOMAR",
+    "INFORMAR_INSTALACAO_E_RETOMAR", "INFORMAR_CANCELAMENTO_E_RETOMAR", "RESPONDER_SEM_BASE_RAG",
+    "INFORMAR_PLANO_NAO_ENCONTRADO", "RETOMAR_ESCOLHA_PLANO", "APRESENTAR_PLANO_ESCOLHIDO_E_CONFIRMAR",
+}
+_RE_VERBO_DE_ESCOLHA = re.compile(
+    r"\b(quero|vou querer|vou de|fico com|pode ser|fecho|fechar|fechado|escolho|me ve|manda o|"
+    r"contrat\w+|vamos de|prefiro)\b"
+)
+
+
+def duvida_na_venda(decisao: Decisao, estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
+    """Pergunta feita na oferta do plano: quem responde é o modelo, com o catálogo e a base.
+
+    A máquina de estados escolhia uma resposta pronta por palavra-chave, e errava a
+    pergunta: "qual a velocidade? quantos megas?" saía com a tabela de preços, "o roteador
+    é bom?" despejava a lista de planos. Aqui a pergunta pura (sem escolha de plano) vira
+    `RESPONDER_DUVIDA_NA_VENDA`, sem mexer no estado; a resposta pronta fica de reserva
+    para quando o modelo não responder. Pedido de lista e plano citado pelo nome seguem
+    o caminho de sempre.
+    """
+    if _texto(estado.get("fase")) != "vendas" or _texto(estado.get("aguardando")) not in _PASSOS_DE_PLANO:
+        return decisao
+    # Mensagem que era do consultor ("tem um mais barato?") e ele não respondeu: vale o
+    # caminho de sempre, que troca o plano — não é uma dúvida a responder.
+    if resolucao.get("_sem_consultor") and resolucao.get("_era_do_consultor"):
+        return decisao
+    mensagem = _texto(resolucao.get("mensagem"))
+    flags = resolucao.get("flags") or {}
+    eh_pergunta = bool(flags.get("tem_pergunta")) or "?" in mensagem
+    if not eh_pergunta or flags.get("confirmacao") or flags.get("pediu_humano"):
+        return decisao
+    t = _norm(mensagem)
+    if _RE_VERBO_DE_ESCOLHA.search(t):
+        return decisao  # "quero o infinity, tem disney?" é escolha com dúvida: segue o fluxo
+    from app.parser import (
+        _detectar_plano_na_mensagem,
+        eh_pedido_lista_completa_planos,
+        eh_pedido_planos_com_desconto,
+        normalizar_texto,
+    )
+
+    tn = normalizar_texto(mensagem)
+    if eh_pedido_lista_completa_planos(tn) or eh_pedido_planos_com_desconto(tn):
+        return decisao
+    objetivo = _texto(decisao.objetivo_resposta)
+    pronta = decisao.acao == "RESPONDER" and objetivo in _RESPOSTAS_PRONTAS_DE_PLANO
+    # "o roteador é bom?" lido como escolha de plano sem nenhum plano citado
+    plano_fantasma = decisao.acao == "RESOLVER_PLANO" and not _detectar_plano_na_mensagem(tn)
+    if not (pronta or plano_fantasma):
+        return decisao
+    aguardando = _texto(estado.get("aguardando"))
+    ctx_antes = decisao.contexto_resposta or {}
+    return Decisao(
+        acao="RESPONDER",
+        objetivo_resposta="RESPONDER_DUVIDA_NA_VENDA",
+        fase="vendas",
+        aguardando=aguardando,
+        atualizar_dados={},
+        pergunta=_texto(resolucao.get("pergunta")) or mensagem,
+        motivo="Dúvida na oferta do plano — responder com o catálogo e a base",
+        prioridade="PLANO",
+        contexto_resposta={
+            "pendente": aguardando,
+            "pergunta_original": mensagem,
+            "topico_contexto": ctx_antes.get("topico_contexto") or resolucao.get("topico_contexto"),
+            "reserva": decisao.model_dump() if pronta else None,
+            "sinais": ["duvida_na_venda"],
         },
     )
 

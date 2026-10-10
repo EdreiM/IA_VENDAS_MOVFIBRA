@@ -2513,6 +2513,16 @@ def _parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any]
         and Evento.PERGUNTA.value in eventos_llm
         and not (eventos_llm & {Evento.PLANO_INFORMADO.value, Evento.PEDIU_TROCAR_PLANO.value})
     )
+    # Na oferta do plano vale o mesmo quando nenhum plano foi citado: "o roteador é bom?"
+    # é pergunta, não escolha do plano que tem roteador.
+    duvida_na_oferta = (
+        fase == "vendas"
+        and "?" in msg_bruto
+        and Evento.PERGUNTA.value in eventos_llm
+        and not (eventos_llm & {Evento.PLANO_INFORMADO.value, Evento.PEDIU_TROCAR_PLANO.value})
+        and not _detectar_plano_na_mensagem(msg)
+    )
+    duvida_no_cadastro = duvida_no_cadastro or duvida_na_oferta
     # "pode ser o segundo" — escolha de um plano da lista (o LLM resolve o nome pelo
     # histórico), não confirmação do plano que estava em negociação
     escolha_por_posicao = (

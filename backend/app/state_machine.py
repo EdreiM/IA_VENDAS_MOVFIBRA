@@ -1338,6 +1338,7 @@ def decidir(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
         decisao = _decidir(estado, resolucao)
         decisao = _resumo_quando_cadastro_completou(decisao, estado)
         decisao = _validar_cpf_antes_de_responder_duvida(decisao, estado, resolucao)
+        decisao = conversa.duvida_na_venda(decisao, estado, resolucao)
         decisao = conversa.depois(decisao, estado, resolucao)
 
     if dados_reabertura:
@@ -3699,6 +3700,15 @@ def decidir_resultado_cobertura(resultado: dict[str, Any], estado: dict[str, Any
     bairro = _texto(resultado.get("bairro_normalizado"))
     rua = _texto(resultado.get("rua_normalizada"))
 
+    # O cliente disse o bairro e depois mandou a localização: vale o que ele disse. O bairro
+    # devolvido pelo mapa pode ser o vizinho ("Aparecida" para quem mora no Diamantino).
+    from app.resolver import normalizar_campo
+
+    bairro_do_cliente = _texto(estado.get("bairro"))
+    if bairro_do_cliente and bairro and normalizar_campo("bairro", bairro) != normalizar_campo(
+        "bairro", bairro_do_cliente
+    ):
+        bairro = bairro_do_cliente
     base_dados = {
         "cidade": cidade,
         "bairro": bairro,
