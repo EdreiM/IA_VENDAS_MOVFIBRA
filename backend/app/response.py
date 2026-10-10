@@ -28,6 +28,7 @@ from app.pos_venda_mensagens import (
     pedir_falar_duvida,
     retomar_duvidas,
 )
+from app.conversa import antes_de_ver_plano
 from app.conversacao_mensagens import clarificar_intencao
 from app.saudacao import (
     mensagem_abertura,
@@ -317,7 +318,7 @@ MENSAGEM COMO O CLIENTE ESCREVEU: {original or pergunta}
 BASE DE CONHECIMENTO DA EMPRESA (sua fonte):
 {rag_txt or '(nenhum trecho encontrado para esta pergunta)'}
 
-PLANO DO CLIENTE: {plano_txt or '(ainda não escolhido)'}
+PLANO DO CLIENTE: {plano_txt or (_SEM_PLANO_AINDA if antes_de_ver_plano(estado) else '(ainda não escolhido)')}
 OUTROS PLANOS DO CATÁLOGO:
 {outros_txt or '(não listados para esta pergunta)'}
 O QUE JÁ ESTÁ ACERTADO COM O CLIENTE:
@@ -367,7 +368,13 @@ Escreva somente a mensagem.
 
 
 _PASSOS_DE_PLANO = {"confirmacao_plano", "escolha_plano", "lista_planos"}
-_CONDUCAO_DA_VENDA = """CONDUÇÃO DA VENDA (o cliente ainda não fechou o plano):
+# Antes da cobertura a Eva não tem plano nem preço para citar: o catálogo depende do endereço
+_SEM_PLANO_AINDA = (
+    "Você ainda não apresentou nenhum plano a este cliente. Os planos e valores disponíveis para "
+    "ele são mostrados logo depois de confirmar a cobertura no endereço. Se ele falar de plano ou "
+    "de preço, diga isso — não diga que tem ou que não tem, nem que vai confirmar com a equipe."
+)
+_CONDUCAO_DA_VENDA ="""CONDUÇÃO DA VENDA (o cliente ainda não fechou o plano):
 - Você é vendedora, não balcão de informações: depois de responder, ajude o cliente a decidir.
 - Ligue a resposta ao que ESTE cliente contou que precisa (veja "o que você já sabe") ou a um benefício do plano dele que esteja nos fatos. Um ponto só, o mais relevante para ele.
 - Termine com uma pergunta simples de avanço, com as suas palavras ("posso seguir com ele pra você?", "fechamos nesse?"). Varie; não repita a pergunta que você já fez na conversa.
@@ -407,6 +414,12 @@ _GUIA_SITUACAO: dict[str, str] = {
         "dessa preocupação e, se houver, ligue a algo que ele contou que precisa. Não fale mal de "
         "concorrente, não prometa o que não está nos fatos e não invente condição. Se os fatos não "
         "responderem à objeção, diga que entende e pergunte o que pesaria para ele decidir."
+    ),
+    "NECESSIDADE_ANTES_DO_PLANO": (
+        "O cliente contou o que procura (preço, quantos aparelhos, para que usa, um benefício) antes "
+        "de você mostrar qualquer plano. Mostre que entendeu, dizendo com as suas palavras o que ele "
+        "procura, e que vai levar isso em conta para indicar o plano certo para ele. Não cite plano "
+        "nem preço, e não diga que tem ou que não tem: você ainda não mostrou nada."
     ),
     "NAO_ENTENDEU": (
         "O cliente não entendeu o que você pediu. Explique de um jeito mais simples o que você "
@@ -500,8 +513,10 @@ def _fatos_da_etapa(decisao: Decisao, estado: dict[str, Any], conversa: dict[str
         if p.get("valor_pontualidade"):
             linha += f" (pagando até o vencimento: {_fmt_money(p.get('valor_pontualidade'))})"
         partes.append(f"{linha}. {str(p.get('beneficios') or '').strip()}".strip())
-    if conversa.get("situacao") == "OBJECAO_PRECO" and not conversa.get("planos_mais_em_conta"):
+    if conversa.get("situacao") == "OBJECAO_PRECO" and not conversa.get("planos_mais_em_conta") and plano.get("nome"):
         partes.append("Não há plano mais barato que este no catálogo.")
+    if antes_de_ver_plano(estado):
+        partes.append(_SEM_PLANO_AINDA)
 
     if str(dados.get("fase") or "") == "agendamento" or str(conversa.get("pendente") or "") in {
         "escolha_horario", "confirmacao_horario",
@@ -562,6 +577,8 @@ def _conversar(
     retomada = "" if transferindo else _retomada_apos_duvida(pendente, estado, plano_nome=plano_nome)
 
     guia = _GUIA_SITUACAO.get(situacao) or _GUIA_SITUACAO["REPETICAO"]
+    if situacao in {"NECESSIDADE", "OBJECAO_PRECO"} and antes_de_ver_plano(estado):
+        guia = _GUIA_SITUACAO["NECESSIDADE_ANTES_DO_PLANO"]
     if situacao == "MIDIA":
         midia = str(conversa.get("midia") or "audio")
         guia = guia.format(

@@ -28,9 +28,11 @@ def chat(
     *,
     temperature: float | None = None,
     response_format: dict[str, Any] | None = None,
+    timeout: float | None = None,
 ) -> str:
     settings = get_settings()
     provider = ia_config.resolver_llm_provider()
+    espera = float(timeout or TIMEOUT_SEGUNDOS)
     temp = (
         float(temperature)
         if temperature is not None
@@ -41,7 +43,7 @@ def chat(
         client = OpenAI(
             base_url=f"{settings.ollama_base_url.rstrip('/')}/v1",
             api_key="ollama",
-            timeout=TIMEOUT_SEGUNDOS,
+            timeout=espera,
             max_retries=TENTATIVAS_EXTRAS,
         )
         model = settings.ollama_model
@@ -51,7 +53,7 @@ def chat(
             raise RuntimeError(
                 "OPENAI_API_KEY não configurada — salve no painel (Config IA) ou no .env"
             )
-        client = OpenAI(api_key=api_key, timeout=TIMEOUT_SEGUNDOS, max_retries=TENTATIVAS_EXTRAS)
+        client = OpenAI(api_key=api_key, timeout=espera, max_retries=TENTATIVAS_EXTRAS)
         model = ia_config.resolver_openai_model()
 
     extras: dict[str, Any] = {}

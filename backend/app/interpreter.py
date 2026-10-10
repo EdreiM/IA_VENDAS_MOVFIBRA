@@ -267,6 +267,10 @@ SCHEMA_INTERPRETACAO: dict[str, Any] = {
 # Modelos/servidores que recusaram json_schema — seguem no JSON livre com retry
 _SEM_SCHEMA: set[str] = set()
 
+# Ler a mensagem leva 1 a 4 s. Com 30 s por tentativa, o cliente esperava um minuto para ouvir
+# que houve instabilidade; com 15 s (e uma nova tentativa), no máximo meio minuto.
+TIMEOUT_INTERPRETADOR = 15.0
+
 
 def _erro_de_schema(exc: BadRequestError) -> bool:
     low = str(exc).casefold()
@@ -290,7 +294,8 @@ def interpretar(
     if modelo not in _SEM_SCHEMA:
         try:
             estruturado = chat(
-                SYSTEM, user, temperature=0.0, response_format=SCHEMA_INTERPRETACAO
+                SYSTEM, user, temperature=0.0, response_format=SCHEMA_INTERPRETACAO,
+                timeout=TIMEOUT_INTERPRETADOR,
             )
             if _json_valido(estruturado):
                 return estruturado
@@ -298,7 +303,7 @@ def interpretar(
             if _erro_de_schema(exc):
                 _SEM_SCHEMA.add(modelo)
 
-    bruto = chat(SYSTEM, user, temperature=0.0)
+    bruto = chat(SYSTEM, user, temperature=0.0, timeout=TIMEOUT_INTERPRETADOR)
     if _json_valido(bruto):
         return bruto
     retry = chat(
@@ -306,5 +311,6 @@ def interpretar(
         user + "\n\nIMPORTANTE: sua resposta anterior não era JSON válido. "
         "Retorne SOMENTE o objeto JSON, sem markdown nem texto extra.",
         temperature=0.0,
+        timeout=TIMEOUT_INTERPRETADOR,
     )
     return retry if _json_valido(retry) else bruto

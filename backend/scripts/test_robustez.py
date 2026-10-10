@@ -402,6 +402,61 @@ def test_avaliacao_roda_e_guarda_o_resultado() -> None:
     _assert(os.path.exists(avaliacao._SCRIPT), avaliacao._SCRIPT)
 
 
+def test_resposta_que_demora_ainda_chega_ao_cliente() -> None:
+    """Atendimento de 10/10: o modelo demorou um minuto, a resposta apareceu no painel e não
+    chegou ao WhatsApp — o webhook desistia de esperar e ninguém mais enviava."""
+    import time
+
+    from app import ia_config, message_buffer as mb
+
+    antes = (ia_config.resolver_message_buffer_seconds, mb.ESPERA_EXTRA_SEGUNDOS)
+    ia_config.resolver_message_buffer_seconds = lambda **k: 0.1
+    mb.ESPERA_EXTRA_SEGUNDOS = 0.3
+    enviadas: list = []
+    chave = "cw:teste-resposta-atrasada"
+
+    def lento(cid, msg):
+        time.sleep(1.0)
+        return {"resposta": "pronta", "mensagem": msg}
+
+    try:
+        try:
+            mb.processar_com_buffer(chave, "Então eu queria um plano barato", lento, id_cliente="t", ao_atrasar=enviadas.append)
+            raise AssertionError("o webhook deveria saber que a resposta atrasou")
+        except mb.RespostaAtrasada:
+            pass
+        _assert(not enviadas, "enviou antes de ficar pronta")
+        time.sleep(1.3)
+        _assert(enviadas == [{"resposta": "pronta", "mensagem": "Então eu queria um plano barato"}], enviadas)
+        # No prazo, a resposta volta pelo webhook e não é enviada duas vezes
+        enviadas.clear()
+        r, enviar = mb.processar_com_buffer(chave, "oi", lambda c, m: {"resposta": "rapida"}, id_cliente="t", ao_atrasar=enviadas.append)
+        time.sleep(0.2)
+        _assert(r == {"resposta": "rapida"} and enviar and not enviadas, (r, enviar, enviadas))
+    finally:
+        ia_config.resolver_message_buffer_seconds, mb.ESPERA_EXTRA_SEGUNDOS = antes
+        mb.limpar_buffer(chave)
+
+
+def test_leitura_da_mensagem_nao_espera_um_minuto_pelo_modelo() -> None:
+    from app import interpreter
+
+    esperas: list = []
+    antes = interpreter.chat
+
+    def chat_falso(system, user, **k):
+        esperas.append(k.get("timeout"))
+        return json.dumps({"eventos": ["OUTRO"], "dados": {}, "campos_corrigidos": [], "pergunta": "",
+                           "situacao": "", "nota": "", "confianca": 0.9})
+
+    interpreter.chat = chat_falso
+    try:
+        interpreter.interpretar("oi", aud.E("viab"), historico=[])
+    finally:
+        interpreter.chat = antes
+    _assert(esperas and all(e == interpreter.TIMEOUT_INTERPRETADOR <= 15 for e in esperas), esperas)
+
+
 def main() -> None:
     tests = [
         test_fala_vira_o_dado_escrito,
@@ -424,6 +479,8 @@ def main() -> None:
         test_confirmacao_legitima_continua_valendo,
         test_limite_de_tentativas_vem_da_config,
         test_avaliacao_roda_e_guarda_o_resultado,
+        test_resposta_que_demora_ainda_chega_ao_cliente,
+        test_leitura_da_mensagem_nao_espera_um_minuto_pelo_modelo,
     ]
     falhas = 0
     for fn in tests:
