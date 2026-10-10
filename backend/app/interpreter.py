@@ -283,6 +283,9 @@ def interpretar(
         historico=_historico_bloco(historico, mensagem),
         mensagem=mensagem,
     )
+    from app import custos
+
+    custos.marcar("interpretador")
     modelo = modelo_ativo()
     if modelo not in _SEM_SCHEMA:
         try:

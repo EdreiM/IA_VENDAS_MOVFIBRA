@@ -304,6 +304,55 @@ export const resolverPerguntaSemResposta = (id: number) =>
     method: "POST",
   });
 
+export type Dinheiro = { usd: number; brl: number };
+export type Custos = {
+  cotacao_dolar: number;
+  mes_atual: string;
+  desde: string | null;
+  total: Dinheiro;
+  mes: Dinheiro & { chamadas: number; clientes: number };
+  clientes_atendidos: number;
+  media_por_cliente: Dinheiro;
+  media_por_cliente_mes: Dinheiro;
+  vendas: number;
+  custo_por_venda: Dinheiro | null;
+  por_mes: { mes: string; usd: number; brl: number; chamadas: number; clientes: number }[];
+  por_finalidade: ({ finalidade: string; rotulo: string } & Dinheiro)[];
+  clientes: {
+    id_cliente: string;
+    nome: string;
+    telefone: string;
+    fase: string;
+    vendeu: boolean;
+    chamadas: number;
+    usd: number;
+    brl: number;
+    usd_mes: number;
+    brl_mes: number;
+  }[];
+  modelos_sem_preco: string[];
+};
+export type PrecoModelo = { entrada: number; cache: number; saida: number };
+export type ReferenciasCustos = {
+  cotacao?: { valor: number; data: string; fonte: string } | null;
+  modelos?: Record<string, PrecoModelo>;
+  fonte_precos?: string;
+  falhas?: string[];
+  atualizado_em?: string | null;
+};
+export type ConfigCustos = {
+  cotacao_dolar: number;
+  modelos: Record<string, PrecoModelo>;
+  transcricao_usd_hora: Record<string, number>;
+  modelo_em_uso: string;
+  referencias?: ReferenciasCustos;
+};
+export const atualizarCustos = () => api<ConfigCustos>("/admin/custos/atualizar", { method: "POST" });
+export const fetchCustos = (meses = 6) => api<Custos>(`/metrics/custos?meses=${meses}`);
+export const fetchConfigCustos = () => api<ConfigCustos>("/admin/config/custos");
+export const saveConfigCustos = (body: Omit<ConfigCustos, "modelo_em_uso" | "referencias">) =>
+  api<ConfigCustos>("/admin/config/custos", { method: "PUT", body: JSON.stringify(body) });
+
 export const fetchTurnos = (idCliente: string) =>
   api<{ items: unknown[] }>(`/metrics/turnos/${encodeURIComponent(idCliente)}`);
 

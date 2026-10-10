@@ -34,6 +34,7 @@ python scripts/test_transcricao.py
 python scripts/test_robustez.py
 python scripts/test_venda_consultiva.py
 python scripts/test_endereco.py
+python scripts/test_custos.py
 ```
 
 `test_conversa_natural.py` cobre a conversa no meio do funil (seção abaixo): pedido de tempo, "não tenho esse dado", objeção de preço, áudio, quem já é cliente, alteração depois do cadastro, reenvio dos termos, transferência quando trava e cliente que volta depois do encerramento.
@@ -119,6 +120,17 @@ O modelo lê a mensagem e escreve parte das respostas; estas camadas conferem o 
 A aba **Pontos de atenção** tem o botão **Rodar avaliação**: roda `eval/casos_interpretador.jsonl` contra o modelo configurado em Config IA, em segundo plano, e mostra acerto do modelo sozinho, do modelo com as regras e os casos que saíram errado (`GET /admin/avaliacao`, `POST /admin/avaliacao/rodar`). É o mesmo que `python scripts/eval_interpretador.py rodar`, sem precisar do console. Cada caso é uma chamada ao modelo.
 
 O limite de tentativas antes de transferir (padrão 4) fica em **Config IA → Tentativas antes de transferir para a equipe**.
+
+## Custo da IA
+
+A API de custos da OpenAI exige chave de administrador e não separa por cliente. Por isso o backend registra o próprio uso (`app/custos.py`, tabela `uso_ia`): toda resposta do modelo traz os tokens consumidos, e cada chamada é gravada com o cliente do turno, a finalidade (ler a mensagem, escrever a resposta, indicar plano, transcrever áudio, avaliação) e o custo em dólar. A transcrição entra pelo tempo de áudio (a Groq cobra no mínimo 10 segundos por áudio).
+
+- **Painel:** aba Métricas → "Custo da IA": este mês, total geral, média por cliente atendido, custo por venda fechada, série por mês, onde o custo foi gasto e a tabela por cliente. `GET /metrics/custos`.
+- **Cotação e preços automáticos:** ninguém digita preço. Na subida da API e depois a cada 12 horas, o backend busca a cotação do dólar no Banco Central (PTAX de venda; AwesomeAPI de reserva) e o preço por token dos modelos em uso no OpenRouter, que publica a tabela da própria OpenAI (a OpenAI não tem API pública de preços). Se uma busca falhar, vale o último valor guardado; valor fora de uma faixa plausível é recusado. O painel mostra os valores, a fonte e a data, e tem o botão "Atualizar agora" (`POST /admin/custos/atualizar`).
+- **O que fica gravado:** cada chamada guarda o custo em dólar e a cotação daquele dia. Se o dólar ou o preço mudar depois, o que já foi gasto não muda. Modelo sem preço na fonte aparece como pendente.
+- **Limites:** só há dados a partir do deploy deste recurso; é uma estimativa pela tabela de preços e pela PTAX (a fatura da OpenAI e o câmbio do cartão, com IOF, são a referência); o preço da transcrição da Groq é um valor fixo no código, porque não há fonte pública consultável; o custo da RAG (n8n) não entra.
+
+`scripts/test_custos.py` cobre o cálculo, o registro por cliente e a configuração.
 
 ## Pontos de atenção (medição)
 

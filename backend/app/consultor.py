@@ -136,6 +136,9 @@ CONVERSA ATÉ AQUI:
 MENSAGEM DO CLIENTE AGORA: {mensagem or '(sem texto)'}
 """
     try:
+        from app import custos
+
+        custos.marcar("consultor")
         bruto = chat(SYSTEM, user, temperature=0.3, response_format=_schema(nomes))
         data = json.loads(bruto)
     except Exception:  # noqa: BLE001 — sem modelo, quem chamou segue o fluxo de sempre

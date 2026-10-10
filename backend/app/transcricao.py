@@ -112,19 +112,24 @@ def _baixar_audio(url: str) -> tuple[bytes, str]:
 
 def _enviar_para_transcricao(
     conteudo: bytes, nome: str, tipo: str, *, chave: str, url_api: str, modelo: str
-) -> str:
+) -> tuple[str, float]:
+    """(texto, duração em segundos)."""
     with httpx.Client(timeout=TIMEOUT_TRANSCRICAO) as client:
         resp = client.post(
             url_api,
             headers={"Authorization": f"Bearer {chave}"},
-            data={"model": modelo, "language": "pt", "response_format": "json", "temperature": "0"},
+            # verbose_json traz a duração do áudio, que é a base da cobrança
+            data={"model": modelo, "language": "pt", "response_format": "verbose_json", "temperature": "0"},
             files={"file": (nome, conteudo, tipo)},
         )
         resp.raise_for_status()
-        return str((resp.json() or {}).get("text") or "")
+        corpo = resp.json() or {}
+        return str(corpo.get("text") or ""), float(corpo.get("duration") or 0)
 
 
-def transcrever_audio(url: str, *, unidade_id: int | None = None) -> dict[str, Any]:
+def transcrever_audio(
+    url: str, *, unidade_id: int | None = None, id_cliente: str = ""
+) -> dict[str, Any]:
     """Texto do áudio em `url`. Nunca levanta exceção: devolve {ok, texto, motivo, provedor}."""
     chave = chave_de_transcricao(unidade_id=unidade_id)
     if not chave:
@@ -137,8 +142,15 @@ def transcrever_audio(url: str, *, unidade_id: int | None = None) -> dict[str, A
         if not conteudo:
             return {"ok": False, "texto": "", "motivo": "áudio vazio", "provedor": provedor}
         nome, tipo = _nome_do_arquivo(url, content_type)
-        texto = _enviar_para_transcricao(
+        retorno = _enviar_para_transcricao(
             conteudo, nome, tipo, chave=chave, url_api=url_api, modelo=modelo
+        )
+        texto, duracao = retorno if isinstance(retorno, tuple) else (retorno, 0.0)
+        # Sem a duração na resposta, estima pelo tamanho (áudio de WhatsApp ~3 KB por segundo)
+        from app import custos
+
+        custos.registrar_transcricao(
+            provedor, modelo, duracao or len(conteudo) / 3000, id_cliente=id_cliente
         )
     except Exception as exc:  # noqa: BLE001 — falha de rede ou da API não derruba o atendimento
         logger.warning("Transcrição de áudio falhou (%s): %s", provedor, exc)

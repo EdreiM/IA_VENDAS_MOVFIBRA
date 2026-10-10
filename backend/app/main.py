@@ -278,6 +278,9 @@ def startup() -> None:
     from app.inactivity_followup import iniciar_worker_inatividade
 
     iniciar_worker_inatividade()
+    from app import custos
+
+    custos.iniciar_atualizador()  # cotação do dólar e preços dos modelos, sem ninguém digitar
 
 
 @app.post("/admin/followup/processar")
@@ -508,7 +511,7 @@ def _transcrever_se_for_audio(evento: dict[str, Any]) -> list[str]:
         return []
     from app.transcricao import transcrever_audio
 
-    resultado = transcrever_audio(url)
+    resultado = transcrever_audio(url, id_cliente=str(evento.get("id_cliente") or ""))
     if resultado.get("ok"):
         evento["mensagem"] = str(resultado["texto"])
         return ["audio_transcrito"]
@@ -701,6 +704,68 @@ def metrics_conversas(
     return {
         "items": metrics.conversas(limite, unidade_id=unidade_id, status=status),
     }
+
+
+@app.get("/metrics/custos")
+def metrics_custos(
+    meses: int = 6,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Custo da IA: geral, do mês, por cliente e por venda (ver app/custos.py)."""
+    _exigir_admin(authorization, x_admin_token)
+    return metrics.custos(meses)
+
+
+class ConfigCustosIn(BaseModel):
+    cotacao_dolar: float = 5.5
+    modelos: dict[str, dict[str, float]] = {}
+    transcricao_usd_hora: dict[str, float] = {}
+
+
+@app.get("/admin/config/custos")
+def admin_get_config_custos(
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    _exigir_admin(authorization, x_admin_token)
+    from app import custos, ia_config
+
+    return {
+        **custos.configuracao(usar_cache=False),
+        "modelo_em_uso": ia_config.resolver_openai_model(),
+        "referencias": custos.referencias(),
+    }
+
+
+@app.post("/admin/custos/atualizar")
+def admin_atualizar_custos(
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Busca agora a cotação do dólar e os preços dos modelos (normalmente é automático)."""
+    _exigir_admin(authorization, x_admin_token)
+    from app import custos, ia_config
+
+    referencias = custos.atualizar_referencias()
+    return {
+        **custos.configuracao(usar_cache=False),
+        "modelo_em_uso": ia_config.resolver_openai_model(),
+        "referencias": referencias,
+    }
+
+
+@app.put("/admin/config/custos")
+def admin_put_config_custos(
+    body: ConfigCustosIn,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+):
+    """Cotação do dólar e preço por milhão de tokens de cada modelo."""
+    _exigir_admin(authorization, x_admin_token)
+    from app import custos, ia_config
+
+    return {**custos.salvar_configuracao(body.model_dump()), "modelo_em_uso": ia_config.resolver_openai_model()}
 
 
 @app.get("/metrics/atencao")

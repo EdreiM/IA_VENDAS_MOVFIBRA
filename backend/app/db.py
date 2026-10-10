@@ -236,6 +236,25 @@ SCHEMA_STATEMENTS = [
         created_at TIMESTAMPTZ
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS uso_ia (
+        id BIGSERIAL PRIMARY KEY,
+        id_cliente TEXT,
+        finalidade TEXT,
+        provedor TEXT,
+        modelo TEXT,
+        tokens_entrada INTEGER DEFAULT 0,
+        tokens_cache INTEGER DEFAULT 0,
+        tokens_saida INTEGER DEFAULT 0,
+        segundos_audio REAL,
+        custo_usd DOUBLE PRECISION,
+        cotacao_brl DOUBLE PRECISION,
+        created_at TIMESTAMPTZ
+    )
+    """,
+    "ALTER TABLE uso_ia ADD COLUMN IF NOT EXISTS cotacao_brl DOUBLE PRECISION",
+    "CREATE INDEX IF NOT EXISTS idx_uso_ia_criado ON uso_ia(created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_uso_ia_cliente ON uso_ia(id_cliente)",
     "CREATE INDEX IF NOT EXISTS idx_perguntas_sem_resposta ON perguntas_sem_resposta_ia(resolvida, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_turno_log_criado ON turno_log_ia(created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_historico_cliente ON historico_mensagens_ia(id_cliente, id)",
@@ -1106,6 +1125,37 @@ def log_turno(
                     confianca,
                     json.dumps(sinais, ensure_ascii=False) if sinais else None,
                     json.dumps(divergencias, ensure_ascii=False) if divergencias else None,
+                ),
+            )
+
+
+def registrar_uso_ia(
+    *,
+    id_cliente: str | None,
+    finalidade: str,
+    provedor: str,
+    modelo: str,
+    tokens_entrada: int = 0,
+    tokens_cache: int = 0,
+    tokens_saida: int = 0,
+    segundos_audio: float | None = None,
+    custo_usd: float | None = None,
+    cotacao_brl: float | None = None,
+) -> None:
+    """Uma chamada ao modelo (ou transcrição) e o que ela custou — ver app/custos.py."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO uso_ia (
+                    id_cliente, finalidade, provedor, modelo, tokens_entrada, tokens_cache,
+                    tokens_saida, segundos_audio, custo_usd, cotacao_brl, created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    id_cliente or None, finalidade, provedor, modelo, int(tokens_entrada or 0),
+                    int(tokens_cache or 0), int(tokens_saida or 0), segundos_audio, custo_usd,
+                    cotacao_brl, _now(),
                 ),
             )
 

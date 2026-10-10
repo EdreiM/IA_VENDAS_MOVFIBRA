@@ -313,3 +313,206 @@ def atencao(dias: int = 7, limite: int = 60) -> dict[str, Any]:
         "regras_mudaram": regras_mudaram,
         "perguntas_sem_resposta": perguntas,
     }
+
+
+
+# ── Custo da IA ──────────────────────────────────────────────────────────────
+
+FUSO_DO_NEGOCIO = "America/Belem"
+ROTULO_FINALIDADE = {
+    "interpretador": "Ler a mensagem do cliente",
+    "resposta": "Escrever a resposta",
+    "consultor": "Indicar plano",
+    "transcricao": "Transcrever áudio",
+    "avaliacao": "Avaliação do modelo (painel)",
+    "outro": "Outros",
+}
+
+
+def custos(meses: int = 6, limite_clientes: int = 50) -> dict[str, Any]:
+    """Custo da IA: geral, por mês, por finalidade, por cliente e por venda.
+
+    Calculado a partir dos tokens gravados em `uso_ia` (ver app/custos.py). Linha sem
+    custo gravado (modelo sem preço na época) é calculada com a tabela de preços atual.
+    """
+    from app import custos as custos_mod
+
+    meses = max(1, min(int(meses or 6), 24))
+    limite_clientes = max(1, min(int(limite_clientes or 50), 200))
+    custos_mod.atualizar_se_preciso()  # cotação e preços com mais de 12 h: busca em segundo plano
+    cfg = custos_mod.configuracao(usar_cache=False)
+    cotacao = float(cfg["cotacao_dolar"])
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT to_char(date_trunc('month', created_at AT TIME ZONE %s), 'YYYY-MM') AS mes,
+                       COALESCE(id_cliente, '') AS id_cliente,
+                       COALESCE(finalidade, 'outro') AS finalidade,
+                       COALESCE(modelo, '') AS modelo,
+                       COUNT(*) AS chamadas,
+                       SUM(tokens_entrada) AS entrada, SUM(tokens_cache) AS cache,
+                       SUM(tokens_saida) AS saida, SUM(COALESCE(segundos_audio, 0)) AS audio,
+                       SUM(custo_usd) AS custo,
+                       SUM(custo_usd * COALESCE(cotacao_brl, %s)) AS custo_brl,
+                       SUM(CASE WHEN custo_usd IS NULL THEN 1 ELSE 0 END) AS sem_custo,
+                       SUM(CASE WHEN custo_usd IS NULL THEN tokens_entrada ELSE 0 END) AS entrada_sc,
+                       SUM(CASE WHEN custo_usd IS NULL THEN tokens_cache ELSE 0 END) AS cache_sc,
+                       SUM(CASE WHEN custo_usd IS NULL THEN tokens_saida ELSE 0 END) AS saida_sc,
+                       MIN(created_at) AS primeiro
+                FROM uso_ia
+                GROUP BY 1, 2, 3, 4
+                """,
+                (FUSO_DO_NEGOCIO, cotacao),
+            )
+            linhas = [dict(r) for r in cur.fetchall()]
+            cur.execute(
+                "SELECT to_char(date_trunc('month', NOW() AT TIME ZONE %s), 'YYYY-MM') AS mes",
+                (FUSO_DO_NEGOCIO,),
+            )
+            mes_atual = cur.fetchone()["mes"]
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM estado_cliente_ia WHERE agendamento_confirmado = 1"
+            )
+            vendas = int(cur.fetchone()["n"] or 0)
+
+    sem_preco: set[str] = set()
+
+    def valores(linha: dict[str, Any]) -> tuple[float, float]:
+        """(US$, R$) da linha. O real usa a cotação gravada no dia de cada chamada."""
+        total = float(linha.get("custo") or 0)
+        reais = float(linha.get("custo_brl") or 0)
+        if linha.get("sem_custo"):
+            extra = custos_mod.custo_de_tokens(
+                linha["modelo"], int(linha["entrada_sc"] or 0), int(linha["cache_sc"] or 0),
+                int(linha["saida_sc"] or 0), cfg,
+            )
+            if extra is None:
+                if linha["finalidade"] != "transcricao":
+                    sem_preco.add(linha["modelo"] or "(desconhecido)")
+            else:
+                total += extra
+                reais += extra * cotacao
+        return total, reais
+
+    por_mes: dict[str, dict[str, Any]] = {}
+    por_finalidade: dict[str, float] = {}
+    por_cliente: dict[str, dict[str, Any]] = {}
+    por_cliente_mes: dict[str, float] = {}
+    total = total_clientes = total_brl = total_clientes_brl = 0.0
+    por_finalidade_brl: dict[str, float] = {}
+    por_cliente_mes_brl: dict[str, float] = {}
+    tokens = {"entrada": 0, "cache": 0, "saida": 0, "segundos_audio": 0.0}
+    primeiro = None
+    for linha in linhas:
+        valor, reais = valores(linha)
+        total += valor
+        total_brl += reais
+        m = por_mes.setdefault(
+            linha["mes"], {"mes": linha["mes"], "usd": 0.0, "brl": 0.0, "chamadas": 0, "clientes": set()}
+        )
+        m["usd"] += valor
+        m["brl"] += reais
+        m["chamadas"] += int(linha["chamadas"] or 0)
+        tokens["entrada"] += int(linha["entrada"] or 0)
+        tokens["cache"] += int(linha["cache"] or 0)
+        tokens["saida"] += int(linha["saida"] or 0)
+        tokens["segundos_audio"] += float(linha["audio"] or 0)
+        if linha["mes"] == mes_atual:
+            por_finalidade[linha["finalidade"]] = por_finalidade.get(linha["finalidade"], 0.0) + valor
+            por_finalidade_brl[linha["finalidade"]] = por_finalidade_brl.get(linha["finalidade"], 0.0) + reais
+        if linha["id_cliente"]:
+            cid = linha["id_cliente"]
+            m["clientes"].add(cid)
+            total_clientes += valor
+            total_clientes_brl += reais
+            c = por_cliente.setdefault(cid, {"id_cliente": cid, "usd": 0.0, "brl": 0.0, "chamadas": 0})
+            c["usd"] += valor
+            c["brl"] += reais
+            c["chamadas"] += int(linha["chamadas"] or 0)
+            if linha["mes"] == mes_atual:
+                por_cliente_mes[cid] = por_cliente_mes.get(cid, 0.0) + valor
+                por_cliente_mes_brl[cid] = por_cliente_mes_brl.get(cid, 0.0) + reais
+        if linha.get("primeiro") is not None and (primeiro is None or linha["primeiro"] < primeiro):
+            primeiro = linha["primeiro"]
+
+    # Nome e situação dos clientes que mais custaram
+    maiores = sorted(por_cliente.values(), key=lambda c: c["usd"], reverse=True)[:limite_clientes]
+    if maiores:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id_cliente, nome, telefone, fase, agendamento_confirmado
+                    FROM estado_cliente_ia WHERE id_cliente = ANY(%s)
+                    """,
+                    ([c["id_cliente"] for c in maiores],),
+                )
+                info = {r["id_cliente"]: dict(r) for r in cur.fetchall()}
+        for c in maiores:
+            i = info.get(c["id_cliente"], {})
+            c.update(
+                nome=i.get("nome") or "", telefone=i.get("telefone") or "", fase=i.get("fase") or "",
+                vendeu=bool(i.get("agendamento_confirmado")),
+                usd_mes=por_cliente_mes.get(c["id_cliente"], 0.0),
+                brl_mes=por_cliente_mes_brl.get(c["id_cliente"], 0.0),
+            )
+
+    serie = sorted(por_mes.values(), key=lambda m: m["mes"])[-meses:]
+    for m in serie:
+        m["clientes"] = len(m["clientes"])
+    atual = next(
+        (m for m in serie if m["mes"] == mes_atual), {"usd": 0.0, "brl": 0.0, "chamadas": 0, "clientes": 0}
+    )
+    n_clientes = len(por_cliente)
+
+    def dinheiro(valor_usd: float, valor_brl: float) -> dict[str, float]:
+        return {"usd": round(valor_usd, 4), "brl": round(valor_brl, 2)}
+
+    zero = dinheiro(0.0, 0.0)
+
+    return {
+        "cotacao_dolar": cotacao,
+        "mes_atual": mes_atual,
+        "desde": primeiro.isoformat() if primeiro is not None and not isinstance(primeiro, str) else primeiro,
+        "referencias": custos_mod.referencias(),
+        "total": dinheiro(total, total_brl),
+        "mes": {
+            **dinheiro(float(atual["usd"]), float(atual["brl"])),
+            "chamadas": int(atual["chamadas"]), "clientes": int(atual["clientes"]),
+        },
+        "clientes_atendidos": n_clientes,
+        "media_por_cliente": (
+            dinheiro(total_clientes / n_clientes, total_clientes_brl / n_clientes) if n_clientes else zero
+        ),
+        "media_por_cliente_mes": (
+            dinheiro(
+                sum(por_cliente_mes.values()) / len(por_cliente_mes),
+                sum(por_cliente_mes_brl.values()) / len(por_cliente_mes),
+            )
+            if por_cliente_mes else zero
+        ),
+        "vendas": vendas,
+        "custo_por_venda": dinheiro(total_clientes / vendas, total_clientes_brl / vendas) if vendas else None,
+        "por_mes": [
+            {"mes": m["mes"], "usd": round(m["usd"], 4), "brl": round(m["brl"], 2),
+             "chamadas": m["chamadas"], "clientes": m["clientes"]}
+            for m in serie
+        ],
+        "por_finalidade": sorted(
+            (
+                {"finalidade": f, "rotulo": ROTULO_FINALIDADE.get(f, f),
+                 **dinheiro(v, por_finalidade_brl.get(f, 0.0))}
+                for f, v in por_finalidade.items()
+            ),
+            key=lambda x: x["usd"], reverse=True,
+        ),
+        "clientes": [
+            {**c, "usd": round(c["usd"], 4), "brl": round(c["brl"], 2),
+             "usd_mes": round(c["usd_mes"], 4), "brl_mes": round(c["brl_mes"], 2)}
+            for c in maiores
+        ],
+        "tokens": tokens,
+        "modelos_sem_preco": sorted(sem_preco),
+    }

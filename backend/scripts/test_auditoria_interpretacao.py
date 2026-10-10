@@ -100,6 +100,10 @@ pipeline.inserir_agendamento = lambda estado: {"resultado": "ok", "os_id": "7001
 pipeline.encerrar_atendimento = lambda estado: {"resultado": "ok", "motivo": "simulado"}
 pipeline.enviar_imagem_plano = lambda estado: {"resultado": "ok", "imagem_enviada": False, "motivo": "sem imagem"}
 response.chat = lambda *a, **k: ""
+# Nenhum teste dispara a busca automática de cotação e preços (é rede)
+from app import custos as _custos  # noqa: E402
+
+_custos.atualizar_se_preciso = lambda: None
 
 TERMINAIS = {"RESPONDER", "TRANSFERIR_HUMANO", "AGUARDAR"}
 

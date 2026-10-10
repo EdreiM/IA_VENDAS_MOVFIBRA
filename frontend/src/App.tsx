@@ -44,6 +44,11 @@ import {
   fetchAvaliacao,
   rodarAvaliacao,
   Avaliacao,
+  fetchCustos,
+  fetchConfigCustos,
+  atualizarCustos,
+  Custos,
+  ConfigCustos,
   fetchHealth,
   fetchLabels,
   fetchPlanos,
@@ -174,6 +179,14 @@ function mapLabelTitles(raw: unknown): string[] {
     .filter(Boolean);
 }
 
+function fmtBRL(valor: number) {
+  return valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function fmtUSD(valor: number) {
+  return `US$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
+
 function statusBadge(status?: string) {
   const s = status || "com_ia";
   const label =
@@ -243,6 +256,8 @@ export default function App() {
 
   const [resumo, setResumo] = useState<Resumo | null>(null);
   const [funil, setFunil] = useState<Funil | null>(null);
+  const [custos, setCustos] = useState<Custos | null>(null);
+  const [custosCfg, setCustosCfg] = useState<ConfigCustos | null>(null);
   const [atencao, setAtencao] = useState<Atencao | null>(null);
   const [atencaoDias, setAtencaoDias] = useState(7);
   const [avaliacao, setAvaliacao] = useState<Avaliacao | null>(null);
@@ -400,9 +415,16 @@ export default function App() {
   }, []);
 
   const refreshMetrics = useCallback(async () => {
-    const [r, f] = await Promise.all([fetchResumo(), fetchFunil()]);
+    const [r, f, c, cc] = await Promise.all([
+      fetchResumo(),
+      fetchFunil(),
+      fetchCustos(),
+      fetchConfigCustos(),
+    ]);
     setResumo(r);
     setFunil(f);
+    setCustos(c);
+    setCustosCfg(cc);
   }, []);
 
   const refreshAtencao = useCallback(async () => {
@@ -1533,6 +1555,202 @@ export default function App() {
                 ))}
               </div>
             </div>
+          </section>
+        )}
+
+        {tab === "metricas" && (
+          <section className="panel">
+            <PageHeader
+              title="Custo da IA"
+              subtitle="Quanto a Eva gastou com o modelo de IA e com transcrição de áudio, calculado pelos tokens de cada chamada. Os dados começam na data em que este recurso entrou no ar; a fatura da OpenAI continua sendo a referência."
+            />
+            <div className="metrics-hero">
+              <div className="stat-hero">
+                <span className="stat-hero-label">Este mês</span>
+                <strong className="stat-hero-value">{custos ? fmtBRL(custos.mes.brl) : "—"}</strong>
+                <span className="stat-hero-hint">
+                  {custos ? `${fmtUSD(custos.mes.usd)} · ${custos.mes.clientes} clientes` : ""}
+                </span>
+              </div>
+              <div className="stat-hero">
+                <span className="stat-hero-label">Total geral</span>
+                <strong className="stat-hero-value">{custos ? fmtBRL(custos.total.brl) : "—"}</strong>
+                <span className="stat-hero-hint">
+                  {custos
+                    ? `${fmtUSD(custos.total.usd)}${
+                        custos.desde ? ` · desde ${new Date(custos.desde).toLocaleDateString("pt-BR")}` : ""
+                      }`
+                    : ""}
+                </span>
+              </div>
+              <div className="stat-hero">
+                <span className="stat-hero-label">Por cliente atendido</span>
+                <strong className="stat-hero-value">
+                  {custos ? fmtBRL(custos.media_por_cliente.brl) : "—"}
+                </strong>
+                <span className="stat-hero-hint">
+                  {custos ? `Média de ${custos.clientes_atendidos} clientes` : ""}
+                </span>
+              </div>
+              <div className="stat-hero">
+                <span className="stat-hero-label">Por venda fechada</span>
+                <strong className="stat-hero-value">
+                  {custos?.custo_por_venda ? fmtBRL(custos.custo_por_venda.brl) : "—"}
+                </strong>
+                <span className="stat-hero-hint">
+                  {custos ? `${custos.vendas} agendamentos confirmados` : ""}
+                </span>
+              </div>
+            </div>
+
+            {(custos?.modelos_sem_preco || []).length > 0 && (
+              <p className="muted">
+                Sem preço cadastrado para: {custos?.modelos_sem_preco.join(", ")}. O custo dessas
+                chamadas só entra na conta depois que o preço for informado abaixo.
+              </p>
+            )}
+
+            <div className="funil-section">
+              <h2>Por mês</h2>
+              {(custos?.por_mes || []).length === 0 ? (
+                <p className="muted">Ainda não há uso registrado.</p>
+              ) : (
+                <div className="funil">
+                  {(custos?.por_mes || []).map((m) => (
+                    <div key={m.mes} className="funil-row">
+                      <span>{m.mes.split("-").reverse().join("/")}</span>
+                      <div className="bar-wrap">
+                        <div
+                          className="bar"
+                          style={{
+                            width: `${Math.round(
+                              (m.usd / Math.max(...(custos?.por_mes || []).map((x) => x.usd), 0.000001)) * 100,
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                      <strong>{fmtBRL(m.brl)}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {(custos?.por_finalidade || []).length > 0 && (
+              <div className="funil-section">
+                <h2>Onde o custo deste mês foi gasto</h2>
+                <div className="metrics-secondary">
+                  {(custos?.por_finalidade || []).map((f) => (
+                    <div className="stat-compact" key={f.finalidade}>
+                      <span>{f.rotulo}</span>
+                      <strong>{fmtBRL(f.brl)}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="funil-section">
+              <h2>Custo por cliente</h2>
+              {(custos?.clientes || []).length === 0 ? (
+                <p className="muted">Ainda não há uso registrado por cliente.</p>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Cliente</th>
+                        <th>Etapa</th>
+                        <th>Chamadas ao modelo</th>
+                        <th>Este mês</th>
+                        <th>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(custos?.clientes || []).map((c) => (
+                        <tr key={c.id_cliente}>
+                          <td>
+                            <strong>{c.nome || c.telefone || c.id_cliente}</strong>
+                            {c.nome && c.telefone ? <span className="muted-inline"> · {c.telefone}</span> : null}
+                          </td>
+                          <td>{c.vendeu ? "venda fechada" : c.fase || "—"}</td>
+                          <td>{c.chamadas}</td>
+                          <td>{fmtBRL(c.brl_mes)}</td>
+                          <td>
+                            {fmtBRL(c.brl)} <span className="muted-inline">({fmtUSD(c.usd)})</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {custosCfg && (
+              <div className="funil-section">
+                <h2>Cotação e preços usados na conta</h2>
+                <p className="muted">
+                  Atualizados sozinhos, uma vez por dia: o dólar vem do Banco Central e o preço do modelo
+                  vem da tabela da OpenAI. Cada chamada fica gravada com a cotação do dia.
+                </p>
+                <div className="metrics-secondary">
+                  <div className="stat-compact">
+                    <span>
+                      Dólar
+                      {custosCfg.referencias?.cotacao?.data
+                        ? ` · ${custosCfg.referencias.cotacao.data.split("-").reverse().join("/")}`
+                        : ""}
+                    </span>
+                    <strong>{fmtBRL(custosCfg.cotacao_dolar)}</strong>
+                  </div>
+                  {(["entrada", "cache", "saida"] as const).map((campo) => {
+                    const base = custosCfg.modelo_em_uso.replace(/-\d{4}-\d{2}-\d{2}$/, "");
+                    const preco = custosCfg.modelos[custosCfg.modelo_em_uso] || custosCfg.modelos[base];
+                    const rotulo = { entrada: "Entrada", cache: "Entrada em cache", saida: "Saída" }[campo];
+                    return (
+                      <div className="stat-compact" key={campo}>
+                        <span>{rotulo} · 1M tokens</span>
+                        <strong>{preco ? fmtUSD(preco[campo]) : "—"}</strong>
+                      </div>
+                    );
+                  })}
+                  <div className="stat-compact">
+                    <span>Transcrição · hora de áudio</span>
+                    <strong>{fmtUSD(custosCfg.transcricao_usd_hora.groq ?? 0)}</strong>
+                  </div>
+                </div>
+                <p className="muted">
+                  Modelo em uso: <strong>{custosCfg.modelo_em_uso}</strong>
+                  {custosCfg.referencias?.cotacao?.fonte ? ` · dólar: ${custosCfg.referencias.cotacao.fonte}` : ""}
+                  {custosCfg.referencias?.fonte_precos ? ` · preços: ${custosCfg.referencias.fonte_precos}` : ""}
+                  {custosCfg.referencias?.atualizado_em
+                    ? ` · atualizado em ${new Date(custosCfg.referencias.atualizado_em).toLocaleString("pt-BR")}`
+                    : " · ainda não atualizado automaticamente"}
+                </p>
+                {(custosCfg.referencias?.falhas || []).length > 0 && (
+                  <p className="muted">
+                    Não foi possível buscar agora: {(custosCfg.referencias?.falhas || []).join(", ")}. Vale o
+                    último valor guardado.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    void atualizarCustos()
+                      .then(async (cfg) => {
+                        setCustosCfg(cfg);
+                        setCustos(await fetchCustos());
+                        setOkMsg("Cotação e preços atualizados.");
+                      })
+                      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+                  }}
+                >
+                  Atualizar agora
+                </button>
+              </div>
+            )}
           </section>
         )}
 

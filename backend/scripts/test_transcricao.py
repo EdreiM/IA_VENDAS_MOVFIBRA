@@ -38,6 +38,11 @@ class _Simular:
         self._antes = (transcricao.chave_de_transcricao, transcricao._baixar_audio,
                        transcricao._enviar_para_transcricao, main.__dict__.get("db"))
         transcricao.chave_de_transcricao = lambda **k: self.chave
+        # Estes testes não devem gravar custo no banco (o custo é conferido em test_custos.py)
+        from app import custos
+
+        self._registrar_custo = custos.registrar_transcricao
+        custos.registrar_transcricao = lambda *a, **k: None
 
         def baixar(url):
             self.downloads.append(url)
@@ -58,11 +63,12 @@ class _Simular:
         return self
 
     def __exit__(self, *exc):
-        from app import db
+        from app import custos, db
 
         (transcricao.chave_de_transcricao, transcricao._baixar_audio,
          transcricao._enviar_para_transcricao, _) = self._antes
         db.carregar_ou_criar_estado = self._carregar
+        custos.registrar_transcricao = self._registrar_custo
 
 
 def _payload_audio(**extra) -> dict:
