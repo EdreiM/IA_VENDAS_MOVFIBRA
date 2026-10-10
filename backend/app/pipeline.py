@@ -731,8 +731,10 @@ def process_message(
         topico_meta["limpar_topico"] = True
     if interpretacao.pergunta:
         topico_meta["ultima_pergunta_cliente"] = interpretacao.pergunta
-    if interpretacao.nota:
-        notas = conversa.juntar_nota(estado.get("notas_conversa"), interpretacao.nota)
+    # O que o cliente contou que procura vale para indicar o plano depois, mesmo sem nota do modelo
+    nota = interpretacao.nota or conversa.nota_do_que_procura(mensagem, estado, interpretacao.situacao)
+    if nota:
+        notas = conversa.juntar_nota(estado.get("notas_conversa"), nota)
         if notas != str(estado.get("notas_conversa") or ""):
             topico_meta["notas_conversa"] = notas
     if topico_meta:

@@ -512,6 +512,47 @@ def test_pergunta_que_comeca_com_palavra_de_sim_nao_confirma() -> None:
     _assert(dec.objetivo_resposta == "CONFIRMAR_PLANO_E_RESPONDER_PERGUNTA" and estado.get("fase") == "cadastro", dec.objetivo_resposta)
 
 
+def test_quem_pede_plano_barato_antes_de_ver_plano_nao_ouve_que_nao_tem() -> None:
+    """Atendimento de 10/10: "queria um plano que não fosse tão caro", dito antes da cobertura,
+    foi respondido com "não temos um plano mais barato que o que apresentei"."""
+    msg = "Cara, seguinte queria contratar um plano que não fosse tão caro ]"
+    resposta = "Entendi, você quer algo que caiba no bolso. Vou levar isso em conta na hora de te indicar o plano."
+    for etapa in ("viab", "viab/tem_cidade"):
+        for leitura in ("", "OBJECAO_PRECO", "NECESSIDADE"):
+            lido = dict(L(["OUTRO"], {}), situacao=leitura)
+            with _Modelo(texto=resposta) as modelo:
+                antes = E(etapa)
+                estado, dec, _ = turno(antes, msg, lido)
+                texto = _texto(dec, estado, msg)
+            conv = (dec.contexto_resposta or {}).get("conversa") or {}
+            _assert(conv.get("situacao") == "NECESSIDADE", (etapa, leitura, conv, dec.objetivo_resposta))
+            prompt = modelo.prompts_texto[-1]
+            _assert("Não há plano mais barato" not in prompt and "achou caro" not in prompt, prompt[:600])
+            _assert("ainda não apresentou nenhum plano" in prompt and "contou o que procura" in prompt, prompt[:900])
+            # Contar o que procura não é travar o atendimento
+            _assert(not estado.get("tentativas_travadas"), estado.get("tentativas_travadas"))
+            _assert(estado.get("aguardando") == antes.get("aguardando") and texto.startswith(resposta), texto)
+    # Antes de ver plano, preço não é objeção — é o que o cliente procura
+    for frase in (msg, "não quero nada caro", "to procurando internet barata", "quero o mais barato que tiver"):
+        _assert(conversa.classificar(frase, E("viab")) == conversa.NECESSIDADE, (frase, conversa.classificar(frase, E("viab"))))
+    # Com o plano na mesa, "tá caro" continua sendo objeção de preço
+    _assert(conversa.classificar("tá caro", E(VENDA)) == conversa.OBJECAO_PRECO, "objeção na oferta")
+    # O que ele procura fica anotado para a indicação do plano, mesmo sem nota do modelo
+    nota = conversa.nota_do_que_procura(msg, E("viab"))
+    _assert("não fosse tão caro" in nota and "]" not in nota, nota)
+    _assert(conversa.nota_do_que_procura("Santarém, Diamantino", E("viab")) == "", "localização não é nota")
+
+
+def test_pergunta_de_preco_antes_da_cobertura_nao_inventa_nem_empurra_para_a_equipe() -> None:
+    msg = "quanto é o mais barato?"
+    with _Modelo(texto="Te mostro os valores assim que confirmar a cobertura aí.") as modelo:
+        estado, dec, _ = turno(E("viab"), msg, L(["PERGUNTA"], {}, pergunta=msg))
+        _texto(dec, estado, msg)
+    prompt = modelo.prompts_texto[-1]
+    _assert("PLANO DO CLIENTE: Você ainda não apresentou nenhum plano" in prompt, prompt[:700])
+    _assert(estado.get("aguardando") == "localizacao" and not estado.get("plano_em_negociacao"), estado.get("aguardando"))
+
+
 def main() -> None:
     tests = [
         test_necessidade_e_objecao_sao_reconhecidas,
@@ -541,6 +582,8 @@ def main() -> None:
         test_pergunta_de_plano_no_cadastro_recebe_o_catalogo_e_volta_para_o_dado,
         test_pergunta_sobre_o_futuro_nao_desfaz_o_plano,
         test_pergunta_que_comeca_com_palavra_de_sim_nao_confirma,
+        test_quem_pede_plano_barato_antes_de_ver_plano_nao_ouve_que_nao_tem,
+        test_pergunta_de_preco_antes_da_cobertura_nao_inventa_nem_empurra_para_a_equipe,
     ]
     falhas = 0
     for fn in tests:

@@ -50,7 +50,7 @@ def limite_travado(estado: dict[str, Any] | None = None) -> int:
     except Exception:  # noqa: BLE001 — sem banco/config, vale o padrão
         return LIMITE_TRAVADO
 
-_PESO = {ESPERA: 0, ADIAMENTO: 0, IMPEDIMENTO: 2}
+_PESO = {ESPERA: 0, ADIAMENTO: 0, NECESSIDADE: 0, IMPEDIMENTO: 2}
 
 _FASES_TERMINAIS = {"transferido", "finalizado"}
 _FASES_DE_COMPRA_ADIANTADA = {"cadastro", "termos", "agendamento"}
@@ -109,7 +109,8 @@ _RE_ESPERA = re.compile(
     r"so um (minuto|momento|instante|pouco|segundo)|"
     r"ja (mando|envio|te mando|te envio|volto|passo|te passo|vejo)|"
     r"vou (procurar|pegar|buscar|olhar aqui|ver aqui)|deixa eu (ver|pegar|procurar|olhar)|"
-    r"(to|tou|estou) procurando|nao tenho agora|agora nao tenho|nao (to|estou) com (ele|ela|isso) agora)\b"
+    r"(to|tou|estou) procurando(?! (um |uma |por |algum |alguma |a |o )?(internet|plano|wifi|net|fibra|"
+    r"operadora|provedor|algo|opc))|nao tenho agora|agora nao tenho|nao (to|estou) com (ele|ela|isso) agora)\b"
 )
 _RE_ADIAMENTO = re.compile(
     r"\b(vou pensar|vou ver com|vou falar com|vou conversar com|"
@@ -139,6 +140,7 @@ _RE_NECESSIDADE = re.compile(
     r"(plano )?(com |que tenha |que venha com )?(disney|max|hbo|globoplay|prime|amazon|deezer|looke|chip|"
     r"telemedicina|exitlag|mesh|repetidor|streaming|celular|antivirus|kaspersky)|"
     r"so (quero|preciso de|queria) (a )?internet|(algo|plano|opcao|um) mais (barato|em conta|simples|basico|completo)|"
+    r"(internet|plano|wifi|algo|opcao|coisa) (bem |muito )?(barat[oa]|em conta|simples|basic[oa])|"
     r"o mais (barato|em conta|simples|basico|completo)|tem (um |algum |outro )?mais (barato|em conta|completo))\b"
 )
 _RE_QUER_OUTRO_PLANO = re.compile(
@@ -180,8 +182,34 @@ def tipo_de_midia(mensagem: str) -> str:
     return m.group(1).lower() if m else ""
 
 
+def antes_de_ver_plano(estado: dict[str, Any]) -> bool:
+    """Nenhum plano foi mostrado a este cliente ainda (a Eva ainda está checando a cobertura)."""
+    fase = _texto(estado.get("fase")) or "inicio"
+    return fase in {"inicio", "viabilidade", "sem_cobertura"} and not any(
+        _texto(estado.get(c)) for c in ("plano_em_negociacao", "plano_apresentado", "plano_confirmado")
+    )
+
+
 def classificar(mensagem: str, estado: dict[str, Any], situacao_llm: str = "") -> str:
     """Como o cliente reagiu ao passo atual. A leitura do modelo vale; as regras cobrem o resto."""
+    situacao = _classificar(mensagem, estado, situacao_llm)
+    # "Queria um plano que não fosse tão caro" antes de ver qualquer plano não é objeção ao
+    # preço de nada: é o cliente contando o que procura. Lido como objeção, a Eva respondia
+    # "não temos plano mais barato que o que apresentei" sem ter apresentado plano nenhum.
+    if situacao == OBJECAO_PRECO and antes_de_ver_plano(estado):
+        return NECESSIDADE
+    return situacao
+
+
+def nota_do_que_procura(mensagem: str, estado: dict[str, Any], situacao_llm: str = "") -> str:
+    """Nota para lembrar o que o cliente disse que procura, quando o modelo não anotou."""
+    if classificar(mensagem, estado, situacao_llm) != NECESSIDADE:
+        return ""
+    dito = re.sub(r"\s+", " ", _texto(mensagem)).strip(" ]").strip()
+    return f'Cliente disse o que procura: "{dito[:110]}"' if len(dito) >= 6 else ""
+
+
+def _classificar(mensagem: str, estado: dict[str, Any], situacao_llm: str = "") -> str:
     if tipo_de_midia(mensagem):
         return MIDIA
     t = _norm(mensagem)
@@ -723,8 +751,10 @@ def depois(decisao: Decisao, estado: dict[str, Any], resolucao: dict[str, Any]) 
         and objetivo in _OBJETIVOS_DE_REPETICAO
         and not _avancou(decisao, estado)
     )
+    # "Queria um plano que não fosse tão caro", dito antes de ver plano, é conversa — não dúvida
+    contou_o_que_procura = situacao == NECESSIDADE and "?" not in mensagem and antes_de_ver_plano(estado)
     travado = mesmo_passo and (
-        not tem_pergunta or situacao in {OBJECAO_PRECO, OBJECAO, IMPEDIMENTO, MIDIA}
+        not tem_pergunta or contou_o_que_procura or situacao in {OBJECAO_PRECO, OBJECAO, IMPEDIMENTO, MIDIA}
     )
 
     if not travado:
