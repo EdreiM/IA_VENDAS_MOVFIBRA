@@ -410,6 +410,108 @@ def test_abertura_reconhece_quem_ja_chegou_pedindo_plano() -> None:
     _assert("te mostrar os planos" not in _texto(dec, estado, "oi"), "abertura comum")
 
 
+PERGUNTAS_DE_CLIENTE = [
+    "qual a velocidade? quantos megas?", "é fibra mesmo?", "o roteador é bom?", "quanto custa?", "quanto fica no cartão?",
+    "tem taxa de instalação?", "tem multa?", "tem fidelidade?", "posso pagar no pix?", "qual o vencimento?",
+    "vocês têm loja em Santarém?", "o técnico vem que horas?", "demora quanto pra instalar?", "esse plano tem disney?",
+    "o que vem no plano?", "posso trocar de plano depois?", "e se eu mudar de endereço?", "tem wifi 6?",
+    "funciona em apartamento?", "precisa de telefone fixo?", "a internet cai muito?", "pra que precisa do cpf?",
+    "meus dados estão seguros?", "pode ser no nome da minha esposa?", "tem desconto?", "aceita cartão de débito?",
+    "pode ser sábado?", "o técnico cobra alguma coisa?", "quanto tempo dura a instalação?", "vocês atendem em Belterra?",
+]
+ETAPAS = [
+    "inicio", "viab", "viab/tem_cidade", VENDA, "vendas/escolha_plano", "cad/nome", "cad/cpf", "cad/cep", "cad/rua",
+    "cad/confirmacao_dados", "termos", "agenda/escolha_horario", "agenda/confirmacao_horario", "pos",
+]
+# Objetivos em que quem escreve a resposta é o modelo, com a base e o catálogo
+RESPOSTA_DO_MODELO = {
+    "RESPONDER_PERGUNTA_E_RETOMAR", "RESPONDER_DUVIDA_E_RETOMAR", "RESPONDER_DUVIDA_E_RETOMAR_TERMOS",
+    "RESPONDER_SEM_BASE_RAG", "INFORMAR_CANCELAMENTO_E_RETOMAR", "INFORMAR_INSTALACAO_E_RETOMAR",
+    "RESPONDER_DUVIDA_NA_VENDA", "RESPONDER_DUVIDA_DO_CLIENTE",
+}
+# O que continua de propósito: perguntar se atende uma cidade já é dizer onde mora; "tem desconto?"
+# na oferta é pedido de lista; e, sem o consultor (modelo fora), o benefício sai do catálogo do painel
+EXCECOES = {
+    ("inicio", "vocês atendem em Belterra?"), ("viab", "vocês atendem em Belterra?"),
+    ("viab/tem_cidade", "vocês atendem em Belterra?"),
+    (VENDA, "tem desconto?"), ("vendas/escolha_plano", "tem desconto?"),
+    (VENDA, "esse plano tem disney?"), ("vendas/escolha_plano", "esse plano tem disney?"),
+}
+DADOS_DO_ATENDIMENTO = [*aud.CAMPOS_CLIENTE, "plano_em_negociacao", "plano_confirmado", "horario_escolhido", "tem_cobertura"]
+
+
+def test_pergunta_em_qualquer_etapa_vai_para_o_modelo_e_nao_muda_o_atendimento() -> None:
+    """Pergunta não é dado, escolha nem confirmação — em nenhuma etapa."""
+    falhas = []
+    for etapa in ETAPAS:
+        for msg in PERGUNTAS_DE_CLIENTE:
+            if (etapa, msg) in EXCECOES:
+                continue
+            antes = E(etapa)
+            estado, dec, _ = turno(antes, msg, L(["PERGUNTA"], {}, pergunta=msg))
+            mudou = [k for k in DADOS_DO_ATENDIMENTO if (estado.get(k) or None) != (antes.get(k) or None)]
+            passo = etapa != "inicio" and (estado.get("fase"), estado.get("aguardando")) != (antes.get("fase"), antes.get("aguardando"))
+            if dec.objetivo_resposta not in RESPOSTA_DO_MODELO or mudou or passo:
+                falhas.append((etapa, msg, dec.objetivo_resposta, mudou, estado.get("aguardando")))
+    _assert(not falhas, falhas[:6])
+
+
+def test_pergunta_de_plano_no_cadastro_recebe_o_catalogo_e_volta_para_o_dado() -> None:
+    msg = "qual a velocidade? quantos megas?"
+    resposta = "A conexão é 100% fibra e ilimitada, a gente não vende por megas. Me passa seu CPF pra eu seguir?"
+    with _Modelo(texto=resposta) as modelo:
+        pipeline.consultar_rag = lambda **k: {"encontrado": True, "chunks": [{"titulo": "Planos", "conteudo": RAG_PLANOS}]}
+        antes = E("cad/cpf")
+        estado, dec, _ = turno(antes, msg, L(["PERGUNTA"], {}, pergunta=msg))
+        dec = pipeline._enriquecer_com_rag(dec, estado, msg)
+        texto = _texto(dec, estado, msg)
+    _assert(dec.objetivo_resposta == "RESPONDER_DUVIDA_DO_CLIENTE", dec.objetivo_resposta)
+    _assert(estado.get("aguardando") == "cpf" and estado.get("plano_confirmado") == antes.get("plano_confirmado"), estado.get("aguardando"))
+    prompt = modelo.prompts_texto[0]
+    _assert("não vendemos por megas" in prompt and "velocidade: Ilimitada" in prompt, prompt[:700])
+    # No cadastro o plano já está fechado: nada de empurrar venda de novo
+    _assert("CONDUÇÃO DA VENDA" not in prompt, "bloco de venda no cadastro")
+    _assert(texto == resposta, texto)
+
+
+def test_pergunta_sobre_o_futuro_nao_desfaz_o_plano() -> None:
+    for etapa in (VENDA, "cad/cpf", "cad/confirmacao_dados", "termos"):
+        for msg in ("posso trocar de plano depois?", "se eu quiser mudar de plano mais pra frente, tem como?",
+                    "dá pra aumentar o plano depois?"):
+            antes = E(etapa)
+            estado, dec, _ = turno(antes, msg, L(["PERGUNTA"], {}, pergunta=msg))
+            for campo in ("plano_em_negociacao", "plano_confirmado", "fase", "aguardando"):
+                _assert(estado.get(campo) == antes.get(campo), (etapa, msg, campo, estado.get(campo), dec.objetivo_resposta))
+
+
+def test_pergunta_que_comeca_com_palavra_de_sim_nao_confirma() -> None:
+    """ "pode ser no nome da minha esposa?" confirmava o plano e enviava o cadastro."""
+    from app.parser import eh_confirmacao, eh_sim_antes_de_pergunta
+
+    perguntas = ["pode ser no nome da minha esposa?", "pode ser sábado?", "pode ser?", "tá, mas e a multa?",
+                 "ok mas quanto custa?", "beleza, e a instalação é quando?", "sim?", "certo, mas posso cancelar quando quiser?"]
+    for etapa in (VENDA, "cad/confirmacao_dados", "termos", "agenda/confirmacao_horario"):
+        for msg in perguntas:
+            antes = E(etapa)
+            estado, dec, _ = turno(antes, msg, L(["PERGUNTA"], {}, pergunta=msg))
+            _assert((estado.get("fase"), estado.get("aguardando")) == (antes.get("fase"), antes.get("aguardando")),
+                    (etapa, msg, estado.get("aguardando"), dec.objetivo_resposta))
+        # O sim sem pergunta continua valendo
+        for msg in ("sim", "pode ser", "tá bom", "ok", "isso mesmo"):
+            antes = E(etapa)
+            estado, dec, _ = turno(antes, msg, L(["CONFIRMACAO"], {}))
+            _assert((estado.get("fase"), estado.get("aguardando")) != (antes.get("fase"), antes.get("aguardando")),
+                    (etapa, msg, dec.objetivo_resposta))
+    for msg in ("pode ser sábado?", "pode ser no nome da minha esposa?", "pode ser?"):
+        _assert(not eh_confirmacao(msg), msg)
+    for msg, esperado in (("sim, mas tem multa?", True), ("pode ser, e a instalação?", True), ("sim, mas tá caro?", False),
+                          ("tá, mas e a multa?", False), ("ok, quando instalam?", False), ("pode ser sábado?", False)):
+        _assert(eh_sim_antes_de_pergunta(msg) is esperado, msg)
+    # Quem disse sim e perguntou junto tem o plano confirmado e a dúvida respondida
+    estado, dec, _ = turno(E(VENDA), "sim, mas tem multa?", L(["CONFIRMACAO", "PERGUNTA"], {}, pergunta="tem multa?"))
+    _assert(dec.objetivo_resposta == "CONFIRMAR_PLANO_E_RESPONDER_PERGUNTA" and estado.get("fase") == "cadastro", dec.objetivo_resposta)
+
+
 def main() -> None:
     tests = [
         test_necessidade_e_objecao_sao_reconhecidas,
@@ -435,6 +537,10 @@ def main() -> None:
         test_resposta_so_com_o_numero_de_aparelhos_vai_para_o_consultor,
         test_bairro_que_o_cliente_disse_vale_mais_que_o_do_mapa,
         test_abertura_reconhece_quem_ja_chegou_pedindo_plano,
+        test_pergunta_em_qualquer_etapa_vai_para_o_modelo_e_nao_muda_o_atendimento,
+        test_pergunta_de_plano_no_cadastro_recebe_o_catalogo_e_volta_para_o_dado,
+        test_pergunta_sobre_o_futuro_nao_desfaz_o_plano,
+        test_pergunta_que_comeca_com_palavra_de_sim_nao_confirma,
     ]
     falhas = 0
     for fn in tests:

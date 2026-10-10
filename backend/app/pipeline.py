@@ -405,6 +405,7 @@ def _enriquecer_com_rag(
     objetivos_com_texto_reserva = {
         "INFORMAR_CANCELAMENTO_E_RETOMAR",
         "INFORMAR_INSTALACAO_E_RETOMAR",
+        "RESPONDER_DUVIDA_DO_CLIENTE",  # tem o catálogo do painel mesmo quando a base vem vazia
     }
     ctx_dec = decisao.contexto_resposta or {}
     # Objeção de preço ou "não tenho esse dado": a base pode trazer o argumento ou a alternativa

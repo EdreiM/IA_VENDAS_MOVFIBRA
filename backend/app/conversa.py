@@ -419,6 +419,8 @@ def antes(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao | None:
     eventos = list(resolucao.get("eventos") or [])
     cadastro_fechado = bool(estado.get("cadastro_completo")) and fase in {"termos", "agendamento", "pos_venda"}
     pede_alterar = bool(_RE_PEDE_ALTERAR_CADASTRO.search(_norm(mensagem))) and "?" not in mensagem
+    # "posso trocar de plano depois?" é dúvida sobre o futuro, não pedido para trocar agora
+    sobre_o_futuro = "?" in mensagem and bool(_RE_HIPOTETICO.search(_norm(mensagem)))
     if cadastro_fechado and (
         Evento.CORRECAO_DADO.value in eventos
         or resolucao.get("correcao_efetiva")
@@ -430,7 +432,7 @@ def antes(estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao | None:
             motivo=f"Cliente quer alterar dados depois do cadastro concluído: {mensagem[:180]}",
             sinais=["alteracao_pos_cadastro"],
         )
-    if cadastro_fechado and (
+    if cadastro_fechado and not sobre_o_futuro and (
         Evento.PEDIU_TROCAR_PLANO.value in eventos
         or (
             Evento.PLANO_INFORMADO.value in eventos
@@ -497,6 +499,9 @@ def _decisao_do_consultor(
     quer_outro = bool(flags.get("pediu_trocar_plano_declarado")) or bool(_RE_QUER_OUTRO_PLANO.search(_norm(mensagem)))
     if situacao != NECESSIDADE and not quer_outro:
         return None
+    # "posso trocar de plano depois?" é dúvida sobre o futuro: não é para indicar outro plano agora
+    if "?" in mensagem and _RE_HIPOTETICO.search(_norm(mensagem)):
+        return None
     return Decisao(
         acao="RECOMENDAR_PLANO",
         objetivo_resposta=None,
@@ -521,6 +526,22 @@ _RESPOSTAS_PRONTAS_DE_PLANO = {
     "INFORMAR_INSTALACAO_E_RETOMAR", "INFORMAR_CANCELAMENTO_E_RETOMAR", "RESPONDER_SEM_BASE_RAG",
     "INFORMAR_PLANO_NAO_ENCONTRADO", "RETOMAR_ESCOLHA_PLANO", "APRESENTAR_PLANO_ESCOLHIDO_E_CONFIRMAR",
 }
+# Respostas prontas sobre plano que aparecem depois da oferta (cadastro, termos, agenda)
+_RESPOSTAS_PRONTAS_FORA_DA_OFERTA = {
+    "INFORMAR_PRECO_PLANO_E_RETOMAR", "INFORMAR_DETALHES_PLANO", "INFORMAR_PLANOS_POR_BENEFICIO",
+    "ESCLARECER_PROMO_PLANO", "ESCLARECER_PLANO_AMBIGUO", "INFORMAR_PLANO_NAO_ENCONTRADO",
+    "INFORMAR_PLANO_BLOQUEADO_POS_CADASTRO", "PEDIR_LOCALIZACAO_PARA_VER_PLANOS",
+}
+# Pergunta sobre o futuro: "posso trocar de plano depois?", "e se eu quiser aumentar mais tarde?"
+_RE_HIPOTETICO = re.compile(
+    r"\b(depois|mais tarde|futuramente|no futuro|mais pra frente|la na frente|um dia|"
+    r"se eu (quiser|precisar|mudar|trocar|cancelar)|caso eu (queira|precise|mude)|"
+    r"(posso|da pra|da para|consigo|tem como) (trocar|mudar|alterar|aumentar|diminuir|cancelar|fazer upgrade))\b"
+)
+_RE_PERGUNTA_SOBRE_LOJA = re.compile(
+    r"\b(loja|lojas|escritorio|ponto de atendimento|endereco de voces|onde (fica|ficam|e|sao) (a |as |o )?"
+    r"(loja|lojas|voces|empresa|mov))\b"
+)
 _RE_VERBO_DE_ESCOLHA = re.compile(
     r"\b(quero|vou querer|vou de|fico com|pode ser|fecho|fechar|fechado|escolho|me ve|manda o|"
     r"contrat\w+|vamos de|prefiro)\b"
@@ -528,16 +549,24 @@ _RE_VERBO_DE_ESCOLHA = re.compile(
 
 
 def duvida_na_venda(decisao: Decisao, estado: dict[str, Any], resolucao: dict[str, Any]) -> Decisao:
-    """Pergunta feita na oferta do plano: quem responde é o modelo, com o catálogo e a base.
+    """Pergunta do cliente: quem responde é o modelo, com o catálogo e a base — em qualquer etapa.
 
-    A máquina de estados escolhia uma resposta pronta por palavra-chave, e errava a
-    pergunta: "qual a velocidade? quantos megas?" saía com a tabela de preços, "o roteador
-    é bom?" despejava a lista de planos. Aqui a pergunta pura (sem escolha de plano) vira
-    `RESPONDER_DUVIDA_NA_VENDA`, sem mexer no estado; a resposta pronta fica de reserva
-    para quando o modelo não responder. Pedido de lista e plano citado pelo nome seguem
-    o caminho de sempre.
+    A máquina de estados escolhia uma resposta pronta por palavra-chave, e errava a pergunta:
+    - na oferta do plano, "qual a velocidade? quantos megas?" saía com a tabela de preços e
+      "o roteador é bom?" despejava a lista de planos;
+    - no cadastro, as mesmas perguntas saíam com resposta pronta, e "posso trocar de plano
+      depois?" desfazia o plano confirmado;
+    - "vocês têm loja em Santarém?" gravava Santarém como cidade do cliente.
+    Aqui a pergunta pura (sem escolha, sem dado, sem confirmação) vira uma dúvida respondida
+    pelo modelo, sem mexer no estado. A resposta pronta fica de reserva para quando o modelo
+    não responder. Escolha com dúvida, dado com dúvida e pedido de lista seguem o caminho de sempre.
     """
-    if _texto(estado.get("fase")) != "vendas" or _texto(estado.get("aguardando")) not in _PASSOS_DE_PLANO:
+    fase = _texto(estado.get("fase")) or "inicio"
+    aguardando = _texto(estado.get("aguardando"))
+    if fase == "inicio" and not aguardando:
+        # Primeira mensagem: o próximo passo é pedir a localização
+        fase, aguardando = "viabilidade", "localizacao"
+    if fase in _FASES_TERMINAIS or not aguardando or aguardando.startswith("resultado_"):
         return decisao
     # Mensagem que era do consultor ("tem um mais barato?") e ele não respondeu: vale o
     # caminho de sempre, que troca o plano — não é uma dúvida a responder.
@@ -549,7 +578,7 @@ def duvida_na_venda(decisao: Decisao, estado: dict[str, Any], resolucao: dict[st
     if not eh_pergunta or flags.get("confirmacao") or flags.get("pediu_humano"):
         return decisao
     t = _norm(mensagem)
-    if _RE_VERBO_DE_ESCOLHA.search(t):
+    if _RE_VERBO_DE_ESCOLHA.search(t) and not _RE_HIPOTETICO.search(t):
         return decisao  # "quero o infinity, tem disney?" é escolha com dúvida: segue o fluxo
     from app.parser import (
         _detectar_plano_na_mensagem,
@@ -559,31 +588,61 @@ def duvida_na_venda(decisao: Decisao, estado: dict[str, Any], resolucao: dict[st
     )
 
     tn = normalizar_texto(mensagem)
-    if eh_pedido_lista_completa_planos(tn) or eh_pedido_planos_com_desconto(tn):
+    na_oferta = fase == "vendas" and aguardando in _PASSOS_DE_PLANO
+    hipotetico = bool(_RE_HIPOTETICO.search(t))
+    if not hipotetico and (eh_pedido_lista_completa_planos(tn) or eh_pedido_planos_com_desconto(tn)):
         return decisao
     objetivo = _texto(decisao.objetivo_resposta)
-    pronta = decisao.acao == "RESPONDER" and objetivo in _RESPOSTAS_PRONTAS_DE_PLANO
-    # "o roteador é bom?" lido como escolha de plano sem nenhum plano citado
-    plano_fantasma = decisao.acao == "RESOLVER_PLANO" and not _detectar_plano_na_mensagem(tn)
-    if not (pronta or plano_fantasma):
-        return decisao
-    aguardando = _texto(estado.get("aguardando"))
+    mexe_no_plano = decisao.acao in {"RESOLVER_PLANO", "BUSCAR_PLANOS", "LISTAR_TODOS_PLANOS"} or objetivo in {
+        "APRESENTAR_PLANOS_ALTERNATIVOS", "APRESENTAR_LISTA_COMPLETA_PLANOS",
+        "APRESENTAR_TROCA_PLANO_E_CONFIRMAR", "PRIORIZAR_PLANO_ANTES_CADASTRO",
+    }
+
+    if na_oferta:
+        pronta = decisao.acao == "RESPONDER" and objetivo in _RESPOSTAS_PRONTAS_DE_PLANO
+        # "o roteador é bom?" lido como escolha de plano sem nenhum plano citado
+        fantasma = decisao.acao == "RESOLVER_PLANO" and not _detectar_plano_na_mensagem(tn)
+        if not (pronta or fantasma or (hipotetico and mexe_no_plano)):
+            return decisao
+        nome_objetivo, sinal = "RESPONDER_DUVIDA_NA_VENDA", "duvida_na_venda"
+    else:
+        # Fora da oferta: só pergunta pura — se a mensagem trouxe dado ou localização, o fluxo
+        # de "anotar e responder" já cuida.
+        dados_msg = (resolucao.get("dados") or {}).get("campos_informados") or []
+        if _avancou(decisao, estado) and not (hipotetico or _RE_PERGUNTA_SOBRE_LOJA.search(t)):
+            return decisao
+        if any(c for c in dados_msg if c not in {"plano", "cidade", "bairro"}):
+            return decisao
+        pronta = decisao.acao == "RESPONDER" and objetivo in _RESPOSTAS_PRONTAS_FORA_DA_OFERTA
+        # "posso trocar de plano depois?" — pergunta sobre o futuro, não pedido de troca agora
+        troca_hipotetica = hipotetico and mexe_no_plano
+        # "vocês têm loja em Santarém?" — a cidade da loja não é o endereço do cliente
+        loja = bool(_RE_PERGUNTA_SOBRE_LOJA.search(t)) and objetivo in {
+            "COMPLETAR_LOCALIZACAO", "CONFIRMAR_BAIRRO_OU_CIDADE", "INFORMAR_CIDADE_NAO_ATENDIDA",
+        }
+        if not (pronta or troca_hipotetica or loja or (decisao.acao == "CHECAR_COBERTURA" and _RE_PERGUNTA_SOBRE_LOJA.search(t))):
+            return decisao
+        nome_objetivo, sinal = "RESPONDER_DUVIDA_DO_CLIENTE", "duvida_respondida_pelo_modelo"
+
+    neutra = decisao.acao == "RESPONDER" and decisao.fase == fase and _texto(decisao.aguardando) == aguardando
     ctx_antes = decisao.contexto_resposta or {}
     return Decisao(
         acao="RESPONDER",
-        objetivo_resposta="RESPONDER_DUVIDA_NA_VENDA",
-        fase="vendas",
+        objetivo_resposta=nome_objetivo,
+        fase=fase,
         aguardando=aguardando,
         atualizar_dados={},
         pergunta=_texto(resolucao.get("pergunta")) or mensagem,
-        motivo="Dúvida na oferta do plano — responder com o catálogo e a base",
-        prioridade="PLANO",
+        motivo="Dúvida do cliente — responder com o catálogo e a base, sem mexer no atendimento",
+        prioridade="PLANO" if na_oferta else "GLOBAL",
         contexto_resposta={
             "pendente": aguardando,
             "pergunta_original": mensagem,
             "topico_contexto": ctx_antes.get("topico_contexto") or resolucao.get("topico_contexto"),
-            "reserva": decisao.model_dump() if pronta else None,
-            "sinais": ["duvida_na_venda"],
+            # Fatos do plano entram sempre que o cliente já tem plano em conversa
+            "com_catalogo": fase not in {"inicio", "viabilidade", "sem_cobertura"},
+            "reserva": decisao.model_dump() if (pronta and neutra) else None,
+            "sinais": [sinal],
         },
     )
 

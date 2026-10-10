@@ -272,8 +272,8 @@ def _responder_duvida(
                 f"- {p.get('nome')} — {_fmt_money(p.get('valor'))}/mês. "
                 f"{p.get('beneficios') or p.get('descricao') or ''}\n"
             )
-    if pendente in _PASSOS_DE_PLANO:
-        # Na oferta do plano a pergunta pode ser sobre qualquer plano: o catálogo inteiro é fato
+    if pendente in _PASSOS_DE_PLANO or ctx.get("com_catalogo"):
+        # A pergunta pode ser sobre qualquer plano: o catálogo inteiro do painel é fato
         try:
             from app.consultor import catalogo_em_texto
             from app.plans_catalog import listar_planos
@@ -870,10 +870,13 @@ def _gerar_resposta(
     if decisao.objetivo_resposta == "INSTABILIDADE_PEDIR_REENVIO":
         return _INSTABILIDADE_REENVIO
 
-    if decisao.objetivo_resposta == "RESPONDER_DUVIDA_NA_VENDA":
+    if decisao.objetivo_resposta in {"RESPONDER_DUVIDA_NA_VENDA", "RESPONDER_DUVIDA_DO_CLIENTE"}:
         ctx = decisao.contexto_resposta or {}
         pendente_venda = str(ctx.get("pendente") or decisao.aguardando or "confirmacao_plano")
-        plano_ref = str(estado.get("plano_em_negociacao") or estado.get("plano_apresentado") or "")
+        plano_ref = str(
+            estado.get("plano_confirmado") or estado.get("plano_em_negociacao")
+            or estado.get("plano_apresentado") or ""
+        )
         reserva = ctx.get("reserva") if isinstance(ctx.get("reserva"), dict) else None
         com_template = bool(reserva) and str(reserva.get("objetivo_resposta") or "") not in {
             "RESPONDER_PERGUNTA_E_RETOMAR", "RESPONDER_SEM_BASE_RAG",
