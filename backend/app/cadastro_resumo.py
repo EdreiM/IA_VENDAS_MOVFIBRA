@@ -26,8 +26,10 @@ def montar_resumo_cadastro(estado: dict[str, Any]) -> str:
     nascimento = formatar_data_nascimento(_valor(estado, "data_nascimento"))
     cep = formatar_cep(_valor(estado, "cep"))
     rua = titulo_palavras(_valor(estado, "rua"))
-    numero = _valor(estado, "numero")
-    complemento = titulo_palavras(_valor(estado, "complemento"))
+    from app.endereco import numero_e_complemento
+
+    numero, complemento_bruto = numero_e_complemento(estado)
+    complemento = titulo_palavras(complemento_bruto)
     bairro = titulo_palavras(_valor(estado, "bairro"))
     cidade = titulo_palavras(_valor(estado, "cidade"))
     plano = _valor(estado, "plano_confirmado") or _valor(estado, "plano_em_negociacao")

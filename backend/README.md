@@ -33,6 +33,7 @@ python scripts/test_conversa_natural.py
 python scripts/test_transcricao.py
 python scripts/test_robustez.py
 python scripts/test_venda_consultiva.py
+python scripts/test_endereco.py
 ```
 
 `test_conversa_natural.py` cobre a conversa no meio do funil (seção abaixo): pedido de tempo, "não tenho esse dado", objeção de preço, áudio, quem já é cliente, alteração depois do cadastro, reenvio dos termos, transferência quando trava e cliente que volta depois do encerramento.
@@ -138,6 +139,14 @@ Assim um nome solto nunca é gravado como cidade só porque o modelo chutou.
 ## Endereço: rua, número e complemento
 
 No endereço escrito de uma vez ("sérgio henn, 891 residencial plácido"), a posição decide: o que vem antes do número é a rua, o que vem depois é o complemento (`parser._separar_endereco`). Isso vale mesmo quando o modelo devolve os dois trocados. O complemento aparece no resumo de confirmação. Número que faz parte do nome ("rua 7", "travessa 15 de agosto") não é tomado como número da casa, e "sem número" / "s/n" fica registrado como `S/N`.
+
+## Endereço em bloco e campo número
+
+`app/endereco.py` cuida de dois casos vistos em atendimento real (`scripts/test_endereco.py`):
+
+- **Bloco com rótulos:** quando o cliente manda o endereço numa lista ("Cidade: …", "Rua: …", "Bairro: …", "Número da residência: …", "CEP: …", "Ponto de referência: …"), cada campo é lido pelo rótulo, qualquer que seja a leitura do modelo. Na viabilidade isso já dispara a checagem de cobertura; rua, número, CEP e complemento ficam guardados e o cadastro não pede de novo.
+- **Número só com o número:** o campo `numero` guarda apenas o número da casa (`729`, `10A`, `S/N`). Bloco, apartamento, condomínio, "fundos" e ponto de referência vão para `complemento`. "lote 5 quadra 12" e "km 14" viram `S/N` com o texto no complemento. Só complemento sem número ("bloco B apto 3") guarda o complemento e continua pedindo o número.
+- **Trava no envio:** `endereco.numero_e_complemento` é aplicada no resumo e no que vai para o cadastro (IXC). Um atendimento antigo com texto no campo número não chega assim ao IXC.
 
 ## Avaliação do interpretador (LLM real)
 
