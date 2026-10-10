@@ -7,6 +7,13 @@ from typing import Any
 from app import db
 
 
+def _numero_e_complemento(estado: dict[str, Any]) -> tuple[str, str]:
+    """Só o número da casa no campo número; o resto no complemento (ver app/endereco.py)."""
+    from app.endereco import numero_e_complemento
+
+    return numero_e_complemento(estado)
+
+
 def _texto(v: Any) -> str:
     return "" if v is None else str(v).strip()
 
@@ -97,8 +104,8 @@ def snapshot_cliente(estado: dict[str, Any], *, incluir_historico: bool = False)
         "bairro": _texto(estado.get("bairro")),
         "cep": _texto(estado.get("cep")),
         "rua": _texto(estado.get("rua")),
-        "numero": _texto(estado.get("numero")),
-        "complemento": _texto(estado.get("complemento")),
+        "numero": _numero_e_complemento(estado)[0],
+        "complemento": _numero_e_complemento(estado)[1],
         "localizacao_forma": _texto(estado.get("localizacao_forma")),
         "caixa_fibra": _texto(estado.get("caixa_fibra")),
         "tem_cobertura": bool(estado.get("tem_cobertura")),
@@ -129,7 +136,7 @@ def snapshot_cliente(estado: dict[str, Any], *, incluir_historico: bool = False)
     snap.update(
         {
             "cpf_cnpj": cpf,
-            "numero_endereco": _texto(estado.get("numero")),
+            "numero_endereco": _numero_e_complemento(estado)[0],
             "plano_id": pid,
             "id_vd_contrato": pid,
             "rg_cliente": _texto(estado.get("rg")),

@@ -2273,7 +2273,67 @@ def parse_interpretacao(raw: str, mensagem_cliente: str, estado: dict[str, Any])
     interpretacao = _parse_interpretacao(raw, mensagem_cliente, estado)
     interpretacao.situacao, interpretacao.nota = _leitura_de_conversa(raw, mensagem_cliente)
     _conferir_confirmacao(interpretacao, mensagem_cliente, estado)
+    _aplicar_endereco_rotulado(interpretacao, mensagem_cliente, estado)
+    _limpar_numero_do_endereco(interpretacao)
     return interpretacao
+
+
+_FASES_DE_LOCALIZACAO = {"", "inicio", "viabilidade", "sem_cobertura"}
+
+
+def _aplicar_endereco_rotulado(
+    interpretacao: Interpretacao, msg_bruto: str, estado: dict[str, Any]
+) -> None:
+    """Endereço mandado com um rótulo por linha ("Cidade: …", "Bairro: …", "Número: …").
+
+    O rótulo diz qual é cada campo, então vale mais que qualquer inferência. Sem isto, a
+    cidade e o bairro desse bloco não eram reconhecidos e a Eva pedia os dois de novo.
+    """
+    from app.endereco import extrair_endereco_rotulado
+
+    rotulado = extrair_endereco_rotulado(msg_bruto)
+    if not rotulado:
+        return
+    dados = interpretacao.dados
+    fase = texto(estado.get("fase"))
+    tem_local = False
+    for campo, valor in rotulado.items():
+        if campo in {"cidade", "bairro"}:
+            # Depois da cobertura, cidade e bairro só mudam por pedido de troca de endereço
+            if fase not in _FASES_DE_LOCALIZACAO:
+                continue
+            tem_local = True
+        setattr(dados, campo, valor)
+    eventos = [e for e in interpretacao.eventos if e != Evento.OUTRO.value]
+    if "?" not in msg_bruto:
+        # Um bloco de endereço não é pergunta
+        eventos = [e for e in eventos if e != Evento.PERGUNTA.value]
+        interpretacao.pergunta = ""
+    if tem_local and Evento.LOCALIZACAO_INFORMADA.value not in eventos:
+        eventos.append(Evento.LOCALIZACAO_INFORMADA.value)
+    if any(c in rotulado for c in ("rua", "numero", "cep", "complemento")):
+        if Evento.DADO_INFORMADO.value not in eventos:
+            eventos.append(Evento.DADO_INFORMADO.value)
+    interpretacao.eventos = eventos or [Evento.OUTRO.value]
+
+
+def _limpar_numero_do_endereco(interpretacao: Interpretacao) -> None:
+    """O campo número fica só com o número da casa; o resto vai para o complemento.
+
+    O modelo às vezes devolve "nº 729, Bloco 04, Apartamento 104 (cond. …)" inteiro como
+    número — e, por estar escrito na mensagem, as regras aceitavam. O IXC não aceita.
+    """
+    from app.endereco import juntar_complemento, separar_numero
+
+    dados = interpretacao.dados
+    if not texto(dados.numero):
+        return
+    numero, resto = separar_numero(dados.numero)
+    if numero == dados.numero and not resto:
+        return
+    dados.numero = numero
+    if resto:
+        dados.complemento = juntar_complemento(resto, dados.complemento)
 
 
 _PASSOS_DE_CONFIRMACAO = {

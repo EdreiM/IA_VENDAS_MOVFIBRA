@@ -40,6 +40,9 @@ def _notificar_erro(mensagem: str) -> None:
 
 
 def _dados_ixc_direto(estado: dict[str, Any]) -> dict[str, str]:
+    from app.endereco import numero_e_complemento
+
+    numero, complemento = numero_e_complemento(estado)
     return {
         "nome": str(estado.get("nome") or "").strip(),
         "cpf": str(estado.get("cpf") or "").strip(),
@@ -48,10 +51,10 @@ def _dados_ixc_direto(estado: dict[str, Any]) -> dict[str, str]:
         "data_nascimento": str(estado.get("data_nascimento") or "").strip(),
         "cep": str(estado.get("cep") or "").strip(),
         "rua": str(estado.get("rua") or "").strip(),
-        "numero": str(estado.get("numero") or "").strip(),
+        "numero": numero,
         "bairro": str(estado.get("bairro") or "").strip(),
         "cidade": str(estado.get("cidade") or "").strip(),
-        "complemento": str(estado.get("complemento") or "").strip(),
+        "complemento": complemento,
         "rg": str(estado.get("rg") or "").strip(),
     }
 
