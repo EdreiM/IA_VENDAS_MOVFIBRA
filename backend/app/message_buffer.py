@@ -10,10 +10,20 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 
+# Quanto o webhook espera pela resposta além da janela do acumulador
+ESPERA_EXTRA_SEGUNDOS = 15.0
+
+
+class RespostaAtrasada(Exception):
+    """O turno ainda está sendo processado: a resposta é enviada quando ficar pronta."""
+
+
 @dataclass
 class _Waiter:
     event: threading.Event
     enviar_resposta: bool = False
+    desistiu: bool = False
+    ao_atrasar: Callable[[Any], None] | None = None
 
 
 @dataclass
@@ -73,6 +83,7 @@ def processar_com_buffer(
     process_fn: Callable[[str, str], Any],
     *,
     id_cliente: str | None = None,
+    ao_atrasar: Callable[[Any], None] | None = None,
 ) -> tuple[Any, bool]:
     """
     Debounce: aguarda MESSAGE_BUFFER_SECONDS por novas mensagens
@@ -80,11 +91,15 @@ def processar_com_buffer(
 
     Retorna (resultado, enviar_resposta). Só o último webhook da leva
     deve enviar a resposta ao Chatwoot — evita duplicata.
+
+    Se o turno demorar mais que a espera do webhook (modelo lento, cadastro, agenda), levanta
+    RespostaAtrasada e, quando o resultado ficar pronto, chama `ao_atrasar(resultado)` — a
+    resposta era gerada, aparecia no painel e nunca chegava ao cliente.
     """
     from app.ia_config import resolver_message_buffer_seconds
 
     buf = _get_buffer(chave)
-    waiter = _Waiter(event=threading.Event())
+    waiter = _Waiter(event=threading.Event(), ao_atrasar=ao_atrasar)
     cid = str(id_cliente or chave or "").strip()
     segundos = resolver_message_buffer_seconds()
 
@@ -114,6 +129,7 @@ def processar_com_buffer(
                 waiters[-1].enviar_resposta = True
 
             combinada = _resolver_mensagens_conflitantes(mensagens)
+            resultado = None
             try:
                 resultado = process_fn(cid, combinada)
                 with buf.lock:
@@ -125,14 +141,26 @@ def processar_com_buffer(
             finally:
                 with buf.lock:
                     buf.processando = False
-                for w in waiters:
-                    w.event.set()
+                    # Dentro da trava: quem está desistindo agora ou vê o evento ou já marcou
+                    for w in waiters:
+                        w.event.set()
+                    ultimo = waiters[-1] if waiters else None
+                    atrasado = ultimo if ultimo is not None and ultimo.desistiu else None
+            if atrasado is not None and resultado is not None and atrasado.ao_atrasar is not None:
+                # O webhook que enviaria a resposta já tinha desistido de esperar: envia daqui
+                try:
+                    atrasado.ao_atrasar(resultado)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Falha ao enviar a resposta atrasada de %s", cid)
 
         buf.timer = threading.Timer(segundos, _flush)
         buf.timer.start()
 
-    if not waiter.event.wait(timeout=segundos + 15):
-        raise TimeoutError("Tempo esgotado aguardando acumulador de mensagens")
+    if not waiter.event.wait(timeout=segundos + ESPERA_EXTRA_SEGUNDOS):
+        with buf.lock:
+            if not waiter.event.is_set():
+                waiter.desistiu = True
+                raise RespostaAtrasada("Turno ainda em processamento — a resposta segue quando ficar pronta")
 
     with buf.lock:
         if buf.error is not None:

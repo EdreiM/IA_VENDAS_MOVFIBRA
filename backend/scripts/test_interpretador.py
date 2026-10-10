@@ -58,7 +58,7 @@ class _ChatFalso:
         self.respostas = list(respostas)
         self.chamadas: list[dict] = []
 
-    def __call__(self, system, user, *, temperature=None, response_format=None):
+    def __call__(self, system, user, *, temperature=None, response_format=None, timeout=None):
         self.chamadas.append({"user": user, "response_format": response_format})
         r = self.respostas.pop(0)
         if isinstance(r, Exception):

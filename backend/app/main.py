@@ -22,7 +22,7 @@ from app.config import get_settings
 from app.db import init_schema, mensagem_ja_processada, marcar_mensagem_processada, resetar_cliente, turnos_recentes
 from app.integrations import chatwoot as chatwoot_api
 from app.media_store import ensure_upload_dirs, remover_arquivo_se_local, salvar_imagem_plano
-from app.message_buffer import chave_buffer, limpar_buffer, processar_com_buffer
+from app.message_buffer import RespostaAtrasada, chave_buffer, limpar_buffer, processar_com_buffer
 from app.pipeline import process_message
 from app.transfer_chatwoot import handoff_por_config
 
@@ -263,6 +263,21 @@ def _talvez_enviar_chatwoot(
     return chatwoot_api.enviar_outgoing_multiplas(cid, outputs)
 
 
+def _enviar_resposta_atrasada(result: Any, *, forcar: bool | None = None) -> None:
+    """Resposta que ficou pronta depois que o webhook parou de esperar: envia assim mesmo."""
+    envio = _talvez_enviar_chatwoot(result, forcar=forcar) or {}
+    logging.getLogger(__name__).warning(
+        "Resposta atrasada de %s enviada ao cliente: %s",
+        getattr(result, "id_cliente", ""), envio.get("ok", envio),
+    )
+    ctx = getattr(getattr(result, "decisao", None), "contexto_resposta", None) or {}
+    cid = getattr(result, "conversation_id", None) or (getattr(result, "estado", None) or {}).get("conversation_id")
+    if ctx.get("resolver_conversa") and cid:
+        from app.integrations.chatwoot import atualizar_status
+
+        atualizar_status(cid, "resolved")
+
+
 @app.on_event("startup")
 def startup() -> None:
     print("Iniciando Eva (PostgreSQL)...")
@@ -479,9 +494,12 @@ def chat_endpoint(body: ChatIn):
                 body.mensagem,
                 _process,
                 id_cliente=id_cliente,
+                ao_atrasar=lambda r: _enviar_resposta_atrasada(r, forcar=body.enviar_chatwoot),
             )
         else:
             result = _process(id_cliente, body.mensagem)
+    except RespostaAtrasada as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -601,9 +619,17 @@ async def webhook_chatwoot(
                 evento["mensagem"],
                 _process,
                 id_cliente=id_cliente,
+                ao_atrasar=_enviar_resposta_atrasada,
             )
         else:
             result = await asyncio.to_thread(_process, id_cliente, evento["mensagem"])
+    except RespostaAtrasada:
+        # O turno passou da espera do webhook (modelo lento, cadastro, agenda): a resposta é
+        # enviada ao cliente quando ficar pronta. Antes isto virava erro 500 e ela se perdia.
+        if message_id:
+            marcar_mensagem_processada(message_id, id_cliente)
+        return {"ok": True, "atrasada": True, "id_cliente": id_cliente,
+                "motivo": "resposta em processamento — será enviada ao cliente quando ficar pronta"}
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(exc)) from exc
