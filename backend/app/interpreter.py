@@ -6,10 +6,9 @@ import json
 import re
 from typing import Any
 
-from openai import BadRequestError
 
 from app.conversa import SITUACOES_LLM
-from app.llm import chat, modelo_ativo
+from app.llm import chat, erros_de_requisicao, modelo_ativo
 from app.models import CAMPOS_DADOS, Evento
 
 SYSTEM = """Você é o interpretador semântico das mensagens recebidas pela Eva, atendente comercial da MOV FIBRA.
@@ -272,9 +271,9 @@ _SEM_SCHEMA: set[str] = set()
 TIMEOUT_INTERPRETADOR = 15.0
 
 
-def _erro_de_schema(exc: BadRequestError) -> bool:
+def _erro_de_schema(exc: BaseException) -> bool:
     low = str(exc).casefold()
-    return "response_format" in low or "json_schema" in low
+    return "response_format" in low or "json_schema" in low or "output_config" in low
 
 
 def interpretar(
@@ -299,7 +298,7 @@ def interpretar(
             )
             if _json_valido(estruturado):
                 return estruturado
-        except BadRequestError as exc:
+        except erros_de_requisicao() as exc:
             if _erro_de_schema(exc):
                 _SEM_SCHEMA.add(modelo)
 

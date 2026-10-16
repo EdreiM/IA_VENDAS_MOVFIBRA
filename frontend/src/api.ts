@@ -432,6 +432,10 @@ export type ConfigIa = {
   llm_temperature: number;
   openai_api_key_mask: string;
   openai_api_key_configured: boolean;
+  anthropic_model: string;
+  anthropic_effort: string;
+  anthropic_api_key_mask: string;
+  anthropic_api_key_configured: boolean;
   transcription_api_key_mask: string;
   transcription_api_key_configured: boolean;
   rag_provider: string;

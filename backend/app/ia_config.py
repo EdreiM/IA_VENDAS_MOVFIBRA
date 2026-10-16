@@ -8,7 +8,17 @@ from app import admin_store
 from app.config import get_settings
 
 
-SECRET_KEYS = frozenset({"openai_api_key", "transcription_api_key", "rag_webhook_token"})
+SECRET_KEYS = frozenset({"openai_api_key", "anthropic_api_key", "transcription_api_key", "rag_webhook_token"})
+
+# Modelos Claude que o painel oferece (US$ por 1 milhão de tokens: entrada / saída).
+# O Haiku 5.5 é o equivalente barato do gpt-4.1-mini (US$ 0,40 / 1,60).
+MODELOS_ANTHROPIC: dict[str, str] = {
+    "claude-haiku-5-5": "Claude Haiku 5.5 — mais barato e rápido (US$ 0,10 / 0,50)",
+    "claude-sonnet-5-5": "Claude Sonnet 5.5 — mais capaz, 20x o preço (US$ 2 / 10)",
+}
+MODELO_ANTHROPIC_PADRAO = "claude-haiku-5-5"
+ESFORCOS_CLAUDE = ("low", "medium", "high")
+PROVEDORES = ("openai", "anthropic", "ollama")
 
 
 def _mask(valor: str) -> str:
@@ -36,6 +46,37 @@ def resolver_llm_provider(*, unidade_id: int | None = None) -> str:
     if db:
         return db.lower()
     return (get_settings().llm_provider or "openai").lower().strip()
+
+
+def resolver_anthropic_api_key(*, unidade_id: int | None = None) -> str:
+    db = _cfg("anthropic_api_key", "", unidade_id=unidade_id).strip()
+    if db:
+        return db
+    return (get_settings().anthropic_api_key or "").strip()
+
+
+def resolver_anthropic_model(*, unidade_id: int | None = None) -> str:
+    db = _cfg("anthropic_model", "", unidade_id=unidade_id).strip()
+    if db.startswith("claude-"):
+        return db
+    padrao = (get_settings().anthropic_model or "").strip()
+    return padrao if padrao.startswith("claude-") else MODELO_ANTHROPIC_PADRAO
+
+
+def resolver_esforco_claude(*, unidade_id: int | None = None) -> str:
+    """Quanto o Claude raciocina antes de responder: low (padrão, mais barato), medium, high."""
+    db = _cfg("anthropic_effort", "", unidade_id=unidade_id).strip().lower()
+    return db if db in ESFORCOS_CLAUDE else "low"
+
+
+def resolver_modelo_em_uso(*, unidade_id: int | None = None) -> str:
+    """Modelo do provedor escolhido no painel (o que aparece nos custos e na avaliação)."""
+    provider = resolver_llm_provider(unidade_id=unidade_id)
+    if provider == "anthropic":
+        return resolver_anthropic_model(unidade_id=unidade_id)
+    if provider == "ollama":
+        return get_settings().ollama_model
+    return resolver_openai_model(unidade_id=unidade_id)
 
 
 def resolver_openai_model(*, unidade_id: int | None = None) -> str:
@@ -179,6 +220,7 @@ def resolver_limite_travado(*, unidade_id: int | None = None) -> int:
 def obter_config_ia(*, unidade_id: int | None = None) -> dict[str, Any]:
     settings = get_settings()
     openai_key = resolver_openai_api_key(unidade_id=unidade_id)
+    anthropic_key = resolver_anthropic_api_key(unidade_id=unidade_id)
     trans_key = _cfg("transcription_api_key", "", unidade_id=unidade_id).strip()
     rag_token = resolver_rag_webhook_token(unidade_id=unidade_id)
     rag_url = resolver_rag_webhook_url(unidade_id=unidade_id)
@@ -192,6 +234,11 @@ def obter_config_ia(*, unidade_id: int | None = None) -> dict[str, Any]:
         "llm_temperature": resolver_temperatura(unidade_id=unidade_id),
         "openai_api_key_mask": _mask(openai_key),
         "openai_api_key_configured": bool(openai_key),
+        "anthropic_model": resolver_anthropic_model(unidade_id=unidade_id),
+        "anthropic_effort": resolver_esforco_claude(unidade_id=unidade_id),
+        "anthropic_api_key_mask": _mask(anthropic_key),
+        "anthropic_api_key_configured": bool(anthropic_key),
+        "modelos_anthropic": [{"id": k, "nome": v} for k, v in MODELOS_ANTHROPIC.items()],
         "transcription_api_key_mask": _mask(trans_key),
         "transcription_api_key_configured": bool(trans_key),
         "rag_provider": resolver_rag_provider(unidade_id=unidade_id),
@@ -222,6 +269,16 @@ def obter_config_ia(*, unidade_id: int | None = None) -> dict[str, Any]:
     }
 
 
+def _provedor_valido(valor: Any) -> str:
+    v = str(valor or "openai").strip().lower()
+    return v if v in PROVEDORES else "openai"
+
+
+def _modelo_claude_valido(valor: Any) -> str:
+    v = str(valor or "").strip()
+    return v if v.startswith("claude-") else MODELO_ANTHROPIC_PADRAO
+
+
 def salvar_config_ia(dados: dict[str, Any], *, unidade_id: int | None = None) -> dict[str, Any]:
     """Salva campos do painel. Secrets vazios não sobrescrevem a key atual."""
     rag_url = str(dados.get("rag_webhook_url") or "").strip()
@@ -233,8 +290,11 @@ def salvar_config_ia(dados: dict[str, Any], *, unidade_id: int | None = None) ->
         "nome_ia": str(dados.get("nome_ia") or "Eva").strip() or "Eva",
         "tom_voz": str(dados.get("tom_voz") or "").strip(),
         "pode_emoji": "1" if dados.get("pode_emoji") else "0",
-        "llm_provider": str(dados.get("llm_provider") or "openai").strip().lower(),
+        "llm_provider": _provedor_valido(dados.get("llm_provider")),
         "openai_model": str(dados.get("openai_model") or "gpt-4.1-mini").strip(),
+        "anthropic_model": _modelo_claude_valido(dados.get("anthropic_model")),
+        "anthropic_effort": str(dados.get("anthropic_effort") or "low").strip().lower()
+        if str(dados.get("anthropic_effort") or "low").strip().lower() in ESFORCOS_CLAUDE else "low",
         "llm_temperature": str(dados.get("llm_temperature") if dados.get("llm_temperature") is not None else "0.3"),
         "rag_provider": rag_provider,
         "rag_webhook_url": rag_url,
@@ -255,6 +315,10 @@ def salvar_config_ia(dados: dict[str, Any], *, unidade_id: int | None = None) ->
     openai_new = str(dados.get("openai_api_key") or "").strip()
     if openai_new and not openai_new.startswith("••••"):
         admin_store.set_config("openai_api_key", openai_new, unidade_id=unidade_id)
+
+    anthropic_new = str(dados.get("anthropic_api_key") or "").strip()
+    if anthropic_new and not anthropic_new.startswith("••••"):
+        admin_store.set_config("anthropic_api_key", anthropic_new, unidade_id=unidade_id)
 
     trans_new = str(dados.get("transcription_api_key") or "").strip()
     if trans_new and not trans_new.startswith("••••"):

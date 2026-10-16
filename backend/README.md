@@ -35,6 +35,7 @@ python scripts/test_robustez.py
 python scripts/test_venda_consultiva.py
 python scripts/test_endereco.py
 python scripts/test_custos.py
+python scripts/test_claude.py
 ```
 
 `test_conversa_natural.py` cobre a conversa no meio do funil (seção abaixo): pedido de tempo, "não tenho esse dado", objeção de preço, áudio, quem já é cliente, alteração depois do cadastro, reenvio dos termos, transferência quando trava e cliente que volta depois do encerramento.
@@ -126,12 +127,21 @@ A aba **Pontos de atenção** tem o botão **Rodar avaliação**: roda `eval/cas
 
 O limite de tentativas antes de transferir (padrão 4) fica em **Config IA → Tentativas antes de transferir para a equipe**.
 
+## Provedor da IA: OpenAI ou Anthropic (Claude)
+
+No painel, aba Config IA → Provedor. Com "Anthropic (Claude)", a Eva usa a chave da Anthropic (`anthropic_api_key`, guardada como as outras chaves; `ANTHROPIC_API_KEY` no `.env` de reserva) e um destes modelos:
+
+- **Claude Haiku 5.5** (`claude-haiku-5-5`, padrão): US$ 0,10 / 0,50 por milhão de tokens (entrada / saída), contra US$ 0,40 / 1,60 do gpt-4.1-mini.
+- **Claude Sonnet 5.5** (`claude-sonnet-5-5`): mais capaz, US$ 2 / 10. Vai com o fallback da própria API (`fallbacks: "default"`) para quando o filtro de segurança recusar.
+
+O que muda por baixo (`app/llm.py`, `_chat_claude`): não vai temperatura (os modelos Claude 5.5 recusam valores fora do padrão); o campo "Raciocínio" do painel vira `output_config.effort` (padrão `low`, o mais barato e rápido); o prompt de sistema vai com cache (a leitura em cache custa um décimo); o schema JSON do interpretador vira `output_config.format`; resposta recusada (`stop_reason: "refusal"`) vira falha e cai nos caminhos de modelo fora do ar. A transcrição de áudio continua com a chave de transcrição (Groq ou OpenAI): a Anthropic não transcreve áudio. `scripts/test_claude.py` cobre o formato do pedido, o schema, a recusa, o custo e o painel.
+
 ## Custo da IA
 
 A API de custos da OpenAI exige chave de administrador e não separa por cliente. Por isso o backend registra o próprio uso (`app/custos.py`, tabela `uso_ia`): toda resposta do modelo traz os tokens consumidos, e cada chamada é gravada com o cliente do turno, a finalidade (ler a mensagem, escrever a resposta, indicar plano, transcrever áudio, avaliação) e o custo em dólar. A transcrição entra pelo tempo de áudio (a Groq cobra no mínimo 10 segundos por áudio).
 
 - **Painel:** aba Métricas → "Custo da IA": este mês, total geral, média por cliente atendido, custo por venda fechada, série por mês, onde o custo foi gasto e a tabela por cliente. `GET /metrics/custos`.
-- **Cotação e preços automáticos:** ninguém digita preço. Na subida da API e depois a cada 12 horas, o backend busca a cotação do dólar no Banco Central (PTAX de venda; AwesomeAPI de reserva) e o preço por token dos modelos em uso no OpenRouter, que publica a tabela da própria OpenAI (a OpenAI não tem API pública de preços). Se uma busca falhar, vale o último valor guardado; valor fora de uma faixa plausível é recusado. O painel mostra os valores, a fonte e a data, e tem o botão "Atualizar agora" (`POST /admin/custos/atualizar`).
+- **Cotação e preços automáticos:** ninguém digita preço. Na subida da API e depois a cada 12 horas, o backend busca a cotação do dólar no Banco Central (PTAX de venda; AwesomeAPI de reserva) e o preço por token dos modelos em uso no OpenRouter, que publica as tabelas da OpenAI e da Anthropic (nenhuma das duas tem API pública de preços). No Claude, o custo conta à parte o cache lido (0,1x a entrada) e o gravado (1,25x). Se uma busca falhar, vale o último valor guardado; valor fora de uma faixa plausível é recusado. O painel mostra os valores, a fonte e a data, e tem o botão "Atualizar agora" (`POST /admin/custos/atualizar`).
 - **O que fica gravado:** cada chamada guarda o custo em dólar e a cotação daquele dia. Se o dólar ou o preço mudar depois, o que já foi gasto não muda. Modelo sem preço na fonte aparece como pendente.
 - **Limites:** só há dados a partir do deploy deste recurso; é uma estimativa pela tabela de preços e pela PTAX (a fatura da OpenAI e o câmbio do cartão, com IOF, são a referência); o preço da transcrição da Groq é um valor fixo no código, porque não há fonte pública consultável; o custo da RAG (n8n) não entra.
 
