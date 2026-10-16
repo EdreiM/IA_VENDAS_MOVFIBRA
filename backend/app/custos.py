@@ -32,7 +32,12 @@ PRECOS_PADRAO: dict[str, dict[str, float]] = {
     "gpt-4.1-nano": {"entrada": 0.10, "cache": 0.025, "saida": 0.40},
     "gpt-4o": {"entrada": 2.50, "cache": 1.25, "saida": 10.00},
     "gpt-4o-mini": {"entrada": 0.15, "cache": 0.075, "saida": 0.60},
+    # https://platform.claude.com/docs/en/about-claude/pricing (prompts de até 100 mil tokens)
+    "claude-haiku-5-5": {"entrada": 0.10, "cache": 0.01, "saida": 0.50},
+    "claude-sonnet-5-5": {"entrada": 2.00, "cache": 0.20, "saida": 10.00},
 }
+# A Anthropic cobra a gravação do cache (5 minutos) a 1,25x o preço de entrada
+FATOR_ESCRITA_CACHE_ANTHROPIC = 1.25
 # US$ por hora de áudio transcrito
 TRANSCRICAO_PADRAO: dict[str, float] = {"groq": 0.04, "openai": 0.36}
 # A Groq cobra no mínimo 10 segundos por áudio
@@ -147,15 +152,22 @@ def preco_do_modelo(modelo: str, cfg: dict[str, Any] | None = None) -> dict[str,
 
 
 def custo_de_tokens(
-    modelo: str, entrada: int, cache: int, saida: int, cfg: dict[str, Any] | None = None
+    modelo: str, entrada: int, cache: int, saida: int, cfg: dict[str, Any] | None = None,
+    *, cache_escrita: int = 0,
 ) -> float | None:
-    """US$ da chamada. None quando o modelo não tem preço cadastrado."""
+    """US$ da chamada. None quando o modelo não tem preço cadastrado.
+
+    `entrada` é o total de tokens de entrada; `cache`, os lidos do cache; `cache_escrita`, os
+    gravados no cache nesta chamada (só a Anthropic cobra a mais por isso).
+    """
     preco = preco_do_modelo(modelo, cfg)
     if preco is None:
         return None
-    sem_cache = max(0, int(entrada) - int(cache))
+    escrita = max(0, int(cache_escrita))
+    sem_cache = max(0, int(entrada) - int(cache) - escrita)
     return (
         sem_cache * preco["entrada"] + int(cache) * preco["cache"] + int(saida) * preco["saida"]
+        + escrita * preco["entrada"] * FATOR_ESCRITA_CACHE_ANTHROPIC
     ) / 1_000_000
 
 
@@ -184,11 +196,19 @@ def registrar_chat(provedor: str, modelo: str, usage: Any) -> None:
     """Grava os tokens de uma chamada de chat (objeto `usage` da resposta do modelo)."""
     if usage is None:
         return
-    entrada = int(getattr(usage, "prompt_tokens", 0) or 0)
-    saida = int(getattr(usage, "completion_tokens", 0) or 0)
-    detalhes = getattr(usage, "prompt_tokens_details", None)
-    cache = int(getattr(detalhes, "cached_tokens", 0) or 0) if detalhes is not None else 0
-    custo = 0.0 if provedor == "ollama" else custo_de_tokens(modelo, entrada, cache, saida)
+    escrita = 0
+    if provedor == "anthropic":
+        # A Anthropic separa: input_tokens é só o que não veio nem foi para o cache
+        cache = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+        escrita = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        entrada = int(getattr(usage, "input_tokens", 0) or 0) + cache + escrita
+        saida = int(getattr(usage, "output_tokens", 0) or 0)
+    else:
+        entrada = int(getattr(usage, "prompt_tokens", 0) or 0)
+        saida = int(getattr(usage, "completion_tokens", 0) or 0)
+        detalhes = getattr(usage, "prompt_tokens_details", None)
+        cache = int(getattr(detalhes, "cached_tokens", 0) or 0) if detalhes is not None else 0
+    custo = 0.0 if provedor == "ollama" else custo_de_tokens(modelo, entrada, cache, saida, cache_escrita=escrita)
     _gravar(
         provedor=provedor, modelo=modelo, tokens_entrada=entrada, tokens_cache=cache,
         tokens_saida=saida, segundos_audio=None, custo_usd=custo,
@@ -210,8 +230,8 @@ def registrar_transcricao(provedor: str, modelo: str, segundos: float, *, id_cli
 #
 # Ninguém precisa digitar preço: uma vez por dia o backend busca
 #   - a cotação do dólar no Banco Central (PTAX de venda), com a AwesomeAPI de reserva;
-#   - o preço por token de cada modelo em uso no OpenRouter, que publica a tabela da
-#     própria OpenAI (a OpenAI não tem API pública de preços).
+#   - o preço por token de cada modelo em uso no OpenRouter, que publica as tabelas da
+#     OpenAI e da Anthropic (nenhuma das duas tem API pública de preços).
 # Se uma busca falhar, vale o último valor guardado. A transcrição da Groq não tem
 # fonte pública consultável e fica no valor padrão.
 
@@ -222,7 +242,7 @@ _URL_PTAX = (
     "CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)"
 )
 _URL_AWESOME = "https://economia.awesomeapi.com.br/json/last/USD-BRL"
-_URL_OPENROUTER = "https://openrouter.ai/api/v1/models/openai/{modelo}/endpoints"
+_URL_OPENROUTER = "https://openrouter.ai/api/v1/models/{empresa}/{modelo}/endpoints"
 _atualizando = threading.Lock()
 
 
@@ -273,14 +293,15 @@ def _modelo_base(modelo: str) -> str:
 
 
 def buscar_preco_do_modelo(modelo: str) -> dict[str, float] | None:
-    """US$ por 1 milhão de tokens do modelo, pela tabela da OpenAI publicada no OpenRouter."""
+    """US$ por 1 milhão de tokens do modelo, pela tabela da OpenAI ou da Anthropic publicada no OpenRouter."""
     base = _modelo_base(modelo)
     if not base or "/" in base or " " in base:
         return None
+    empresa = "anthropic" if base.startswith("claude-") else "openai"
     try:
-        dados = _http_json(_URL_OPENROUTER.format(modelo=base))
+        dados = _http_json(_URL_OPENROUTER.format(empresa=empresa, modelo=base))
         endpoints = (dados.get("data") or {}).get("endpoints") or []
-        oficiais = [e for e in endpoints if str(e.get("provider_name") or "").lower() == "openai"] or endpoints
+        oficiais = [e for e in endpoints if str(e.get("provider_name") or "").lower() == empresa] or endpoints
         preco = (oficiais[0].get("pricing") or {}) if oficiais else {}
         entrada = float(preco["prompt"]) * 1_000_000
         saida = float(preco["completion"]) * 1_000_000
@@ -312,12 +333,13 @@ def _modelos_a_atualizar() -> list[str]:
         from app import db, ia_config
 
         modelos.add(_modelo_base(ia_config.resolver_openai_model()))
+        modelos.add(_modelo_base(ia_config.resolver_anthropic_model()))
         with db.get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT DISTINCT modelo FROM uso_ia
-                    WHERE provedor = 'openai' AND created_at >= NOW() - INTERVAL '90 days'
+                    WHERE provedor IN ('openai', 'anthropic') AND created_at >= NOW() - INTERVAL '90 days'
                     """
                 )
                 modelos.update(_modelo_base(r["modelo"]) for r in cur.fetchall() if r.get("modelo"))
@@ -337,7 +359,7 @@ def atualizar_referencias() -> dict[str, Any]:
         novo: dict[str, Any] = {
             "cotacao": atual.get("cotacao"),
             "modelos": dict(atual.get("modelos") or {}),
-            "fonte_precos": "OpenRouter (tabela da OpenAI)",
+            "fonte_precos": "OpenRouter (tabelas da OpenAI e da Anthropic)",
             "falhas": [],
         }
         cotacao = buscar_cotacao()

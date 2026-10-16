@@ -23,9 +23,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    llm_provider: str = "openai"  # openai | ollama
+    llm_provider: str = "openai"  # openai | anthropic | ollama
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-5-5"
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "llama3.2"
 

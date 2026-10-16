@@ -87,7 +87,7 @@ DOCKERHUB_USER=edreimp
 
 ### Configure depois no painel (não precisa no Portainer)
 
-- **Config IA** → `OPENAI_API_KEY`, modelo
+- **Config IA** → provedor (OpenAI ou Anthropic/Claude), chave e modelo
 - **Chatwoot** → `PUBLIC_BASE_URL`, inbox, allowlist
 - **Ferramentas** → webhooks n8n (opcional se já estiverem no compose; URLs salvas **persistem** no PostgreSQL)
 
@@ -145,7 +145,7 @@ Aguarde os 3 containers ficarem **healthy/running**:
 
 1. Abra `http://SEU-IP:5180`
 2. Se definiu `ADMIN_API_TOKEN`, salve o token no topo do painel
-3. **Config IA** → OpenAI key
+3. **Config IA** → provedor e chave (OpenAI ou Anthropic)
 4. **Chatwoot** → URL pública + inbox
 5. **Ferramentas** → sync catálogo + URLs n8n
 

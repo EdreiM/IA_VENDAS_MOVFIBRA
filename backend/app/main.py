@@ -93,6 +93,9 @@ class ConfigIaIn(BaseModel):
     openai_model: str = "gpt-4.1-mini"
     llm_temperature: float = 0.3
     openai_api_key: str = ""
+    anthropic_model: str = "claude-haiku-5-5"
+    anthropic_effort: str = "low"
+    anthropic_api_key: str = ""
     transcription_api_key: str = ""
     rag_provider: str = "webhook"
     rag_webhook_url: str = ""
@@ -759,7 +762,7 @@ def admin_get_config_custos(
 
     return {
         **custos.configuracao(usar_cache=False),
-        "modelo_em_uso": ia_config.resolver_openai_model(),
+        "modelo_em_uso": ia_config.resolver_modelo_em_uso(),
         "referencias": custos.referencias(),
     }
 
@@ -776,7 +779,7 @@ def admin_atualizar_custos(
     referencias = custos.atualizar_referencias()
     return {
         **custos.configuracao(usar_cache=False),
-        "modelo_em_uso": ia_config.resolver_openai_model(),
+        "modelo_em_uso": ia_config.resolver_modelo_em_uso(),
         "referencias": referencias,
     }
 
@@ -791,7 +794,7 @@ def admin_put_config_custos(
     _exigir_admin(authorization, x_admin_token)
     from app import custos, ia_config
 
-    return {**custos.salvar_configuracao(body.model_dump()), "modelo_em_uso": ia_config.resolver_openai_model()}
+    return {**custos.salvar_configuracao(body.model_dump()), "modelo_em_uso": ia_config.resolver_modelo_em_uso()}
 
 
 @app.get("/metrics/atencao")

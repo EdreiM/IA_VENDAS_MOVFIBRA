@@ -312,6 +312,9 @@ export default function App() {
     openai_model: "gpt-4.1-mini",
     llm_temperature: 0.3,
     openai_api_key: "",
+    anthropic_model: "claude-haiku-5-5",
+    anthropic_effort: "low",
+    anthropic_api_key: "",
     transcription_api_key: "",
     rag_provider: "webhook",
     rag_webhook_url: "",
@@ -325,6 +328,7 @@ export default function App() {
   });
   const [iaMasks, setIaMasks] = useState({
     openai: "",
+    anthropic: "",
     transcription: "",
     rag_token: "",
   });
@@ -515,6 +519,9 @@ export default function App() {
       openai_model: c.openai_model || "gpt-4.1-mini",
       llm_temperature: Number(c.llm_temperature ?? 0.3),
       openai_api_key: "",
+      anthropic_model: c.anthropic_model || "claude-haiku-5-5",
+      anthropic_effort: c.anthropic_effort || "low",
+      anthropic_api_key: "",
       transcription_api_key: "",
       rag_provider: c.rag_provider || "webhook",
       rag_webhook_url: c.rag_webhook_url || "",
@@ -528,6 +535,7 @@ export default function App() {
     });
     setIaMasks({
       openai: c.openai_api_key_mask || "",
+      anthropic: c.anthropic_api_key_mask || "",
       transcription: c.transcription_api_key_mask || "",
       rag_token: c.rag_webhook_token_mask || "",
     });
@@ -999,6 +1007,7 @@ export default function App() {
       setIaForm((f) => ({
         ...f,
         openai_api_key: "",
+        anthropic_api_key: "",
         transcription_api_key: "",
         rag_webhook_token: "",
         nome_ia: saved.nome_ia,
@@ -1007,6 +1016,8 @@ export default function App() {
         llm_provider: saved.llm_provider,
         openai_model: saved.openai_model,
         llm_temperature: Number(saved.llm_temperature ?? 0.3),
+        anthropic_model: saved.anthropic_model || "claude-haiku-5-5",
+        anthropic_effort: saved.anthropic_effort || "low",
         rag_provider: saved.rag_provider || "webhook",
         rag_webhook_url: saved.rag_webhook_url || "",
         message_buffer_enabled: saved.message_buffer_enabled !== false,
@@ -1018,6 +1029,7 @@ export default function App() {
       }));
       setIaMasks({
         openai: saved.openai_api_key_mask || "",
+        anthropic: saved.anthropic_api_key_mask || "",
         transcription: saved.transcription_api_key_mask || "",
         rag_token: saved.rag_webhook_token_mask || "",
       });
@@ -2980,8 +2992,42 @@ export default function App() {
                   onChange={(e) => setIaForm({ ...iaForm, llm_provider: e.target.value })}
                 >
                   <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic (Claude)</option>
                 </select>
               </label>
+              {iaForm.llm_provider === "anthropic" ? (
+                <>
+                  <label>
+                    Modelo
+                    <select
+                      value={iaForm.anthropic_model}
+                      onChange={(e) => setIaForm({ ...iaForm, anthropic_model: e.target.value })}
+                    >
+                      <option value="claude-haiku-5-5">Claude Haiku 5.5 — mais barato (US$ 0,10 / 0,50)</option>
+                      <option value="claude-sonnet-5-5">Claude Sonnet 5.5 — mais capaz (US$ 2 / 10)</option>
+                    </select>
+                    <small className="field-hint">
+                      Preço por 1 milhão de tokens (entrada / saída). Para comparar, o gpt-4.1-mini
+                      custa US$ 0,40 / 1,60.
+                    </small>
+                  </label>
+                  <label>
+                    Raciocínio
+                    <select
+                      value={iaForm.anthropic_effort}
+                      onChange={(e) => setIaForm({ ...iaForm, anthropic_effort: e.target.value })}
+                    >
+                      <option value="low">Baixo — mais rápido e barato (recomendado)</option>
+                      <option value="medium">Médio</option>
+                      <option value="high">Alto — mais lento e caro</option>
+                    </select>
+                    <small className="field-hint">
+                      Quanto o Claude pensa antes de responder. O Claude não usa temperatura.
+                    </small>
+                  </label>
+                </>
+              ) : (
+              <>
               <label>
                 Modelo
                 <select
@@ -3007,6 +3053,30 @@ export default function App() {
                   }
                 />
               </label>
+              </>
+              )}
+
+              {iaForm.llm_provider === "anthropic" && (
+                <label className="span2">
+                  API Key Anthropic (Claude){" "}
+                  {iaMasks.anthropic ? (
+                    <span className="key-mask">(atual: {iaMasks.anthropic})</span>
+                  ) : (
+                    <span className="key-mask muted-inline">(não configurada)</span>
+                  )}
+                  <input
+                    type="password"
+                    value={iaForm.anthropic_api_key}
+                    onChange={(e) => setIaForm({ ...iaForm, anthropic_api_key: e.target.value })}
+                    placeholder="sk-ant-… cole a key do console da Anthropic"
+                    autoComplete="off"
+                  />
+                  <small className="field-hint">
+                    A chave fica guardada mesmo se você voltar para a OpenAI. A transcrição de
+                    áudio continua usando a chave de transcrição abaixo (a Anthropic não transcreve áudio).
+                  </small>
+                </label>
+              )}
 
               <label className="span2">
                 API Key OpenAI{" "}
